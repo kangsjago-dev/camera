@@ -186,6 +186,16 @@ async function initApp() {
   // Muat data awal event dari API Google Apps Script atau Mock Data
   await loadEventData();
 
+  // Pulihkan foto lokal dari localStorage jika ada
+  try {
+    const localPhotos = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
+    if (localPhotos.length > 0) {
+      const existingIds = new Set(STATE.photos.map(p => p.idFoto));
+      const toAdd = localPhotos.filter(p => !existingIds.has(p.idFoto));
+      STATE.photos = [...toAdd, ...STATE.photos];
+    }
+  } catch (e) { }
+
   // Cek Persistensi Sesi Admin (Anti-Keluar saat refresh F5!)
   if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
     showView('viewAdmin');
@@ -193,15 +203,17 @@ async function initApp() {
     return;
   }
 
-  // Cek Identitas Tamu
+  // Cek Identitas Tamu & Pulihkan Halaman Terakhir saat Refresh (F5)
   if (!STATE.guestNama) {
     showView('viewWelcome');
   } else {
-    showView('viewCamera');
+    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
+    showView(savedView);
     updateRemainingQuotaDisplay();
   }
 
-  if (urlParams.get('view') === 'slideshow') {
+  // Cek Persistensi Slideshow atau Parameter URL
+  if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
     openSlideshow();
   }
 }
@@ -400,6 +412,9 @@ function showView(viewId) {
 
   const target = document.getElementById(viewId);
   if (target) target.classList.remove('hidden');
+
+  // Persistensi halaman yang sedang aktif agar saat refresh (F5) tetap di halaman ini
+  sessionStorage.setItem('snapevent_current_view', viewId);
 
   // Update Nav Buttons Active State
   document.querySelectorAll('.nav-item').forEach(btn => {
@@ -797,69 +812,92 @@ function generateSimulatedPartySnapshot() {
   return offCanvas;
 }
 
-// --- 6. UPLOAD PHOTO (GAS API OR LOCAL MOCK) ---
+// --- 6. UPLOAD PHOTO (SIMPAN KE GALERI & GOOGLE DRIVE) ---
 async function handleSavePhotoToDrive() {
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
   const caption = document.getElementById('inputPhotoCaption').value.trim();
 
   btn.disabled = true;
-  btnText.textContent = "Mengunggah...";
+  btnText.textContent = "Menyimpan...";
 
   try {
-    const payload = {
-      action: "uploadPhoto",
+    // 1. Buat object foto seketika agar langsung tampil di Galeri Acara tanpa delay
+    const localPhotoId = "FTO-" + Date.now();
+    const newPhoto = {
+      idFoto: localPhotoId,
       eventId: STATE.activeEventId,
       guestId: STATE.guestId,
       guestNama: STATE.guestNama || "Tamu",
-      caption: caption,
+      caption: caption || "Momen seru!",
       cameraStyle: STATE.activeFilter,
       frameStyle: STATE.activeFrame,
-      imageBase64: STATE.currentCapturedDataUrl
+      gdriveViewUrl: STATE.currentCapturedDataUrl,
+      totalLikes: 0,
+      isFeatured: false,
+      createdAt: "Baru Saja"
     };
 
-    if (STATE.gasApiUrl) {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
-      const res = await resp.json();
+    // Tambahkan foto ke urutan terdepan daftar foto
+    STATE.photos.unshift(newPhoto);
 
-      if (res.status === 'success') {
-        showToast("Foto berhasil disimpan ke Google Drive!", "success");
-        document.getElementById('modalReviewPhoto').classList.add('hidden');
-        await loadGallery();
-        showView('viewGallery');
-      } else if (res.status === 'limit_reached') {
-        showToast(res.message, "warning");
-        document.getElementById('modalReviewPhoto').classList.add('hidden');
-      } else {
-        showToast(res.message || "Gagal mengunggah foto", "error");
-      }
-    } else {
-      // Mock Upload Success
-      const newPhoto = {
-        idFoto: "FTO-LOCAL-" + Date.now(),
-        guestNama: STATE.guestNama,
-        caption: caption || "Momen seru!",
-        cameraStyle: STATE.activeFilter,
-        frameStyle: STATE.activeFrame,
-        gdriveViewUrl: STATE.currentCapturedDataUrl,
-        totalLikes: 0,
-        isFeatured: false,
-        createdAt: "Baru Saja"
-      };
-      STATE.photos.unshift(newPhoto);
-      showToast("Foto berhasil disimpan ke Rol Acara!", "success");
-      document.getElementById('modalReviewPhoto').classList.add('hidden');
-      renderGallery();
-      showView('viewGallery');
+    // Backup ke localStorage agar foto tetap ada saat offline maupun refresh
+    try {
+      const cached = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
+      cached.unshift(newPhoto);
+      localStorage.setItem('snapevent_local_photos', JSON.stringify(cached.slice(0, 50)));
+    } catch (storeErr) {
+      console.warn("Storage warning:", storeErr);
     }
 
+    // Segera tutup modal review dan tampilkan galeri dengan foto baru
+    document.getElementById('modalReviewPhoto').classList.add('hidden');
+    renderGallery();
+    showView('viewGallery');
     updateRemainingQuotaDisplay();
+
+    // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
+    if (STATE.gasApiUrl) {
+      const payload = {
+        action: "uploadPhoto",
+        eventId: STATE.activeEventId,
+        guestId: STATE.guestId,
+        guestNama: STATE.guestNama || "Tamu",
+        caption: caption,
+        cameraStyle: STATE.activeFilter,
+        frameStyle: STATE.activeFrame,
+        imageBase64: STATE.currentCapturedDataUrl
+      };
+
+      try {
+        const resp = await fetch(STATE.gasApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+
+        if (res.status === 'success') {
+          if (res.photo?.idFoto) newPhoto.idFoto = res.photo.idFoto;
+          if (res.photo?.gdriveViewUrl || res.viewUrl) {
+            newPhoto.gdriveViewUrl = res.photo?.gdriveViewUrl || res.viewUrl;
+          }
+          showToast("Foto berhasil disimpan ke Galeri & Google Drive!", "success");
+          renderGallery();
+        } else if (res.status === 'limit_reached') {
+          showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+        } else {
+          showToast("Foto tersimpan di Galeri Acara (Sinkronisasi Drive tertunda)", "info");
+        }
+      } catch (uploadErr) {
+        console.warn("Upload Google Drive background error:", uploadErr);
+        showToast("Foto berhasil disimpan ke Galeri Acara!", "success");
+      }
+    } else {
+      showToast("Foto berhasil disimpan ke Galeri Acara!", "success");
+    }
   } catch (err) {
     showToast("Terjadi kesalahan: " + err.message, "error");
   } finally {
@@ -1041,12 +1079,12 @@ function renderVotingWinners() {
 
   let podiumHtml = `
     <!-- Juara 1 Emas (Champion) -->
-    <div class="podium-card-gold rounded-2xl p-4 text-center flex flex-col items-center">
+    <div class="podium-card-gold winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="0" title="Klik untuk memperbesar foto Juara 1">
       <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
         <span>🥇 Juara 1 (Emas)</span>
       </div>
-      <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-brand-gold/70 shadow-xl cursor-pointer img-winner-zoom" data-idx="0">
-        <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+      <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-brand-gold/70 shadow-xl">
+        <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
       </div>
       <h4 class="font-bold text-sm text-white">${p1.guestNama}</h4>
       <p class="text-xs text-zinc-300 italic truncate max-w-[220px] mb-2">"${p1.caption || 'Tanpa ucapan'}"</p>
@@ -1054,18 +1092,19 @@ function renderVotingWinners() {
         <span>❤️</span>
         <span>${p1.totalLikes || 0} Suka</span>
       </div>
+      <span class="text-[10px] text-brand-gold/70 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
     </div>
   `;
 
   if (p2) {
     podiumHtml += `
       <!-- Juara 2 Perak -->
-      <div class="podium-card-silver rounded-2xl p-4 text-center flex flex-col items-center">
+      <div class="podium-card-silver winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="1" title="Klik untuk memperbesar foto Juara 2">
         <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-300 text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
           <span>🥈 Juara 2 (Perak)</span>
         </div>
-        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/70 shadow-lg cursor-pointer img-winner-zoom" data-idx="1">
-          <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/70 shadow-lg">
+          <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
         </div>
         <h4 class="font-bold text-sm text-white">${p2.guestNama}</h4>
         <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p2.caption || 'Tanpa ucapan'}"</p>
@@ -1073,6 +1112,7 @@ function renderVotingWinners() {
           <span>❤️</span>
           <span>${p2.totalLikes || 0} Suka</span>
         </div>
+        <span class="text-[10px] text-zinc-400 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
       </div>
     `;
   }
@@ -1080,12 +1120,12 @@ function renderVotingWinners() {
   if (p3) {
     podiumHtml += `
       <!-- Juara 3 Perunggu -->
-      <div class="podium-card-bronze rounded-2xl p-4 text-center flex flex-col items-center">
+      <div class="podium-card-bronze winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="2" title="Klik untuk memperbesar foto Juara 3">
         <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-700 text-white text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
           <span>🥉 Juara 3 (Perunggu)</span>
         </div>
-        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/70 shadow-lg cursor-pointer img-winner-zoom" data-idx="2">
-          <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/70 shadow-lg">
+          <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
         </div>
         <h4 class="font-bold text-sm text-white">${p3.guestNama}</h4>
         <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p3.caption || 'Tanpa ucapan'}"</p>
@@ -1093,13 +1133,14 @@ function renderVotingWinners() {
           <span>❤️</span>
           <span>${p3.totalLikes || 0} Suka</span>
         </div>
+        <span class="text-[10px] text-amber-300/70 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
       </div>
     `;
   }
 
   podium.innerHTML = podiumHtml;
 
-  podium.querySelectorAll('.img-winner-zoom').forEach(el => {
+  podium.querySelectorAll('.winner-podium-card').forEach(el => {
     el.addEventListener('click', () => {
       const idx = parseInt(el.getAttribute('data-idx'), 10);
       if (sorted[idx]) openPhotoZoom(sorted[idx]);
@@ -1133,6 +1174,7 @@ function openPhotoZoom(photo) {
 function openSlideshow() {
   const modal = document.getElementById('modalSlideshow');
   modal.classList.remove('hidden');
+  sessionStorage.setItem('snapevent_slideshow_active', 'true');
 
   // Generate & Inject Real Scannable QR Code for Ballroom Projector Screen
   const qrImg = document.getElementById('slideshowQrImg');
@@ -1190,6 +1232,7 @@ function showSlideshowPhoto() {
 
 function closeSlideshow() {
   document.getElementById('modalSlideshow').classList.add('hidden');
+  sessionStorage.removeItem('snapevent_slideshow_active');
   if (STATE.slideshowTimer) clearInterval(STATE.slideshowTimer);
 }
 
@@ -1743,55 +1786,35 @@ function bindEvents() {
     triggerCameraShutter();
   });
 
-  // Ganti Bingkai Kamera (Tombol Pengganti Logo Gambar Lama)
-  document.getElementById('btnCycleFrame')?.addEventListener('click', () => {
-    cycleNextFrame();
-  });
+  // Live Video Trigger & Native File Fallback
+  document.getElementById('btnInitStream')?.addEventListener('click', startCameraStream);
 
-  // Touch Gesture: Usap Layar (Horizontal Swipe) pada Viewfinder untuk Ganti Bingkai
-  const vfContainer = document.getElementById('viewfinderViewport') || document.getElementById('cameraVideo');
-  let touchStartX = 0;
-  let touchStartY = 0;
-  if (vfContainer) {
-    vfContainer.addEventListener('touchstart', (e) => {
-      if (e.touches && e.touches.length > 0) {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-      }
-    }, { passive: true });
-
-    vfContainer.addEventListener('touchend', (e) => {
-      if (e.changedTouches && e.changedTouches.length > 0) {
-        const endX = e.changedTouches[0].clientX;
-        const endY = e.changedTouches[0].clientY;
-        const diffX = endX - touchStartX;
-        const diffY = endY - touchStartY;
-        // Hanya trigger jika gerakan mendatar lebih dominan daripada vertikal
-        if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY)) {
-          if (diffX < 0) {
-            cycleNextFrame(); // Geser ke kiri -> Frame berikutnya
-          } else {
-            cyclePrevFrame(); // Geser ke kanan -> Frame sebelumnya
-          }
-        }
-      }
-    }, { passive: true });
+  // Tombol Buka Galeri HP di Samping Tombol Shutter
+  const btnOpenGallery = document.getElementById('btnOpenGalleryUpload');
+  const galleryInput = document.getElementById('galleryUploadInput');
+  if (btnOpenGallery && galleryInput) {
+    btnOpenGallery.addEventListener('click', () => {
+      galleryInput.click();
+    });
+    galleryInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          processPhotoWithFrameAndFilter(img);
+          galleryInput.value = ''; // Reset input agar foto yang sama dapat dipilih kembali jika diinginkan
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
-  // Dukungan Navigasi Keyboard Desktop (Panah Kiri / Kanan) untuk Ganti Bingkai
-  window.addEventListener('keydown', (e) => {
-    if (document.getElementById('viewCamera')?.classList.contains('hidden')) return;
-    if (e.key === 'ArrowRight') cycleNextFrame();
-    if (e.key === 'ArrowLeft') cyclePrevFrame();
-  });
-
-  // Live Video Trigger & Native File Fallback
-  document.getElementById('btnInitStream').addEventListener('click', startCameraStream);
-  document.getElementById('btnOpenGalleryUpload')?.addEventListener('click', triggerNativeCamera);
-
-  // Handle Native File Capture
-  document.getElementById('nativeCameraInput').addEventListener('change', (e) => {
-    const file = e.target.files[0];
+  // Handle Native Camera Fallback
+  document.getElementById('nativeCameraInput')?.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -1996,6 +2019,27 @@ function bindEvents() {
   // Slideshow Controls
   document.getElementById('btnOpenSlideshow').addEventListener('click', openSlideshow);
   document.getElementById('btnCloseSlideshow').addEventListener('click', closeSlideshow);
+
+  // Tombol Bagikan Acara pada Layar Mobile Slideshow (Web Share API / Modal QR Fallback)
+  document.getElementById('btnSlideshowMobileShare')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    const eventName = STATE.activeEvent?.namaEvent || STATE.appTitle || "SnapEvent";
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: eventName,
+          text: `Ayo abadikan dan tonton foto momen seru di ${eventName}!`,
+          url: shareUrl
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          openShareQrModal();
+        }
+      }
+    } else {
+      openShareQrModal();
+    }
+  });
 
   // Admin Login & Navigation
   document.getElementById('btnOpenAdmin').addEventListener('click', openAdminPanel);

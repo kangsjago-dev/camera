@@ -140,17 +140,10 @@
         </div>
       </div>
 
-      <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT & TOUCH SWIPE) -->
-      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-2 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center cursor-pointer select-none">
+      <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT WITH INTEGRATED FILTERS) -->
+      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-2 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center select-none">
         <!-- Live Video Element with Realtime CSS Filter Effect & Autoplay -->
         <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
-        
-        <!-- Swipe Hint Badge -->
-        <div id="vfSwipeHint" class="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-black/70 backdrop-blur border border-amber-500/30 text-[10px] text-amber-200 pointer-events-none flex items-center gap-1.5 shadow-lg transition-opacity duration-300">
-          <span>👆</span>
-          <span id="vfActiveFrameBadge" class="font-bold">✨ Gold Deco</span>
-          <span class="text-zinc-400">· Usap untuk ganti</span>
-        </div>
 
         <!-- Custom Frame Image Overlay (PNG) -->
         <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
@@ -166,10 +159,26 @@
             <div class="w-2 h-2 bg-brand-gold/60 rounded-full animate-pulse"></div>
           </div>
 
-          <div class="text-center">
+          <div class="text-center pb-12">
             <p id="vfFrameBottomTitle" class="font-serif italic text-sm text-amber-200 drop-shadow">The Wedding of Sarah & Kevin</p>
             <p id="vfFrameBottomHashtag" class="text-[10px] text-white/80 font-hand tracking-wider">#SarahKevinEverAfter</p>
           </div>
+        </div>
+
+        <!-- Floating Filter Selector Pills (Inside Viewfinder Frame) -->
+        <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 max-w-[94%] w-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 shadow-xl overflow-x-auto" id="filterListContainer">
+          <button data-filter="RAW" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+            RAW
+          </button>
+          <button data-filter="800T" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
+            800T Cine
+          </button>
+          <button data-filter="WARM" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+            Warm Sun
+          </button>
+          <button data-filter="BW" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+            B&W Noir
+          </button>
         </div>
 
         <!-- Standby Notice if camera fails or waiting -->
@@ -191,34 +200,14 @@
         <input type="file" id="nativeCameraInput" accept="image/*" capture="environment" class="hidden" />
       </div>
 
-      <!-- FILTER SELECTOR (LIVE PREVIEW SWITCHER) -->
-      <div class="shrink-0 space-y-1.5 mb-1">
-        <div class="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-zinc-400 px-1">
-          <span>Filter Kamera (Live Effect)</span>
-          <span id="activeFilterName" class="text-brand-gold font-bold">800T CINE</span>
-        </div>
-        <div class="flex items-center gap-1.5 overflow-x-auto pb-1" id="filterListContainer">
-          <button data-filter="RAW" class="filter-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
-            RAW Asli
-          </button>
-          <button data-filter="800T" class="filter-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
-            800T Cine
-          </button>
-          <button data-filter="WARM" class="filter-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
-            Warm Sun
-          </button>
-          <button data-filter="BW" class="filter-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
-            B&W Noir
-          </button>
-        </div>
-      </div>
-
-      <!-- Hidden container for frameListContainer to maintain full compatibility -->
+      <!-- Hidden container for filter name & frame compatibility -->
+      <div id="activeFilterName" class="hidden">800T CINE</div>
       <div id="frameListContainer" class="hidden"></div>
       <div id="activeFrameName" class="hidden">GOLD ART DECO</div>
+      <div id="vfActiveFrameBadge" class="hidden"></div>
 
       <!-- CAMERA CONTROLS: SHUTTER & SWITCH BUTTONS -->
-      <div class="shrink-0 flex items-center justify-around py-1">
+      <div class="shrink-0 flex items-center justify-around py-1.5">
         <button id="btnSwitchCamera" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Putar Kamera Depan/Belakang">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
@@ -234,16 +223,18 @@
           </div>
         </button>
 
-        <!-- Tombol Ganti Bingkai (Gantikan Ikon Logo/Galeri yang Membingungkan) -->
-        <button id="btnCycleFrame" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex flex-col items-center justify-center text-zinc-300 hover:text-brand-gold active:scale-95 transition" title="Ganti Bingkai (atau Usap Layar)">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-            <path d="M3 9h18M9 21V9"/>
+        <!-- Tombol Unggah dari Galeri HP (Di Samping Shutter) -->
+        <button id="btnOpenGalleryUpload" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-brand-gold active:scale-95 transition" title="Unggah Foto dari Galeri HP">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
           </svg>
         </button>
+        <input type="file" id="galleryUploadInput" accept="image/*" class="hidden" />
 
         <!-- Hidden compat button to prevent null references -->
-        <button id="btnOpenGalleryUpload" class="hidden"></button>
+        <button id="btnCycleFrame" class="hidden"></button>
       </div>
     </section>
 
@@ -642,10 +633,10 @@
 
       <button id="navBtnGallery" class="nav-item flex flex-col items-center gap-1 text-zinc-400 hover:text-white transition">
         <div class="relative">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-            <circle cx="9" cy="9" r="2"/>
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
           </svg>
           <span id="navGalleryDot" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-brand-gold"></span>
         </div>
@@ -754,8 +745,8 @@
       </button>
     </div>
 
-    <div class="absolute inset-0 flex items-center justify-center p-8 z-0">
-      <img id="slideshowImg" src="" alt="Live Event Photo" class="max-h-full max-w-full object-contain rounded-2xl shadow-2xl transition-opacity duration-1000 opacity-0 ken-burns" />
+    <div class="absolute inset-0 flex items-center justify-center p-2 sm:p-4 md:p-6 z-0">
+      <img id="slideshowImg" src="" alt="Live Event Photo" class="w-auto h-auto max-h-[88vh] max-w-[95vw] md:max-h-[92vh] md:max-w-[96vw] object-contain rounded-2xl shadow-2xl transition-opacity duration-1000 opacity-0 ken-burns" />
       <div id="slideshowEmptyMsg" class="hidden text-center text-zinc-400">
         <p class="font-serif text-xl text-white mb-2">Live Photo Stream</p>
         <p class="text-xs">Foto yang diunggah para tamu akan otomatis muncul bergantian di layar ini.</p>
@@ -771,7 +762,7 @@
       </div>
     </div>
 
-    <div class="relative z-10 flex items-center justify-between p-6 bg-gradient-to-t from-black/80 to-transparent">
+    <div class="relative z-10 flex items-center justify-between p-4 sm:p-6 bg-gradient-to-t from-black/80 to-transparent">
       <div class="flex items-center gap-3">
         <span class="flex h-3 w-3 relative">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -780,7 +771,17 @@
         <span class="text-xs uppercase font-bold text-white tracking-widest">LIVE EVENT SLIDESHOW</span>
       </div>
 
-      <div class="flex items-center gap-3 bg-black/70 backdrop-blur-md border border-white/15 px-4 py-2.5 rounded-2xl shadow-xl">
+      <!-- Tampilan Tombol Bagikan untuk Mobile Ponsel (sm:hidden) -->
+      <button id="btnSlideshowMobileShare" class="flex sm:hidden items-center gap-2 px-4 py-2 rounded-xl bg-brand-gold text-black text-xs font-bold shadow-lg hover:brightness-110 active:scale-95 transition" title="Bagikan Acara">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>
+        </svg>
+        <span>Bagikan Acara</span>
+      </button>
+
+      <!-- Tampilan Scan QR untuk Proyektor / Layar PC Desktop (hidden sm:flex) -->
+      <div class="hidden sm:flex items-center gap-3 bg-black/70 backdrop-blur-md border border-white/15 px-4 py-2.5 rounded-2xl shadow-xl">
         <div class="w-14 h-14 bg-white rounded-xl p-1 flex items-center justify-center shrink-0 shadow-inner">
           <img id="slideshowQrImg" src="" alt="Scan QR" class="w-full h-full object-contain" />
         </div>

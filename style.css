@@ -131,18 +131,30 @@
   box-shadow: 0 0 18px rgba(205, 127, 50, 0.15);
 }
 
-/* Swipe Hint Soft Animation */
-@keyframes swipeHintPulse {
-  0%, 100% {
-    transform: translate(-50%, 0);
-    opacity: 0.95;
-  }
-  50% {
-    transform: translate(-50%, -2px);
-    opacity: 1;
-  }
+.podium-card-gold, .podium-card-silver, .podium-card-bronze {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  cursor: pointer;
 }
 
-#vfSwipeHint {
-  animation: swipeHintPulse 2.5s ease-in-out infinite;
+.podium-card-gold:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 0 35px rgba(212, 175, 55, 0.4);
+}
+
+.podium-card-silver:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 0 25px rgba(192, 192, 205, 0.3);
+}
+
+.podium-card-bronze:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 0 25px rgba(205, 127, 50, 0.3);
+}
+
+/* Floating Filter Selector Pills in Viewfinder */
+#filterListContainer {
+  scrollbar-width: none;
+}
+#filterListContainer::-webkit-scrollbar {
+  display: none;
 }
