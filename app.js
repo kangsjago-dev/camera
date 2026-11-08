@@ -30,7 +30,7 @@ const STATE = {
   guestNama: localStorage.getItem('snapevent_guest_nama') || '',
 
   // Active Event Context
-  activeEventId: 'EVT-202611-001',
+  activeEventId: localStorage.getItem('snapevent_active_event_id') || 'EVT-202611-001',
   activeEvent: null,
   activeCategories: [],
 
@@ -42,16 +42,81 @@ const STATE = {
   rawCapturedImageObj: null, // Clean captured snapshot without frame for dynamic frame switching
   currentCapturedDataUrl: null,
 
-  // Gallery & Photos Cache
+  // Gallery & Photos Cache (Isolasi Mandiri per Event)
   photos: [],
-  votedPhotoIds: JSON.parse(localStorage.getItem('snapevent_voted_photos') || '[]'),
-  votedCategoryIds: JSON.parse(localStorage.getItem('snapevent_voted_categories') || '[]'),
+  votedPhotoIds: [],
+  votedCategoryIds: [],
   activeGalleryFilter: 'ALL',
 
   // Slideshow State
   slideshowIndex: 0,
   slideshowTimer: null
 };
+
+// --- DATA ISOLATION HELPERS PER EVENT ---
+function getEventPhotosKey(eventId) {
+  return 'snapevent_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+}
+
+function getEventVotedPhotosKey(eventId) {
+  return 'snapevent_voted_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+}
+
+function getEventVotedCategoriesKey(eventId) {
+  return 'snapevent_voted_categories_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+}
+
+function loadEventPhotos(eventId) {
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const key = getEventPhotosKey(id);
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      STATE.photos = JSON.parse(raw);
+    } else {
+      // Migrasi atau fallback ke mock data sample jika event default demo
+      const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
+      if (id === MOCK_DATA.event.idEvent || id === 'EVT-202611-001') {
+        if (legacy.length > 0) {
+          STATE.photos = legacy;
+        } else {
+          STATE.photos = [...MOCK_DATA.samplePhotos];
+        }
+        localStorage.setItem(key, JSON.stringify(STATE.photos));
+      } else {
+        STATE.photos = [];
+      }
+    }
+  } catch (e) {
+    STATE.photos = [];
+  }
+}
+
+function saveEventPhotos(eventId) {
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  try {
+    localStorage.setItem(getEventPhotosKey(id), JSON.stringify(STATE.photos.slice(0, 100)));
+  } catch (e) {
+    console.warn("Penyimpanan foto penuh / error:", e);
+  }
+}
+
+function loadEventVotes(eventId) {
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  try {
+    STATE.votedPhotoIds = JSON.parse(localStorage.getItem(getEventVotedPhotosKey(id)) || '[]');
+    STATE.votedCategoryIds = JSON.parse(localStorage.getItem(getEventVotedCategoriesKey(id)) || '[]');
+  } catch (e) {
+    STATE.votedPhotoIds = [];
+    STATE.votedCategoryIds = [];
+  }
+}
+
+function saveEventVotes(eventId) {
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  localStorage.setItem(getEventVotedPhotosKey(id), JSON.stringify(STATE.votedPhotoIds));
+  localStorage.setItem(getEventVotedCategoriesKey(id), JSON.stringify(STATE.votedCategoryIds));
+}
 
 function extractDriveFolderId(input) {
   if (!input) return "";
@@ -177,24 +242,53 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initApp() {
+  // Pastikan koleksi events terinisialisasi
+  if (!Array.isArray(STATE.events) || STATE.events.length === 0) {
+    STATE.events = [MOCK_DATA.event];
+    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  }
+
+  // Tentukan event aktif saat ini
+  const savedActiveId = localStorage.getItem('snapevent_active_event_id');
+  if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
+    STATE.activeEventId = savedActiveId;
+  } else {
+    STATE.activeEventId = STATE.events[0].idEvent;
+    localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
+  }
+
+  STATE.activeEvent = STATE.events.find(e => e.idEvent === STATE.activeEventId) || STATE.events[0];
+
   // Periksa parameter URL (e.g. ?event=sarah-kevin&view=slideshow)
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('event')) {
-    STATE.activeEventId = urlParams.get('event');
+  const requestedEvent = urlParams.get('event');
+
+  // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan event tersebut TIDAK aktif
+  if (requestedEvent) {
+    const isMatchActive = (requestedEvent === STATE.activeEvent.idEvent) || 
+                          (STATE.activeEvent.slugEvent && requestedEvent.toLowerCase() === STATE.activeEvent.slugEvent.toLowerCase());
+    
+    if (!isMatchActive) {
+      // Jika sesi admin sedang aktif, admin tetap boleh masuk
+      if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
+        const closedTitle = document.getElementById('closedEventTitle');
+        if (closedTitle) closedTitle.textContent = "Acara Ini Sedang Tidak Aktif";
+        const closedDesc = document.getElementById('closedEventDesc');
+        if (closedDesc) {
+          closedDesc.textContent = `Tautan acara "${requestedEvent}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh publik.`;
+        }
+        showView('viewEventClosed');
+        return;
+      }
+    }
   }
+
+  // Muat data foto & voting terisolasi untuk event aktif
+  loadEventPhotos(STATE.activeEventId);
+  loadEventVotes(STATE.activeEventId);
 
   // Muat data awal event dari API Google Apps Script atau Mock Data
   await loadEventData();
-
-  // Pulihkan foto lokal dari localStorage jika ada
-  try {
-    const localPhotos = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-    if (localPhotos.length > 0) {
-      const existingIds = new Set(STATE.photos.map(p => p.idFoto));
-      const toAdd = localPhotos.filter(p => !existingIds.has(p.idFoto));
-      STATE.photos = [...toAdd, ...STATE.photos];
-    }
-  } catch (e) { }
 
   // Cek Persistensi Sesi Admin (Anti-Keluar saat refresh F5!)
   if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
@@ -227,7 +321,7 @@ function getOrCreateGuestId() {
   return id;
 }
 
-// --- 3. DATA FETCHING (GAS API OR MOCK) ---
+// --- 3. DATA FETCHING (GAS API OR MOCK) & EVENT ACTIVATION ---
 async function loadEventData() {
   if (STATE.gasApiUrl) {
     try {
@@ -250,26 +344,72 @@ async function loadEventData() {
         if (res.guestStats && res.guestStats.guestVotesMap) {
           const votedList = Object.keys(res.guestStats.guestVotesMap).filter(k => res.guestStats.guestVotesMap[k] > 0);
           STATE.votedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
-          localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+          saveEventVotes(STATE.activeEventId);
         }
 
         applyGlobalConfigToUI();
         applyEventToUI();
         await loadGallery();
         return;
+      } else if (res.status === 'inactive') {
+        if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
+          showView('viewEventClosed');
+          return;
+        }
       }
     } catch (e) {
       console.warn("Koneksi GAS API belum aktif, menggunakan mode demo:", e.message);
     }
   }
 
-  // Fallback ke Mock Data
-  STATE.activeEvent = MOCK_DATA.event;
-  STATE.activeCategories = MOCK_DATA.categories;
-  STATE.photos = [...MOCK_DATA.samplePhotos];
+  // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara)
+  STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
+  STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
+  loadEventPhotos(STATE.activeEventId);
   applyGlobalConfigToUI();
   applyEventToUI();
   renderGallery();
+}
+
+function activateEvent(idEvent) {
+  if (!idEvent) return;
+  STATE.activeEventId = idEvent;
+  localStorage.setItem('snapevent_active_event_id', idEvent);
+
+  const ev = (STATE.events && STATE.events.find(e => e.idEvent === idEvent)) || 
+             (idEvent === MOCK_DATA.event.idEvent ? MOCK_DATA.event : null);
+  if (ev) {
+    STATE.activeEvent = ev;
+  }
+
+  // RESET SESI TAMU: Website direset untuk ketikkan nama seperti pada tampilan awal (Screen 1)
+  STATE.guestNama = '';
+  localStorage.removeItem('snapevent_guest_nama');
+  sessionStorage.removeItem('snapevent_current_view');
+  const inputGuest = document.getElementById('inputGuestName');
+  if (inputGuest) inputGuest.value = '';
+
+  // LOAD ISOLATED DATA: Galeri & Voting khusus event ini
+  loadEventPhotos(idEvent);
+  loadEventVotes(idEvent);
+
+  applyEventToUI();
+  renderGallery();
+  renderAdminDashboard();
+
+  showToast(`Acara "${ev ? ev.namaEvent : idEvent}" sekarang AKTIF! Sesi tamu telah direset ke awal.`, 'success');
+
+  // Background sync ke GAS jika dikonfigurasi
+  if (STATE.gasApiUrl) {
+    fetch(STATE.gasApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'adminSetActiveEvent',
+        idEvent: idEvent
+      })
+    }).catch(err => console.warn("GAS setActiveEvent error:", err.message));
+  }
 }
 
 async function loadGallery() {
@@ -405,13 +545,29 @@ function showView(viewId) {
     }
   }
 
-  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin'].forEach(id => {
+  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden');
   });
 
   const target = document.getElementById(viewId);
   if (target) target.classList.remove('hidden');
+
+  const bottomNav = document.getElementById('bottomNavBar');
+
+  // Gerbang Acara Inaktif: Sembunyikan navigasi bawah & hentikan stream kamera
+  if (viewId === 'viewEventClosed') {
+    if (bottomNav) bottomNav.classList.add('hidden');
+    stopCameraStream();
+    return;
+  }
+
+  // Tampilkan atau sembunyikan navigasi bawah sesuai layar
+  if (viewId === 'viewWelcome' || viewId === 'viewAdmin') {
+    if (bottomNav) bottomNav.classList.add('hidden');
+  } else {
+    if (bottomNav) bottomNav.classList.remove('hidden');
+  }
 
   // Persistensi halaman yang sedang aktif agar saat refresh (F5) tetap di halaman ini
   sessionStorage.setItem('snapevent_current_view', viewId);
@@ -841,14 +997,8 @@ async function handleSavePhotoToDrive() {
     // Tambahkan foto ke urutan terdepan daftar foto
     STATE.photos.unshift(newPhoto);
 
-    // Backup ke localStorage agar foto tetap ada saat offline maupun refresh
-    try {
-      const cached = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      cached.unshift(newPhoto);
-      localStorage.setItem('snapevent_local_photos', JSON.stringify(cached.slice(0, 50)));
-    } catch (storeErr) {
-      console.warn("Storage warning:", storeErr);
-    }
+    // Backup ke localStorage terisolasi per event agar foto tetap aman saat offline maupun refresh
+    saveEventPhotos(STATE.activeEventId);
 
     // Segera tutup modal review dan tampilkan galeri dengan foto baru
     document.getElementById('modalReviewPhoto').classList.add('hidden');
@@ -945,8 +1095,7 @@ async function handleVotePhoto(idFoto, idKategori = '') {
       if (res.status === 'success') {
         STATE.votedPhotoIds.push(idFoto);
         STATE.votedCategoryIds.push(targetCat);
-        localStorage.setItem('snapevent_voted_photos', JSON.stringify(STATE.votedPhotoIds));
-        localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+        saveEventVotes(STATE.activeEventId);
 
         showToast("Suara Anda berhasil dicatat! ❤️", "success");
         await loadGallery();
@@ -957,8 +1106,7 @@ async function handleVotePhoto(idFoto, idKategori = '') {
       // Local Mock Vote
       STATE.votedPhotoIds.push(idFoto);
       STATE.votedCategoryIds.push(targetCat);
-      localStorage.setItem('snapevent_voted_photos', JSON.stringify(STATE.votedPhotoIds));
-      localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+      saveEventVotes(STATE.activeEventId);
 
       const target = STATE.photos.find(p => p.idFoto === idFoto);
       if (target) target.totalLikes += 1;
@@ -1176,21 +1324,33 @@ function openSlideshow() {
   modal.classList.remove('hidden');
   sessionStorage.setItem('snapevent_slideshow_active', 'true');
 
-  // Generate & Inject Real Scannable QR Code for Ballroom Projector Screen
+  const ev = STATE.activeEvent || (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
+  if (ev) {
+    const titleEl = document.getElementById('slideshowTitle');
+    if (titleEl) titleEl.textContent = ev.namaEvent;
+    const hashEl = document.getElementById('slideshowHashtag');
+    if (hashEl) hashEl.textContent = ev.hashtagEvent;
+  }
+
+  // Generate & Inject Real Scannable Ultra-Sharp QR Code for Ballroom Projector Screen (500px)
   const qrImg = document.getElementById('slideshowQrImg');
   if (qrImg) {
     const eventUrl = getEventShareUrl(STATE.activeEventId);
-    qrImg.src = getQrImageUrl(eventUrl, 250);
+    qrImg.src = getQrImageUrl(eventUrl, 500);
   }
 
   if (STATE.photos.length === 0) {
     document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
     document.getElementById('slideshowImg').classList.add('hidden');
+    const backdrop = document.getElementById('slideshowBackdropImg');
+    if (backdrop) backdrop.classList.add('hidden');
     return;
   }
 
   document.getElementById('slideshowEmptyMsg').classList.add('hidden');
   document.getElementById('slideshowImg').classList.remove('hidden');
+  const backdrop = document.getElementById('slideshowBackdropImg');
+  if (backdrop) backdrop.classList.remove('hidden');
 
   STATE.slideshowIndex = 0;
   showSlideshowPhoto();
@@ -1205,13 +1365,19 @@ function openSlideshow() {
 function showSlideshowPhoto() {
   if (STATE.photos.length === 0) return;
   const img = document.getElementById('slideshowImg');
+  const backdrop = document.getElementById('slideshowBackdropImg');
   const p = STATE.photos[STATE.slideshowIndex];
 
   img.style.opacity = '0';
+  if (backdrop) backdrop.style.opacity = '0';
+
   setTimeout(() => {
     img.src = p.gdriveViewUrl;
+    if (backdrop) backdrop.src = p.gdriveViewUrl;
+
     img.onload = () => {
       img.style.opacity = '1';
+      if (backdrop) backdrop.style.opacity = '0.35';
     };
 
     // Update Uploader, Pesan & Waktu di Layar Proyektor
@@ -1412,12 +1578,15 @@ function renderAdminDashboard() {
     const isActive = ev.idEvent === STATE.activeEventId;
 
     const card = document.createElement('div');
-    card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
+    card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60 ring-1 ring-brand-gold/30' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
     card.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
-          ${isActive ? '<span class="text-[9px] bg-brand-gold/20 text-brand-gold font-bold px-2 py-0.5 rounded-full border border-brand-gold/40">Acara Aktif</span>' : ''}
+          ${isActive 
+            ? '<span class="text-[9px] bg-brand-gold text-black font-extrabold px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">🌟 Sedang Berlangsung (Aktif)</span>' 
+            : `<button class="btn-activate-event text-[9px] bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black font-bold px-2.5 py-0.5 rounded-full border border-brand-gold/50 transition flex items-center gap-1">⭐ Aktifkan Event Ini</button>`
+          }
         </div>
         <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
           ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
@@ -1445,6 +1614,13 @@ function renderAdminDashboard() {
         </button>
       </div>
     `;
+
+    const btnActivate = card.querySelector('.btn-activate-event');
+    if (btnActivate) {
+      btnActivate.addEventListener('click', () => {
+        activateEvent(ev.idEvent);
+      });
+    }
 
     card.querySelector('.btn-edit-event').addEventListener('click', () => {
       populateEditEventForm(ev);
@@ -1671,8 +1847,11 @@ function saveAdminEventForm() {
 
   const customFrameData = STATE.tempCustomFrameData || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
 
-  STATE.activeEvent = {
-    idEvent: document.getElementById('formEventId').value || 'EVT-' + Date.now(),
+  const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
+  const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
+
+  const savedEvent = Object.assign({}, existingEv, {
+    idEvent: targetEventId,
     namaEvent: nama,
     slugEvent: nama.toLowerCase().replace(/[^a-z0-9]/g, '-'),
     tanggalEvent: tanggal,
@@ -1685,8 +1864,9 @@ function saveAdminEventForm() {
     publicVisible: publicVisible,
     gdriveFolderId: driveFolder,
     customFrameData: customFrameData,
-    customFrameUrl: customFrameData || ''
-  };
+    customFrameUrl: customFrameData || '',
+    categories: cats
+  });
 
   // Simpan Bingkai Kustom Baru jika ada unggahan
   if (STATE.tempCustomFrameData) {
@@ -1696,7 +1876,7 @@ function saveAdminEventForm() {
       id: 'frame_' + Date.now(),
       name: frameName,
       scope: scope,
-      eventId: STATE.activeEvent.idEvent,
+      eventId: savedEvent.idEvent,
       dataUrl: STATE.tempCustomFrameData
     };
     if (!Array.isArray(STATE.customFrames)) STATE.customFrames = [];
@@ -1707,16 +1887,21 @@ function saveAdminEventForm() {
 
   // Update Koleksi Acara Global (Multi-Event Management)
   if (!Array.isArray(STATE.events)) STATE.events = [];
-  const existingIdx = STATE.events.findIndex(e => e.idEvent === STATE.activeEvent.idEvent);
+  const existingIdx = STATE.events.findIndex(e => e.idEvent === savedEvent.idEvent);
   if (existingIdx >= 0) {
-    STATE.events[existingIdx] = STATE.activeEvent;
+    STATE.events[existingIdx] = savedEvent;
   } else {
-    STATE.events.unshift(STATE.activeEvent);
+    STATE.events.unshift(savedEvent);
   }
   localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-  STATE.activeEventId = STATE.activeEvent.idEvent;
 
-  STATE.activeCategories = cats;
+  // Jika yang diedit adalah event aktif (atau satu-satunya event), perbarui STATE.activeEvent
+  if (savedEvent.idEvent === STATE.activeEventId || STATE.events.length === 1) {
+    STATE.activeEventId = savedEvent.idEvent;
+    STATE.activeEvent = savedEvent;
+    STATE.activeCategories = cats;
+    applyEventToUI();
+  }
 
   // Sinkronisasi ke Backend GAS jika ada
   if (STATE.gasApiUrl) {
@@ -2100,8 +2285,17 @@ function bindEvents() {
   document.getElementById('btnSubmitAdminPin').addEventListener('click', verifyAdminLogin);
   document.getElementById('btnAdminLogout').addEventListener('click', () => {
     sessionStorage.removeItem('snapevent_admin_session');
-    showView('viewCamera');
+    if (!STATE.guestNama) {
+      showView('viewWelcome');
+    } else {
+      showView('viewCamera');
+    }
     showToast("Anda telah keluar dari panel Admin.", "info");
+  });
+
+  // Tombol Gerbang Acara Inaktif -> Buka Acara yang Sedang Berlangsung
+  document.getElementById('btnGoActiveEvent')?.addEventListener('click', () => {
+    window.location.href = window.location.pathname;
   });
 
   // Admin Tab Switchers (+ Buat Event Baru Handler)
