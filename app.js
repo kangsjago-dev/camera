@@ -380,7 +380,6 @@ async function initApp() {
   STATE.activeEvent = STATE.events.find(e => e.idEvent === STATE.activeEventId) || STATE.events[0];
 
   // Periksa parameter URL (e.g. ?event=sarah-kevin&view=slideshow)
-  const urlParams = new URLSearchParams(window.location.search);
   const requestedEvent = urlParams.get('event');
 
   // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan event tersebut TIDAK aktif
