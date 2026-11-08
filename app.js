@@ -174,8 +174,100 @@ function getAvailableFrames() {
   return frames;
 }
 
-// Default Seed / Mock Data for Instant Browser & Offline Preview
+// Default Seed / Mock Data for Instant Browser & Offline Preview (5 Complete Events)
 const MOCK_DATA = {
+  events: [
+    {
+      idEvent: "EVT-202611-001",
+      namaEvent: "The Wedding of Sarah & Kevin",
+      slugEvent: "sarah-kevin",
+      tanggalEvent: "2026-11-20",
+      hashtagEvent: "#SarahKevinEverAfter",
+      maxFotoPerGuest: 10,
+      maxVotePerGuest: 3,
+      revealMode: "SEGERA",
+      isRevealed: true,
+      likeEnabled: true,
+      publicVisible: true,
+      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
+      gdriveFolderId: "",
+      statusEvent: "AKTIF",
+      customFrameUrl: ""
+    },
+    {
+      idEvent: "EVT-202611-392",
+      namaEvent: "The Wedding of Hans & Yurike",
+      slugEvent: "hans-yurike",
+      tanggalEvent: "2026-11-25",
+      hashtagEvent: "#Hans&Yurike",
+      maxFotoPerGuest: 5,
+      maxVotePerGuest: 3,
+      revealMode: "SEGERA",
+      isRevealed: true,
+      likeEnabled: true,
+      publicVisible: true,
+      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
+      gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
+      statusEvent: "INAKTIF",
+      customFrameUrl: ""
+    },
+    {
+      idEvent: "EVT-202612-105",
+      namaEvent: "Annual Gala Dinner PT Nusantara Tech",
+      slugEvent: "nusantara-gala-2026",
+      tanggalEvent: "2026-12-15",
+      hashtagEvent: "#NusantaraGala2026",
+      maxFotoPerGuest: 8,
+      maxVotePerGuest: 2,
+      revealMode: "SETELAH",
+      isRevealed: false,
+      likeEnabled: true,
+      publicVisible: true,
+      activeCameraStyles: ["RAW", "800T", "BW"],
+      activeFrames: ["MINIMAL", "POLAROID"],
+      gdriveFolderId: "",
+      statusEvent: "INAKTIF",
+      customFrameUrl: ""
+    },
+    {
+      idEvent: "EVT-202612-210",
+      namaEvent: "Clarissa's Sweet 17: Enchanted Forest",
+      slugEvent: "clarissa-sweet-17",
+      tanggalEvent: "2026-12-28",
+      hashtagEvent: "#ClarissaSweet17",
+      maxFotoPerGuest: 12,
+      maxVotePerGuest: 3,
+      revealMode: "SEGERA",
+      isRevealed: true,
+      likeEnabled: true,
+      publicVisible: true,
+      activeCameraStyles: ["RAW", "800T", "WARM"],
+      activeFrames: ["GOLD_DECO", "POLAROID"],
+      gdriveFolderId: "",
+      statusEvent: "INAKTIF",
+      customFrameUrl: ""
+    },
+    {
+      idEvent: "EVT-202701-015",
+      namaEvent: "Alumni Homecoming SMAN 1 Angkatan 2016",
+      slugEvent: "reuni-smansa-2016",
+      tanggalEvent: "2027-01-10",
+      hashtagEvent: "#Smansa16Reunited",
+      maxFotoPerGuest: 15,
+      maxVotePerGuest: 5,
+      revealMode: "SEGERA",
+      isRevealed: true,
+      likeEnabled: true,
+      publicVisible: true,
+      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL", "NONE"],
+      gdriveFolderId: "",
+      statusEvent: "INAKTIF",
+      customFrameUrl: ""
+    }
+  ],
   event: {
     idEvent: "EVT-202611-001",
     namaEvent: "The Wedding of Sarah & Kevin",
@@ -184,13 +276,14 @@ const MOCK_DATA = {
     hashtagEvent: "#SarahKevinEverAfter",
     maxFotoPerGuest: 10,
     maxVotePerGuest: 3,
-    revealMode: "SEGERA", // "SEGERA" or "SETELAH"
+    revealMode: "SEGERA",
     isRevealed: true,
     likeEnabled: true,
     publicVisible: true,
     activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
     activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
     gdriveFolderId: "",
+    statusEvent: "AKTIF",
     customFrameUrl: ""
   },
   categories: [
@@ -242,9 +335,17 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initApp() {
-  // Pastikan koleksi events terinisialisasi
-  if (!Array.isArray(STATE.events) || STATE.events.length === 0) {
-    STATE.events = [MOCK_DATA.event];
+  // Pastikan koleksi events terinisialisasi dengan 5 event master lengkap
+  if (!Array.isArray(STATE.events) || STATE.events.length < 5) {
+    const existingIds = new Set((STATE.events || []).map(e => e.idEvent));
+    const merged = [...(STATE.events || [])];
+    MOCK_DATA.events.forEach(mockEvt => {
+      if (!existingIds.has(mockEvt.idEvent)) {
+        merged.push(mockEvt);
+        existingIds.add(mockEvt.idEvent);
+      }
+    });
+    STATE.events = merged;
     localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
   }
 
