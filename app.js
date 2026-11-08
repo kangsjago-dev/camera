@@ -523,8 +523,32 @@ function activateEvent(idEvent) {
 
 async function syncEventsFromBackend(showToastNotice = false) {
   if (!STATE.gasApiUrl) {
-    if (showToastNotice) showToast("URL Google Apps Script belum dikonfigurasi di Pengaturan Global.", "warning");
-    return;
+    if (showToastNotice) {
+      const enteredUrl = prompt(
+        "URL Google Apps Script belum dikonfigurasi.\n\nSilakan masukkan URL Web App hasil Deploy Google Apps Script Anda (berakhiran /exec):",
+        ""
+      );
+      if (enteredUrl && enteredUrl.trim().startsWith("http")) {
+        STATE.gasApiUrl = enteredUrl.trim();
+        localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
+        const inputEl = document.getElementById('cfgGasUrl');
+        if (inputEl) inputEl.value = STATE.gasApiUrl;
+        showToast("URL GAS berhasil disimpan! Melakukan sinkronisasi...", "info");
+      } else {
+        switchAdminTab('settings');
+        const inputEl = document.getElementById('cfgGasUrl');
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          inputEl.classList.add('ring-2', 'ring-amber-400');
+          setTimeout(() => inputEl.classList.remove('ring-2', 'ring-amber-400'), 4000);
+        }
+        showToast("Silakan masukkan URL Web App GAS pada tab Pengaturan Global lalu simpan.", "warning");
+        return;
+      }
+    } else {
+      return;
+    }
   }
 
   const btnText = document.getElementById('btnSyncEventsText');
@@ -2106,15 +2130,15 @@ function saveAdminEventForm() {
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'adminSaveEvent',
-        idEvent: STATE.activeEvent.idEvent,
+        idEvent: savedEvent.idEvent,
         namaEvent: nama,
-        slugEvent: STATE.activeEvent.slugEvent,
+        slugEvent: savedEvent.slugEvent,
         tanggalEvent: tanggal,
         hashtagEvent: hashtag,
         maxFotoPerGuest: maxFoto,
         maxVotePerGuest: maxVote,
         revealMode: revealMode,
-        isRevealed: STATE.activeEvent.isRevealed,
+        isRevealed: savedEvent.isRevealed,
         likeEnabled: likeEnabled,
         publicVisible: publicVisible,
         gdriveFolderId: driveFolder,
@@ -2590,10 +2614,13 @@ function bindEvents() {
     localStorage.setItem('snapevent_admin_pass', pass);
     localStorage.setItem('snapevent_drive_master_id', driveMaster);
 
+    applyGlobalConfigToUI();
+
     // Sinkronisasi ke Backend GAS jika URL aktif
     if (url) {
+      showToast("Menyimpan ke Google Sheets & database cloud...", "info");
       try {
-        await fetch(url, {
+        const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({
@@ -2610,13 +2637,28 @@ function bindEvents() {
             }
           })
         });
+        const res = await resp.json().catch(() => null);
+        if (res && res.status === 'success') {
+          showToast("✅ Berhasil! Pengaturan tersimpan ke Google Sheets & aktif untuk seluruh perangkat.", "success");
+        } else {
+          showToast("✅ Pengaturan tersimpan lokal & dikirim ke Google Sheets.", "success");
+        }
       } catch (err) {
         console.warn("Sync global config error:", err.message);
+        showToast("⚠️ Tersimpan lokal, namun gagal sync ke Google Sheets: " + err.message + ". Pastikan deployment GAS disetel 'Who has access: Anyone'.", "error");
       }
+    } else {
+      // Jika URL kosong, BERIKAN PERINGATAN JELAS agar pengguna tahu kenapa di tempat lain tidak berubah!
+      const inputEl = document.getElementById('cfgGasUrl');
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        inputEl.classList.add('ring-2', 'ring-amber-400');
+        setTimeout(() => inputEl.classList.remove('ring-2', 'ring-amber-400'), 5000);
+      }
+      showToast("⚠️ PERHATIAN: Pengaturan HANYA tersimpan di browser ini! Agar tersimpan ke Google Sheets & berubah di perangkat lain, masukkan URL Web App GAS pada kolom yang ditandai.", "warning");
     }
 
-    applyGlobalConfigToUI();
-    showToast("Pengaturan global & branding berhasil disimpan!", "success");
     loadEventData();
   });
 
