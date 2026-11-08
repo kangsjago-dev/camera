@@ -5,11 +5,18 @@
  * ==============================================================================
  */
 
-// --- 1. LOCAL STATE & IN-MEMORY CACHE ---
+// --- 1. GLOBAL DEFAULTS & LOCAL STATE ---
+const GLOBAL_CONFIG = {
+  // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
+  DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
+  DEFAULT_APP_TITLE: 'SnapEvent Studio',
+  DEFAULT_GAS_URL: '' // Dapat diisi URL default deployment jika diinginkan
+};
+
 const STATE = {
-  // Configuration & Custom Branding
-  gasApiUrl: localStorage.getItem('snapevent_gas_url') || '',
-  appTitle: localStorage.getItem('snapevent_app_title') || 'SnapEvent Studio',
+  // Configuration & Custom Branding (Cloud Persistent)
+  gasApiUrl: localStorage.getItem('snapevent_gas_url') || GLOBAL_CONFIG.DEFAULT_GAS_URL,
+  appTitle: localStorage.getItem('snapevent_app_title') || GLOBAL_CONFIG.DEFAULT_APP_TITLE,
   appLogoUrl: localStorage.getItem('snapevent_app_logo_url') || '',
   appPhone: localStorage.getItem('snapevent_app_phone') || '0812-3456-7890',
   appInstagram: localStorage.getItem('snapevent_app_instagram') || '@snapevent',
@@ -19,7 +26,7 @@ const STATE = {
   userAccounts: JSON.parse(localStorage.getItem('snapevent_user_accounts') || '[{"user":"crew","pass":"crew123","role":"operator"}]'),
   currentUserRole: sessionStorage.getItem('snapevent_user_role') || 'guest',
   currentUsername: sessionStorage.getItem('snapevent_user_name') || 'admin',
-  driveMasterId: localStorage.getItem('snapevent_drive_master_id') || '',
+  driveMasterId: localStorage.getItem('snapevent_drive_master_id') || GLOBAL_CONFIG.DEFAULT_DRIVE_MASTER_ID,
   customFrameImgObj: null,
   tempCustomFrameData: null,
   customFrames: JSON.parse(localStorage.getItem('snapevent_custom_frames') || '[]'),
@@ -132,7 +139,11 @@ function getEventShareUrl(eventId) {
   const id = eventId || STATE.activeEventId || 'EVT-202611-001';
   const loc = window.location;
   const base = `${loc.protocol}//${loc.host}${loc.pathname}`;
-  return `${base}?event=${encodeURIComponent(id)}`;
+  let shareUrl = `${base}?event=${encodeURIComponent(id)}`;
+  if (STATE.gasApiUrl) {
+    shareUrl += `&gas=${encodeURIComponent(STATE.gasApiUrl)}`;
+  }
+  return shareUrl;
 }
 
 function getQrImageUrl(text, size = 300) {
@@ -335,6 +346,14 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initApp() {
+  // 0. Deteksi Parameter URL Cloud Bridge (?gas=... & ?event=...)
+  const urlParams = new URLSearchParams(window.location.search);
+  const gasFromUrl = urlParams.get('gas');
+  if (gasFromUrl && gasFromUrl.trim().startsWith('http')) {
+    STATE.gasApiUrl = decodeURIComponent(gasFromUrl.trim());
+    localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
+  }
+
   // Pastikan koleksi events terinisialisasi dengan 5 event master lengkap
   if (!Array.isArray(STATE.events) || STATE.events.length < 5) {
     const existingIds = new Set((STATE.events || []).map(e => e.idEvent));
@@ -441,12 +460,39 @@ async function loadEventData() {
         }
 
         if (res.globalConfig) {
-          if (res.globalConfig.app_title) STATE.appTitle = res.globalConfig.app_title;
-          if (res.globalConfig.app_logo_url) STATE.appLogoUrl = res.globalConfig.app_logo_url;
-          if (res.globalConfig.app_phone) STATE.appPhone = res.globalConfig.app_phone;
-          if (res.globalConfig.app_instagram) STATE.appInstagram = res.globalConfig.app_instagram;
+          if (res.globalConfig.master_drive_folder_id) {
+            STATE.driveMasterId = res.globalConfig.master_drive_folder_id;
+            localStorage.setItem('snapevent_drive_master_id', STATE.driveMasterId);
+          }
+          if (res.globalConfig.app_title) {
+            STATE.appTitle = res.globalConfig.app_title;
+            localStorage.setItem('snapevent_app_title', STATE.appTitle);
+          }
+          if (res.globalConfig.app_logo_url) {
+            STATE.appLogoUrl = res.globalConfig.app_logo_url;
+            localStorage.setItem('snapevent_app_logo_url', STATE.appLogoUrl);
+          }
+          if (res.globalConfig.app_phone) {
+            STATE.appPhone = res.globalConfig.app_phone;
+            localStorage.setItem('snapevent_app_phone', STATE.appPhone);
+          }
+          if (res.globalConfig.app_instagram) {
+            STATE.appInstagram = res.globalConfig.app_instagram;
+            localStorage.setItem('snapevent_app_instagram', STATE.appInstagram);
+          }
+          if (res.globalConfig.admin_user) {
+            STATE.adminUser = res.globalConfig.admin_user;
+            localStorage.setItem('snapevent_admin_user', STATE.adminUser);
+          }
+          if (res.globalConfig.admin_pass) {
+            STATE.adminPass = res.globalConfig.admin_pass;
+            localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
+          }
           if (res.globalConfig.user_accounts) {
-            try { STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts); } catch (e) { }
+            try {
+              STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts);
+              localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+            } catch (e) { }
           }
         }
 
@@ -593,8 +639,40 @@ async function syncEventsFromBackend(showToastNotice = false) {
       }
 
       if (res.globalConfig) {
-        if (res.globalConfig.app_title) STATE.appTitle = res.globalConfig.app_title;
-        if (res.globalConfig.app_logo_url) STATE.appLogoUrl = res.globalConfig.app_logo_url;
+        if (res.globalConfig.master_drive_folder_id) {
+          STATE.driveMasterId = res.globalConfig.master_drive_folder_id;
+          localStorage.setItem('snapevent_drive_master_id', STATE.driveMasterId);
+        }
+        if (res.globalConfig.app_title) {
+          STATE.appTitle = res.globalConfig.app_title;
+          localStorage.setItem('snapevent_app_title', STATE.appTitle);
+        }
+        if (res.globalConfig.app_logo_url) {
+          STATE.appLogoUrl = res.globalConfig.app_logo_url;
+          localStorage.setItem('snapevent_app_logo_url', STATE.appLogoUrl);
+        }
+        if (res.globalConfig.app_phone) {
+          STATE.appPhone = res.globalConfig.app_phone;
+          localStorage.setItem('snapevent_app_phone', STATE.appPhone);
+        }
+        if (res.globalConfig.app_instagram) {
+          STATE.appInstagram = res.globalConfig.app_instagram;
+          localStorage.setItem('snapevent_app_instagram', STATE.appInstagram);
+        }
+        if (res.globalConfig.admin_user) {
+          STATE.adminUser = res.globalConfig.admin_user;
+          localStorage.setItem('snapevent_admin_user', STATE.adminUser);
+        }
+        if (res.globalConfig.admin_pass) {
+          STATE.adminPass = res.globalConfig.admin_pass;
+          localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
+        }
+        if (res.globalConfig.user_accounts) {
+          try {
+            STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts);
+            localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+          } catch (e) { }
+        }
         applyGlobalConfigToUI();
       }
 
@@ -2736,4 +2814,19 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
+
+// --- 9. REALTIME CLOUD HEARTBEAT (OMNI-DEVICE AUTO-SYNC) ---
+// Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
+// dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
+setInterval(() => {
+  if (STATE.gasApiUrl && !document.hidden) {
+    loadEventData();
+  }
+}, 45000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && STATE.gasApiUrl) {
+    loadEventData();
+  }
+});
 
