@@ -109,3 +109,40 @@
 .ken-burns {
   animation: kenBurns 7s ease-in-out infinite alternate;
 }
+
+/* ==============================================================================
+ * PODIUM & VOTING WINNERS SHOWCASE
+ * ============================================================================== */
+.podium-card-gold {
+  background: linear-gradient(145deg, rgba(212, 175, 55, 0.15) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(212, 175, 55, 0.7);
+  box-shadow: 0 0 25px rgba(212, 175, 55, 0.25);
+}
+
+.podium-card-silver {
+  background: linear-gradient(145deg, rgba(192, 192, 205, 0.12) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(192, 192, 205, 0.5);
+  box-shadow: 0 0 18px rgba(192, 192, 205, 0.15);
+}
+
+.podium-card-bronze {
+  background: linear-gradient(145deg, rgba(205, 127, 50, 0.12) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(205, 127, 50, 0.5);
+  box-shadow: 0 0 18px rgba(205, 127, 50, 0.15);
+}
+
+/* Swipe Hint Soft Animation */
+@keyframes swipeHintPulse {
+  0%, 100% {
+    transform: translate(-50%, 0);
+    opacity: 0.95;
+  }
+  50% {
+    transform: translate(-50%, -2px);
+    opacity: 1;
+  }
+}
+
+#vfSwipeHint {
+  animation: swipeHintPulse 2.5s ease-in-out infinite;
+}

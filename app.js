@@ -18,9 +18,12 @@ const STATE = {
   adminPin: localStorage.getItem('snapevent_admin_pin') || '889900',
   userAccounts: JSON.parse(localStorage.getItem('snapevent_user_accounts') || '[{"user":"crew","pass":"crew123","role":"operator"}]'),
   currentUserRole: sessionStorage.getItem('snapevent_user_role') || 'guest',
+  currentUsername: sessionStorage.getItem('snapevent_user_name') || 'admin',
   driveMasterId: localStorage.getItem('snapevent_drive_master_id') || '',
   customFrameImgObj: null,
   tempCustomFrameData: null,
+  customFrames: JSON.parse(localStorage.getItem('snapevent_custom_frames') || '[]'),
+  events: JSON.parse(localStorage.getItem('snapevent_events') || '[]'),
 
   // Guest Profile
   guestId: getOrCreateGuestId(),
@@ -58,6 +61,52 @@ function extractDriveFolderId(input) {
   const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (idMatch && idMatch[1]) return idMatch[1];
   return str;
+}
+
+function getEventShareUrl(eventId) {
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const loc = window.location;
+  const base = `${loc.protocol}//${loc.host}${loc.pathname}`;
+  return `${base}?event=${encodeURIComponent(id)}`;
+}
+
+function getQrImageUrl(text, size = 300) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(text)}`;
+}
+
+function getAvailableFrames() {
+  const frames = [
+    { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin' },
+    { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin' },
+    { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin' },
+    { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin' }
+  ];
+
+  if (Array.isArray(STATE.customFrames)) {
+    STATE.customFrames.forEach(cf => {
+      if (cf.scope === 'global' || cf.eventId === STATE.activeEventId) {
+        frames.push({
+          id: cf.id,
+          name: `🖼️ ${cf.name || 'Custom'}`,
+          type: 'custom',
+          scope: cf.scope,
+          dataUrl: cf.dataUrl
+        });
+      }
+    });
+  }
+
+  if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && !STATE.customFrames.some(f => f.dataUrl === STATE.activeEvent.customFrameUrl)) {
+    frames.push({
+      id: 'frame_legacy_event',
+      name: '🖼️ Bingkai Khusus Acara',
+      type: 'custom',
+      scope: 'event',
+      dataUrl: STATE.activeEvent.customFrameUrl
+    });
+  }
+
+  return frames;
 }
 
 // Default Seed / Mock Data for Instant Browser & Offline Preview
@@ -328,6 +377,22 @@ function applyEventToUI() {
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
+  // GERBANG WAJIB IDENTITAS TAMU: Screen 1 Gate
+  if (viewId === 'viewCamera') {
+    if (!STATE.guestNama || !STATE.guestNama.trim()) {
+      showToast('Silakan masukkan nama panggilan Anda terlebih dahulu!', 'warning');
+      showView('viewWelcome');
+      const inputEl = document.getElementById('inputGuestName');
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
+      }
+      const warnEl = document.getElementById('guestNameWarning');
+      if (warnEl) warnEl.classList.remove('hidden');
+      return;
+    }
+  }
+
   ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden');
@@ -345,6 +410,7 @@ function showView(viewId) {
   if (viewId === 'viewCamera') {
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
+    applyActiveFrame(STATE.activeFrame);
     // Disposable Camera Otomatis Terbuka saat layar kamera aktif
     if (!STATE.mediaStream) {
       startCameraStream();
@@ -354,6 +420,67 @@ function showView(viewId) {
     document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
     renderGallery();
   }
+}
+
+function applyActiveFrame(frameId) {
+  STATE.activeFrame = frameId;
+  const frames = getAvailableFrames();
+  const selected = frames.find(f => f.id === frameId) || frames[0];
+  
+  // Update badge & hint
+  const badgeEl = document.getElementById('vfActiveFrameBadge');
+  if (badgeEl) badgeEl.textContent = selected.name;
+  
+  const activeFrameNameEl = document.getElementById('activeFrameName');
+  if (activeFrameNameEl) activeFrameNameEl.textContent = selected.name.toUpperCase();
+  
+  const customImgEl = document.getElementById('vfCustomFrameImg');
+  const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
+  
+  if (selected.type === 'custom' && selected.dataUrl) {
+    if (customImgEl) {
+      customImgEl.src = selected.dataUrl;
+      customImgEl.classList.remove('hidden');
+    }
+    if (builtInOverlayEl) {
+      builtInOverlayEl.classList.remove('hidden');
+      const tl = document.getElementById('vfFrameTopLeft');
+      const bt = document.getElementById('vfFrameBottomTitle');
+      if (tl) tl.textContent = '';
+      if (bt) bt.textContent = '';
+    }
+  } else {
+    if (customImgEl) customImgEl.classList.add('hidden');
+    if (builtInOverlayEl) {
+      if (selected.id === 'NONE') {
+        builtInOverlayEl.classList.add('hidden');
+      } else {
+        builtInOverlayEl.classList.remove('hidden');
+        const tl = document.getElementById('vfFrameTopLeft');
+        const bt = document.getElementById('vfFrameBottomTitle');
+        if (tl) tl.textContent = `SNAPEVENT ${STATE.activeFilter}`;
+        if (bt) bt.textContent = STATE.activeEvent ? STATE.activeEvent.namaEvent : 'Our Event';
+      }
+    }
+  }
+}
+
+function cycleNextFrame() {
+  const frames = getAvailableFrames();
+  let idx = frames.findIndex(f => f.id === STATE.activeFrame);
+  if (idx === -1) idx = 0;
+  const nextIdx = (idx + 1) % frames.length;
+  applyActiveFrame(frames[nextIdx].id);
+  showToast(`Bingkai: ${frames[nextIdx].name}`, 'info');
+}
+
+function cyclePrevFrame() {
+  const frames = getAvailableFrames();
+  let idx = frames.findIndex(f => f.id === STATE.activeFrame);
+  if (idx === -1) idx = 0;
+  const prevIdx = (idx - 1 + frames.length) % frames.length;
+  applyActiveFrame(frames[prevIdx].id);
+  showToast(`Bingkai: ${frames[prevIdx].name}`, 'info');
 }
 
 // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
@@ -459,25 +586,17 @@ function renderReviewFramePills(activeFrame) {
   const container = document.getElementById('reviewFrameListContainer');
   if (!container) return;
 
-  const ev = STATE.activeEvent;
-  const hasCustom = !!(ev && (ev.customFrameData || ev.customFrameUrl));
-
-  let customHtml = '';
-  if (hasCustom) {
-    customHtml = `<button data-frame="CUSTOM" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'CUSTOM' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Frame Acara</button>`;
-  }
-
-  container.innerHTML = `
-    <button data-frame="GOLD_DECO" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'GOLD_DECO' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Gold Deco</button>
-    ${customHtml}
-    <button data-frame="POLAROID" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'POLAROID' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">📷 Polaroid</button>
-    <button data-frame="MINIMAL" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'MINIMAL' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">▪️ Minimalist</button>
-    <button data-frame="NONE" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'NONE' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">Tanpa Bingkai</button>
-  `;
+  const frames = getAvailableFrames();
+  container.innerHTML = frames.map(f => `
+    <button data-frame="${f.id}" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">
+      ${f.name}
+    </button>
+  `).join('');
 
   const nameEl = document.getElementById('reviewActiveFrameName');
   if (nameEl) {
-    nameEl.textContent = activeFrame === 'GOLD_DECO' ? '✨ GOLD DECO' : activeFrame === 'POLAROID' ? '📷 POLAROID' : activeFrame === 'MINIMAL' ? '▪️ MINIMALIST' : activeFrame === 'CUSTOM' ? '✨ FRAME ACARA' : 'TANPA BINGKAI';
+    const activeObj = frames.find(f => f.id === activeFrame) || frames[0];
+    nameEl.textContent = (activeObj.name || activeFrame).toUpperCase();
   }
 }
 
@@ -583,30 +702,39 @@ function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     ctx.textAlign = 'center';
     ctx.fillText(`${evName}  |  ${hashtag}`, w / 2, h - 45);
 
-  } else if (frameStyle === 'CUSTOM') {
-    // Custom PNG Overlay yang Diupload Admin
-    if (STATE.customFrameImgObj && STATE.customFrameImgObj.complete) {
+  } else if (frameStyle === 'CUSTOM' || frameStyle.startsWith('frame_')) {
+    // Custom PNG Overlay (Global / Event / Multi-Frame)
+    const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameStyle) : null;
+    const dataUrl = customObj ? customObj.dataUrl : (STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData?.dataUrl);
+
+    if (dataUrl) {
+      const frameImg = new Image();
+      frameImg.src = dataUrl;
+      if (frameImg.complete && frameImg.naturalWidth > 0) {
+        ctx.drawImage(frameImg, 0, 0, w, h);
+      } else {
+        // Fallback Border Emas jika gambar masih proses loading
+        ctx.lineWidth = 14;
+        ctx.strokeStyle = '#D4AF37';
+        ctx.strokeRect(30, 30, w - 60, h - 60);
+
+        ctx.fillStyle = 'rgba(12, 12, 16, 0.85)';
+        ctx.fillRect(50, h - 140, w - 100, 90);
+        ctx.strokeStyle = '#D4AF37';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(50, h - 140, w - 100, 90);
+
+        ctx.fillStyle = '#F3E5AB';
+        ctx.font = 'bold 30px "Playfair Display", serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(evName, w / 2, h - 95);
+
+        ctx.fillStyle = '#D4AF37';
+        ctx.font = '18px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(`${hashtag} • ${dateStr}`, w / 2, h - 65);
+      }
+    } else if (STATE.customFrameImgObj && STATE.customFrameImgObj.complete) {
       ctx.drawImage(STATE.customFrameImgObj, 0, 0, w, h);
-    } else {
-      // Fallback Border Emas jika gambar masih proses loading
-      ctx.lineWidth = 14;
-      ctx.strokeStyle = '#D4AF37';
-      ctx.strokeRect(30, 30, w - 60, h - 60);
-
-      ctx.fillStyle = 'rgba(12, 12, 16, 0.85)';
-      ctx.fillRect(50, h - 140, w - 100, 90);
-      ctx.strokeStyle = '#D4AF37';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(50, h - 140, w - 100, 90);
-
-      ctx.fillStyle = '#F3E5AB';
-      ctx.font = 'bold 30px "Playfair Display", serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(evName, w / 2, h - 95);
-
-      ctx.fillStyle = '#D4AF37';
-      ctx.font = '18px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${hashtag} • ${dateStr}`, w / 2, h - 65);
     }
   }
 }
@@ -810,11 +938,21 @@ async function handleVotePhoto(idFoto, idKategori = '') {
   }
 }
 
-// --- 8. GALLERY RENDERING ---
+// --- 8. GALLERY RENDERING & VOTING WINNERS PODIUM ---
 function renderGallery() {
   const grid = document.getElementById('galleryPhotoGrid');
   const empty = document.getElementById('galleryEmptyNotice');
   const countBadge = document.getElementById('galleryPhotoCountBadge');
+  const winnersContainer = document.getElementById('galleryWinnersContainer');
+
+  if (STATE.activeGalleryFilter === 'WINNERS') {
+    if (grid) grid.classList.add('hidden');
+    renderVotingWinners();
+    return;
+  }
+
+  if (winnersContainer) winnersContainer.classList.add('hidden');
+  if (grid) grid.classList.remove('hidden');
 
   let filtered = [...STATE.photos];
 
@@ -871,6 +1009,104 @@ function renderGallery() {
   });
 }
 
+function renderVotingWinners() {
+  const container = document.getElementById('galleryWinnersContainer');
+  const podium = document.getElementById('galleryWinnersPodium');
+  const countBadge = document.getElementById('galleryPhotoCountBadge');
+  const empty = document.getElementById('galleryEmptyNotice');
+
+  if (!container || !podium) return;
+
+  container.classList.remove('hidden');
+  if (empty) empty.classList.add('hidden');
+  podium.innerHTML = '';
+
+  const sorted = [...STATE.photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+  if (countBadge) countBadge.textContent = `${sorted.length} Foto Pilihan`;
+
+  if (sorted.length === 0 || (sorted[0].totalLikes || 0) === 0) {
+    podium.innerHTML = `
+      <div class="p-8 text-center bg-brand-surfaceLight border border-white/10 rounded-2xl">
+        <div class="text-4xl mb-2">🏆</div>
+        <p class="text-sm font-bold text-white mb-1">Belum Ada Suara Terdaftar</p>
+        <p class="text-xs text-zinc-400">Jadilah yang pertama memberikan like pada foto favorit di tab 'Semua Foto'!</p>
+      </div>
+    `;
+    return;
+  }
+
+  const p1 = sorted[0];
+  const p2 = sorted.length > 1 ? sorted[1] : null;
+  const p3 = sorted.length > 2 ? sorted[2] : null;
+
+  let podiumHtml = `
+    <!-- Juara 1 Emas (Champion) -->
+    <div class="podium-card-gold rounded-2xl p-4 text-center flex flex-col items-center">
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
+        <span>🥇 Juara 1 (Emas)</span>
+      </div>
+      <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-brand-gold/70 shadow-xl cursor-pointer img-winner-zoom" data-idx="0">
+        <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+      </div>
+      <h4 class="font-bold text-sm text-white">${p1.guestNama}</h4>
+      <p class="text-xs text-zinc-300 italic truncate max-w-[220px] mb-2">"${p1.caption || 'Tanpa ucapan'}"</p>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold border border-brand-gold/40">
+        <span>❤️</span>
+        <span>${p1.totalLikes || 0} Suka</span>
+      </div>
+    </div>
+  `;
+
+  if (p2) {
+    podiumHtml += `
+      <!-- Juara 2 Perak -->
+      <div class="podium-card-silver rounded-2xl p-4 text-center flex flex-col items-center">
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-300 text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
+          <span>🥈 Juara 2 (Perak)</span>
+        </div>
+        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/70 shadow-lg cursor-pointer img-winner-zoom" data-idx="1">
+          <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+        </div>
+        <h4 class="font-bold text-sm text-white">${p2.guestNama}</h4>
+        <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p2.caption || 'Tanpa ucapan'}"</p>
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 text-zinc-200 text-xs font-bold border border-white/20">
+          <span>❤️</span>
+          <span>${p2.totalLikes || 0} Suka</span>
+        </div>
+      </div>
+    `;
+  }
+
+  if (p3) {
+    podiumHtml += `
+      <!-- Juara 3 Perunggu -->
+      <div class="podium-card-bronze rounded-2xl p-4 text-center flex flex-col items-center">
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-700 text-white text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
+          <span>🥉 Juara 3 (Perunggu)</span>
+        </div>
+        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/70 shadow-lg cursor-pointer img-winner-zoom" data-idx="2">
+          <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition" />
+        </div>
+        <h4 class="font-bold text-sm text-white">${p3.guestNama}</h4>
+        <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p3.caption || 'Tanpa ucapan'}"</p>
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-600/20 text-amber-300 text-xs font-bold border border-amber-600/40">
+          <span>❤️</span>
+          <span>${p3.totalLikes || 0} Suka</span>
+        </div>
+      </div>
+    `;
+  }
+
+  podium.innerHTML = podiumHtml;
+
+  podium.querySelectorAll('.img-winner-zoom').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.getAttribute('data-idx'), 10);
+      if (sorted[idx]) openPhotoZoom(sorted[idx]);
+    });
+  });
+}
+
 function openPhotoZoom(photo) {
   document.getElementById('zoomImg').src = photo.gdriveViewUrl;
   document.getElementById('zoomGuestNama').textContent = `Oleh: ${photo.guestNama}`;
@@ -897,6 +1133,13 @@ function openPhotoZoom(photo) {
 function openSlideshow() {
   const modal = document.getElementById('modalSlideshow');
   modal.classList.remove('hidden');
+
+  // Generate & Inject Real Scannable QR Code for Ballroom Projector Screen
+  const qrImg = document.getElementById('slideshowQrImg');
+  if (qrImg) {
+    const eventUrl = getEventShareUrl(STATE.activeEventId);
+    qrImg.src = getQrImageUrl(eventUrl, 250);
+  }
 
   if (STATE.photos.length === 0) {
     document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
@@ -1012,67 +1255,176 @@ async function verifyAdminLogin() {
   }
 }
 
+function openShareQrModal(eventObj) {
+  const ev = eventObj || STATE.activeEvent || MOCK_DATA.event;
+  const modal = document.getElementById('modalShareQr');
+  if (!modal) return;
+
+  const titleEl = document.getElementById('shareQrEventTitle');
+  const hashtagEl = document.getElementById('shareQrEventHashtag');
+  const imgEl = document.getElementById('shareQrImg');
+  const urlInput = document.getElementById('shareQrUrlInput');
+
+  if (titleEl) titleEl.textContent = ev.namaEvent;
+  if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent;
+
+  const eventUrl = getEventShareUrl(ev.idEvent);
+  const qrUrl = getQrImageUrl(eventUrl, 300);
+
+  if (imgEl) imgEl.src = qrUrl;
+  if (urlInput) urlInput.value = eventUrl;
+
+  modal.classList.remove('hidden');
+}
+
+function renderCustomFramesList() {
+  const container = document.getElementById('customFramesListContainer');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
+    container.innerHTML = '<p class="text-[10px] text-zinc-500 italic py-1">Belum ada bingkai kustom tersimpan.</p>';
+    return;
+  }
+
+  STATE.customFrames.forEach((cf, idx) => {
+    const row = document.createElement('div');
+    row.className = "flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5 text-xs";
+    const scopeLabel = cf.scope === 'global' ? 'Semua Acara (Global)' : 'Khusus Acara Ini';
+    const scopeColor = cf.scope === 'global' ? 'text-amber-300 border-amber-500/30 bg-amber-500/10' : 'text-blue-300 border-blue-500/30 bg-blue-500/10';
+
+    row.innerHTML = `
+      <div class="flex items-center gap-2 overflow-hidden">
+        <img src="${cf.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />
+        <div class="truncate">
+          <div class="font-bold text-white truncate text-[11px]">${cf.name || 'Bingkai ' + (idx + 1)}</div>
+          <span class="text-[9px] px-1.5 py-0.5 rounded border ${scopeColor}">${scopeLabel}</span>
+        </div>
+      </div>
+      <button type="button" class="btn-del-frame text-red-400 hover:text-red-300 p-1 text-xs shrink-0" data-idx="${idx}" title="Hapus Bingkai">✕</button>
+    `;
+
+    row.querySelector('.btn-del-frame').onclick = () => {
+      STATE.customFrames.splice(idx, 1);
+      localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
+      renderCustomFramesList();
+      applyActiveFrame(STATE.activeFrame);
+      showToast("Bingkai kustom dihapus.", "info");
+    };
+
+    container.appendChild(row);
+  });
+}
+
+function resetCreateEventForm() {
+  const d = new Date();
+  const yearMonth = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const randomSuffix = String(Math.floor(Math.random() * 900) + 100);
+  const newId = `EVT-${yearMonth}-${randomSuffix}`;
+
+  document.getElementById('formEventTitle').textContent = "Buat Acara Baru";
+  document.getElementById('formEventId').value = newId;
+  document.getElementById('formEventNama').value = "";
+  document.getElementById('formEventHashtag').value = "";
+  document.getElementById('formEventTanggal').value = d.toISOString().split('T')[0];
+  document.getElementById('formEventMaxFoto').value = "10";
+  document.getElementById('formEventMaxVote').value = "3";
+  document.getElementById('formEventDriveFolder').value = "";
+  document.getElementById('formEventFrameName').value = "";
+
+  const radSegera = document.querySelector('input[name="revealModeRadio"][value="SEGERA"]');
+  if (radSegera) radSegera.checked = true;
+  document.getElementById('formCheckLike').checked = true;
+  document.getElementById('formCheckVisibility').checked = true;
+
+  renderCategoryInputRows([
+    { namaKategori: "Busana Terbaik" },
+    { namaKategori: "Momen Romantis" },
+    { namaKategori: "Pose Terlucu" }
+  ]);
+
+  STATE.tempCustomFrameData = null;
+  document.getElementById('formEventCustomFrame').value = '';
+  document.getElementById('customFramePreviewBox').classList.add('hidden');
+  document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
+  renderCustomFramesList();
+}
+
 function renderAdminDashboard() {
-  document.getElementById('admMetricEvents').textContent = "1";
+  const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) ? STATE.events : (STATE.activeEvent ? [STATE.activeEvent] : [MOCK_DATA.event]);
+  document.getElementById('admMetricEvents').textContent = allEvents.length;
   document.getElementById('admMetricPhotos').textContent = STATE.photos.length;
 
   const totalVotes = STATE.photos.reduce((acc, p) => acc + (p.totalLikes || 0), 0);
   document.getElementById('admMetricVotes').textContent = totalVotes;
 
-  const ev = STATE.activeEvent || MOCK_DATA.event;
   const listContainer = document.getElementById('adminEventListContainer');
-  const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
-  const frameText = (ev.customFrameData || ev.customFrameUrl) ? '✨ Custom Frame PNG Aktif' : 'Default Frames';
+  listContainer.innerHTML = '';
 
-  listContainer.innerHTML = `
-    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4">
+  allEvents.forEach(ev => {
+    const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
+    const hasCustom = !!(ev.customFrameData || ev.customFrameUrl || (Array.isArray(STATE.customFrames) && STATE.customFrames.some(f => f.eventId === ev.idEvent || f.scope === 'global')));
+    const frameText = hasCustom ? '✨ Multi-Frame Aktif' : 'Default Frames';
+    const isActive = ev.idEvent === STATE.activeEventId;
+
+    const card = document.createElement('div');
+    card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
+    card.innerHTML = `
       <div class="flex items-center justify-between mb-2">
-        <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
+          ${isActive ? '<span class="text-[9px] bg-brand-gold/20 text-brand-gold font-bold px-2 py-0.5 rounded-full border border-brand-gold/40">Acara Aktif</span>' : ''}
+        </div>
         <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
           ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
         </span>
       </div>
       <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
-      <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent} • Kuota: ${ev.maxFotoPerGuest} Foto / Tamu</p>
-      <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3">
+      <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent || '#SnapEvent'} • Kuota: ${ev.maxFotoPerGuest || 10} Foto / Tamu</p>
+      <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3 flex-wrap">
         <span class="px-2 py-0.5 rounded bg-white/5 border border-white/10">${driveFolderText}</span>
         <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
       </div>
       
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
-        <button id="admBtnEditEvent" class="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+        <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
           ✏️ Edit Acara
         </button>
-        <button id="admBtnToggleReveal" class="py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
-          ${ev.isRevealed ? '🔒 Kunci Galeri' : '🔓 Buka Galeri'}
+        <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
+          ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
         </button>
-        <button id="admBtnSlideshow" class="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+        <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
           📺 Proyektor
         </button>
-        <button id="admBtnShareQr" class="py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
+        <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
           📲 Link & QR
         </button>
       </div>
-    </div>
-  `;
+    `;
 
-  // Bind Event Card Actions
-  document.getElementById('admBtnEditEvent').addEventListener('click', () => {
-    populateEditEventForm(ev);
-    switchAdminTab('create');
-  });
+    card.querySelector('.btn-edit-event').addEventListener('click', () => {
+      populateEditEventForm(ev);
+      switchAdminTab('create');
+    });
 
-  document.getElementById('admBtnToggleReveal').addEventListener('click', () => {
-    ev.isRevealed = !ev.isRevealed;
-    showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
-    renderAdminDashboard();
-  });
+    card.querySelector('.btn-toggle-reveal').addEventListener('click', () => {
+      ev.isRevealed = !ev.isRevealed;
+      localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+      showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
+      renderAdminDashboard();
+    });
 
-  document.getElementById('admBtnSlideshow').addEventListener('click', openSlideshow);
-  document.getElementById('admBtnShareQr').addEventListener('click', () => {
-    const link = window.location.href.split('?')[0] + `?event=${ev.slugEvent || ev.idEvent}`;
-    navigator.clipboard?.writeText(link);
-    showToast("Tautan acara berhasil disalin ke clipboard!", "success");
+    card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
+      STATE.activeEventId = ev.idEvent;
+      STATE.activeEvent = ev;
+      openSlideshow();
+    });
+
+    card.querySelector('.btn-share-qr').addEventListener('click', () => {
+      openShareQrModal(ev);
+    });
+
+    listContainer.appendChild(card);
   });
 
   // Config Form Values
@@ -1085,8 +1437,9 @@ function renderAdminDashboard() {
   if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
   if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
 
-  // Render User Accounts List
+  // Render User Accounts List & Frames List
   renderUserAccountsList();
+  renderCustomFramesList();
 
   // Render Leaderboard
   renderLeaderboard();
@@ -1275,6 +1628,34 @@ function saveAdminEventForm() {
     customFrameUrl: customFrameData || ''
   };
 
+  // Simpan Bingkai Kustom Baru jika ada unggahan
+  if (STATE.tempCustomFrameData) {
+    const scope = document.getElementById('formEventFrameScope')?.value || 'event';
+    const frameName = document.getElementById('formEventFrameName')?.value.trim() || `${nama} Frame`;
+    const newFrameObj = {
+      id: 'frame_' + Date.now(),
+      name: frameName,
+      scope: scope,
+      eventId: STATE.activeEvent.idEvent,
+      dataUrl: STATE.tempCustomFrameData
+    };
+    if (!Array.isArray(STATE.customFrames)) STATE.customFrames = [];
+    STATE.customFrames.unshift(newFrameObj);
+    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
+    STATE.tempCustomFrameData = null;
+  }
+
+  // Update Koleksi Acara Global (Multi-Event Management)
+  if (!Array.isArray(STATE.events)) STATE.events = [];
+  const existingIdx = STATE.events.findIndex(e => e.idEvent === STATE.activeEvent.idEvent);
+  if (existingIdx >= 0) {
+    STATE.events[existingIdx] = STATE.activeEvent;
+  } else {
+    STATE.events.unshift(STATE.activeEvent);
+  }
+  localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  STATE.activeEventId = STATE.activeEvent.idEvent;
+
   STATE.activeCategories = cats;
 
   // Sinkronisasi ke Backend GAS jika ada
@@ -1317,29 +1698,44 @@ function updateRemainingQuotaDisplay() {
 
 // --- 11. BIND ALL EVENT LISTENERS ---
 function bindEvents() {
-  // Welcome View Guest Name Submit
+  // Welcome View Guest Name Submit (MANDATORY GATE)
   document.getElementById('btnStartCamera').addEventListener('click', () => {
-    const name = document.getElementById('inputGuestName').value.trim();
+    const nameInput = document.getElementById('inputGuestName');
+    const name = nameInput.value.trim();
+    const warnEl = document.getElementById('guestNameWarning');
+
     if (!name) {
-      showToast("Masukkan nama panggilanmu terlebih dahulu!", "warning");
+      showToast("Nama Panggilan wajib diisi untuk membuka kamera!", "warning");
+      nameInput.focus();
+      nameInput.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
+      if (warnEl) warnEl.classList.remove('hidden');
       return;
     }
+
+    nameInput.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500/30');
+    if (warnEl) warnEl.classList.add('hidden');
     STATE.guestNama = name;
     localStorage.setItem('snapevent_guest_nama', name);
     showView('viewCamera');
     startCameraStream();
+    showToast(`Halo ${name}, selamat memotret!`, "success");
+  });
+
+  // Hapus tanda error ketika tamu mulai mengetik namanya
+  document.getElementById('inputGuestName')?.addEventListener('input', () => {
+    document.getElementById('inputGuestName')?.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500/30');
+    document.getElementById('guestNameWarning')?.classList.add('hidden');
   });
 
   // Navigation Bar Buttons
   document.getElementById('navBtnCamera').addEventListener('click', () => {
     showView('viewCamera');
-    if (!STATE.mediaStream) startCameraStream();
   });
   document.getElementById('navBtnGallery').addEventListener('click', () => {
     showView('viewGallery');
   });
   document.getElementById('navBtnEventInfo').addEventListener('click', () => {
-    showToast(`Tamu: ${STATE.guestNama || 'Tamu'} (${STATE.guestId})`, "info");
+    showToast(`Tamu: ${STATE.guestNama || 'Belum diisi'} (${STATE.guestId})`, "info");
   });
 
   // Shutter Action
@@ -1347,9 +1743,51 @@ function bindEvents() {
     triggerCameraShutter();
   });
 
+  // Ganti Bingkai Kamera (Tombol Pengganti Logo Gambar Lama)
+  document.getElementById('btnCycleFrame')?.addEventListener('click', () => {
+    cycleNextFrame();
+  });
+
+  // Touch Gesture: Usap Layar (Horizontal Swipe) pada Viewfinder untuk Ganti Bingkai
+  const vfContainer = document.getElementById('viewfinderViewport') || document.getElementById('cameraVideo');
+  let touchStartX = 0;
+  let touchStartY = 0;
+  if (vfContainer) {
+    vfContainer.addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches.length > 0) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+
+    vfContainer.addEventListener('touchend', (e) => {
+      if (e.changedTouches && e.changedTouches.length > 0) {
+        const endX = e.changedTouches[0].clientX;
+        const endY = e.changedTouches[0].clientY;
+        const diffX = endX - touchStartX;
+        const diffY = endY - touchStartY;
+        // Hanya trigger jika gerakan mendatar lebih dominan daripada vertikal
+        if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY)) {
+          if (diffX < 0) {
+            cycleNextFrame(); // Geser ke kiri -> Frame berikutnya
+          } else {
+            cyclePrevFrame(); // Geser ke kanan -> Frame sebelumnya
+          }
+        }
+      }
+    }, { passive: true });
+  }
+
+  // Dukungan Navigasi Keyboard Desktop (Panah Kiri / Kanan) untuk Ganti Bingkai
+  window.addEventListener('keydown', (e) => {
+    if (document.getElementById('viewCamera')?.classList.contains('hidden')) return;
+    if (e.key === 'ArrowRight') cycleNextFrame();
+    if (e.key === 'ArrowLeft') cyclePrevFrame();
+  });
+
   // Live Video Trigger & Native File Fallback
   document.getElementById('btnInitStream').addEventListener('click', startCameraStream);
-  document.getElementById('btnOpenGalleryUpload').addEventListener('click', triggerNativeCamera);
+  document.getElementById('btnOpenGalleryUpload')?.addEventListener('click', triggerNativeCamera);
 
   // Handle Native File Capture
   document.getElementById('nativeCameraInput').addEventListener('change', (e) => {
@@ -1402,32 +1840,137 @@ function bindEvents() {
     document.getElementById('modalContactInfo')?.classList.add('hidden');
   });
 
-  // Tambah Baris Akun User / Kru
+  // Tambah Akun Pengguna / Operator Kru (Buka Modal Terstruktur)
   document.getElementById('btnAddUserAccountRow')?.addEventListener('click', () => {
-    const username = prompt("Masukkan Username Kru / Operator Baru:");
-    if (!username) return;
-    const password = prompt("Masukkan Password untuk " + username + ":");
-    if (!password) return;
-
-    if (!Array.isArray(STATE.userAccounts)) STATE.userAccounts = [];
-    STATE.userAccounts.push({ user: username.trim(), pass: password.trim(), role: 'operator' });
-    localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
-    renderUserAccountsList();
-    showToast(`Akun operator '${username}' berhasil ditambahkan!`, "success");
+    document.getElementById('modalAddUserAccount')?.classList.remove('hidden');
+  });
+  document.getElementById('btnCancelAddUserModal')?.addEventListener('click', () => {
+    document.getElementById('modalAddUserAccount')?.classList.add('hidden');
   });
 
-  // Frame Selector Pills (Event Delegation)
-  document.getElementById('frameListContainer').addEventListener('click', (e) => {
-    const pill = e.target.closest('.frame-pill');
-    if (!pill) return;
-    document.querySelectorAll('.frame-pill').forEach(p => {
-      p.classList.remove('bg-brand-gold', 'text-black');
-      p.classList.add('bg-white/5', 'text-zinc-300');
-    });
-    pill.classList.remove('bg-white/5', 'text-zinc-300');
-    pill.classList.add('bg-brand-gold', 'text-black');
-    STATE.activeFrame = pill.getAttribute('data-frame');
-    document.getElementById('activeFrameName').textContent = pill.textContent.trim().toUpperCase();
+  document.getElementById('formAddUserAccount')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const u = document.getElementById('inputNewUserUsername').value.trim();
+    const p = document.getElementById('inputNewUserPassword').value.trim();
+    const r = document.getElementById('selectNewUserRole').value;
+
+    if (!u || !p) {
+      showToast("Username dan password tidak boleh kosong!", "warning");
+      return;
+    }
+    if (p.length < 4) {
+      showToast("Password akun minimal 4 karakter!", "warning");
+      return;
+    }
+
+    if (!Array.isArray(STATE.userAccounts)) STATE.userAccounts = [];
+    STATE.userAccounts.push({ user: u, pass: p, role: r });
+    localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+    renderUserAccountsList();
+    document.getElementById('modalAddUserAccount').classList.add('hidden');
+    document.getElementById('formAddUserAccount').reset();
+    showToast(`Akun '${u}' (${r}) berhasil ditambahkan!`, "success");
+
+    // Sinkronisasi akun ke backend Google Sheets jika GAS terhubung
+    if (STATE.gasApiUrl) {
+      fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminUpdateGlobalConfig',
+          updates: { user_accounts: JSON.stringify(STATE.userAccounts) }
+        })
+      }).catch(err => console.warn("Sync users warn:", err.message));
+    }
+  });
+
+  // Ganti Password Akun Pengguna (Buka & Submit Modal)
+  document.getElementById('btnOpenChangePassword')?.addEventListener('click', () => {
+    document.getElementById('modalChangePassword')?.classList.remove('hidden');
+  });
+  document.getElementById('btnCancelChangePassword')?.addEventListener('click', () => {
+    document.getElementById('modalChangePassword')?.classList.add('hidden');
+  });
+
+  document.getElementById('formChangePassword')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const oldP = document.getElementById('inputOldPassword').value.trim();
+    const newP1 = document.getElementById('inputNewPassword1').value.trim();
+    const newP2 = document.getElementById('inputNewPassword2').value.trim();
+
+    if (newP1 !== newP2) {
+      showToast("Konfirmasi password baru tidak cocok!", "error");
+      return;
+    }
+    if (newP1.length < 4) {
+      showToast("Password baru minimal 4 karakter!", "warning");
+      return;
+    }
+
+    const curUser = STATE.currentUsername || 'admin';
+    let verified = false;
+
+    if (curUser === STATE.adminUser) {
+      if (oldP === STATE.adminPass) {
+        verified = true;
+        STATE.adminPass = newP1;
+        localStorage.setItem('snapevent_admin_pass', newP1);
+        if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = newP1;
+      }
+    } else {
+      const match = Array.isArray(STATE.userAccounts) && STATE.userAccounts.find(a => a.user === curUser);
+      if (match && match.pass === oldP) {
+        verified = true;
+        match.pass = newP1;
+        localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+      }
+    }
+
+    if (!verified) {
+      showToast("Password lama yang Anda masukkan salah!", "error");
+      return;
+    }
+
+    // Sync ke GAS jika ada
+    if (STATE.gasApiUrl) {
+      const updates = curUser === STATE.adminUser 
+        ? { admin_pass: newP1 } 
+        : { user_accounts: JSON.stringify(STATE.userAccounts) };
+      fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'adminUpdateGlobalConfig', updates })
+      }).catch(err => console.warn("Sync pass warn:", err.message));
+    }
+
+    document.getElementById('modalChangePassword').classList.add('hidden');
+    document.getElementById('formChangePassword').reset();
+    showToast("Password berhasil diperbarui!", "success");
+  });
+
+  // Modal Share QR Handlers
+  document.getElementById('btnCloseShareQr')?.addEventListener('click', () => {
+    document.getElementById('modalShareQr')?.classList.add('hidden');
+  });
+
+  document.getElementById('btnCopyShareUrl')?.addEventListener('click', () => {
+    const val = document.getElementById('shareQrUrlInput')?.value;
+    if (val) {
+      navigator.clipboard?.writeText(val);
+      showToast("Tautan acara berhasil disalin ke clipboard!", "success");
+    }
+  });
+
+  document.getElementById('btnDownloadQrCode')?.addEventListener('click', () => {
+    const img = document.getElementById('shareQrImg');
+    if (img && img.src) {
+      const a = document.createElement('a');
+      a.href = img.src;
+      a.download = `SnapEvent_QR_${STATE.activeEventId || 'Acara'}.png`;
+      a.target = '_blank';
+      a.click();
+      showToast("Mengunduh gambar QR Code acara...", "info");
+    }
   });
 
   // Photo Review Modal Buttons
@@ -1466,10 +2009,16 @@ function bindEvents() {
     showToast("Anda telah keluar dari panel Admin.", "info");
   });
 
-  // Admin Tab Switchers
+  // Admin Tab Switchers (+ Buat Event Baru Handler)
   document.querySelectorAll('.adm-tab').forEach(btn => {
     btn.addEventListener('click', () => {
-      switchAdminTab(btn.getAttribute('data-admintab'));
+      const tab = btn.getAttribute('data-admintab');
+      if (tab === 'create') {
+        resetCreateEventForm();
+      }
+      switchAdminTab(tab);
+    });
+  });
     });
   });
 

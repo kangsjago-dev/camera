@@ -109,8 +109,9 @@
       <p id="welcomeEventDesc" class="text-zinc-400 text-sm max-w-xs mb-8">Abadikan setiap momen pesta malam ini dengan kamera sekali pakai digital!</p>
 
       <div class="w-full max-w-xs bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-5 mb-6 text-left">
-        <label class="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Nama Panggilan Kamu</label>
-        <input type="text" id="inputGuestName" placeholder="Contoh: Sarah / Budi" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none transition mb-3" />
+        <label class="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Nama Panggilan Kamu <span class="text-rose-400 font-bold">*Wajib Diisi</span></label>
+        <input type="text" id="inputGuestName" placeholder="Contoh: Sarah / Budi" required class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none transition mb-2" />
+        <p id="guestNameWarning" class="hidden text-[11px] text-rose-400 font-medium mb-1.5 flex items-center gap-1">⚠️ Nama panggilan wajib diisi agar kamera dapat dibuka!</p>
         <p class="text-[11px] text-zinc-400">Nama akan dicetak di hasil foto dan voting foto terfavorit.</p>
       </div>
 
@@ -139,12 +140,22 @@
         </div>
       </div>
 
-      <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT) -->
-      <div class="relative w-full flex-1 min-h-0 my-2 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center">
+      <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT & TOUCH SWIPE) -->
+      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-2 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center cursor-pointer select-none">
         <!-- Live Video Element with Realtime CSS Filter Effect & Autoplay -->
         <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
         
-        <!-- Live Frame Overlay Preview -->
+        <!-- Swipe Hint Badge -->
+        <div id="vfSwipeHint" class="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-black/70 backdrop-blur border border-amber-500/30 text-[10px] text-amber-200 pointer-events-none flex items-center gap-1.5 shadow-lg transition-opacity duration-300">
+          <span>👆</span>
+          <span id="vfActiveFrameBadge" class="font-bold">✨ Gold Deco</span>
+          <span class="text-zinc-400">· Usap untuk ganti</span>
+        </div>
+
+        <!-- Custom Frame Image Overlay (PNG) -->
+        <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
+
+        <!-- Live Frame Overlay Preview (Built-in) -->
         <div id="viewfinderFrameOverlay" class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3.5 z-10">
           <div class="flex justify-between items-center text-[10px] font-medium text-amber-200/90 tracking-widest uppercase drop-shadow">
             <span id="vfFrameTopLeft">SNAPEVENT 800T</span>
@@ -208,7 +219,7 @@
 
       <!-- CAMERA CONTROLS: SHUTTER & SWITCH BUTTONS -->
       <div class="shrink-0 flex items-center justify-around py-1">
-        <button id="btnSwitchCamera" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Putar Kamera">
+        <button id="btnSwitchCamera" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Putar Kamera Depan/Belakang">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
             <path d="M3 3v5h5"/>
@@ -223,21 +234,16 @@
           </div>
         </button>
 
-        <button id="btnOpenGalleryUpload" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Pilih dari Galeri">
+        <!-- Tombol Ganti Bingkai (Gantikan Ikon Logo/Galeri yang Membingungkan) -->
+        <button id="btnCycleFrame" class="w-11 h-11 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex flex-col items-center justify-center text-zinc-300 hover:text-brand-gold active:scale-95 transition" title="Ganti Bingkai (atau Usap Layar)">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-            <circle cx="9" cy="9" r="2"/>
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+            <path d="M3 9h18M9 21V9"/>
           </svg>
         </button>
-      </div>
-    </section>
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-            <circle cx="9" cy="9" r="2"/>
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
-          </svg>
-        </button>
+
+        <!-- Hidden compat button to prevent null references -->
+        <button id="btnOpenGalleryUpload" class="hidden"></button>
       </div>
     </section>
 
@@ -264,10 +270,23 @@
           <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
             Semua Foto
           </button>
+          <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition flex items-center gap-1.5">
+            🏆 Pemenang Voting
+          </button>
           <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
             🔥 Paling Populer
           </button>
         </div>
+      </div>
+
+      <!-- WINNERS SHOWCASE PODIUM (Juara 1 Emas, Juara 2 Perak, Juara 3 Perunggu) -->
+      <div id="galleryWinnersContainer" class="hidden mb-6 space-y-4">
+        <div class="text-center bg-gradient-to-b from-brand-gold/15 to-transparent border border-brand-gold/30 rounded-2xl p-4">
+          <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest bg-brand-gold/20 px-3 py-0.5 rounded-full border border-brand-gold/40">Hall of Fame</span>
+          <h3 class="font-serif text-xl font-bold text-white mt-1.5">🏆 Pemenang Foto Terfavorit Pesta</h3>
+          <p class="text-xs text-zinc-400 mt-0.5">Karya foto dengan perolehan like terbanyak dari seluruh tamu undangan</p>
+        </div>
+        <div id="galleryWinnersPodium" class="space-y-3"></div>
       </div>
 
       <!-- REVEAL LOCK NOTICE (Jika Mode 'Setelah Acara' & Belum Di-reveal) -->
@@ -316,9 +335,15 @@
           </h2>
           <p class="text-xs text-zinc-400">Atur event, kuota kamera, dan kontrol galeri Drive.</p>
         </div>
-        <button id="btnAdminLogout" class="text-xs text-zinc-400 hover:text-red-400 p-1.5 rounded bg-white/5 transition">
-          Keluar
-        </button>
+        <div class="flex items-center gap-2">
+          <button id="btnOpenChangePassword" class="text-xs text-brand-gold hover:underline py-1.5 px-2.5 rounded bg-white/5 hover:bg-white/10 border border-brand-gold/30 transition flex items-center gap-1" title="Ganti Password Akun">
+            <span>🔑</span>
+            <span class="hidden sm:inline">Ganti</span> Password
+          </button>
+          <button id="btnAdminLogout" class="text-xs text-zinc-400 hover:text-red-400 p-1.5 rounded bg-white/5 transition">
+            Keluar
+          </button>
+        </div>
       </div>
 
       <!-- Admin Tab Switcher -->
@@ -440,11 +465,25 @@
               <div id="categoryInputsContainer" class="space-y-2"></div>
             </div>
 
-            <!-- Upload Custom Frame Acara (PNG Transparan) -->
+            <!-- Upload Custom Frame Acara (PNG Transparan - Multi Frame & Scope) -->
             <div class="border border-white/10 rounded-xl p-3.5 bg-black/20">
-              <label class="block text-xs font-semibold text-zinc-200 mb-1">Bingkai Kustom Acara (Custom Frame PNG)</label>
-              <p class="text-[11px] text-zinc-400 mb-2.5">Unggah file bingkai berformat PNG transparan (aspek rasio 4:5) khusus acara ini.</p>
+              <label class="block text-xs font-semibold text-zinc-200 mb-1">Unggah Bingkai Kustom (Custom Frame PNG)</label>
+              <p class="text-[11px] text-zinc-400 mb-2.5">Unggah bingkai berformat PNG transparan (4:5) dengan bagian tengah tembus pandang.</p>
               
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2.5">
+                <div>
+                  <label class="block text-[10px] font-semibold text-zinc-400 mb-1">Lingkup Penggunaan</label>
+                  <select id="formEventFrameScope" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none">
+                    <option value="event">Khusus Acara Ini Saja</option>
+                    <option value="global">Semua Acara (Berlaku Global)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[10px] font-semibold text-zinc-400 mb-1">Nama Bingkai</label>
+                  <input type="text" id="formEventFrameName" placeholder="Contoh: Gold Elegant Sarah" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" />
+                </div>
+              </div>
+
               <div class="flex items-center gap-2">
                 <input type="file" id="formEventCustomFrame" accept="image/png" class="text-xs text-zinc-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-gold file:text-black hover:file:brightness-110 cursor-pointer" />
                 <button type="button" id="btnRemoveCustomFrame" class="hidden text-xs text-red-400 hover:underline">Hapus</button>
@@ -453,8 +492,16 @@
               <div id="customFramePreviewBox" class="hidden mt-2 p-2 bg-[#111116] rounded-xl border border-white/10 flex items-center gap-3">
                 <img id="customFramePreviewImg" src="" class="w-12 h-16 object-contain border border-white/20 rounded bg-zinc-900" alt="Preview Bingkai" />
                 <div class="text-[11px] text-zinc-300">
-                  <span class="font-bold text-emerald-400">✓ Bingkai Kustom Aktif</span>
-                  <div class="text-zinc-400 text-[10px]">Tamu dapat memilih bingkai ini di kamera</div>
+                  <span class="font-bold text-emerald-400">✓ Bingkai Siap Disimpan</span>
+                  <div class="text-zinc-400 text-[10px]">Akan langsung aktif di live camera & review</div>
+                </div>
+              </div>
+
+              <!-- Daftar Bingkai Kustom yang Aktif -->
+              <div class="mt-3 pt-3 border-t border-white/10">
+                <div class="text-[11px] font-semibold text-zinc-300 mb-1.5">Koleksi Bingkai Kustom Aktif:</div>
+                <div id="customFramesListContainer" class="space-y-1.5">
+                  <!-- Diisi dinamis oleh app.js -->
                 </div>
               </div>
             </div>
@@ -733,15 +780,16 @@
         <span class="text-xs uppercase font-bold text-white tracking-widest">LIVE EVENT SLIDESHOW</span>
       </div>
 
-      <div class="flex items-center gap-3 bg-black/60 backdrop-blur-md border border-white/10 px-4 py-2 rounded-2xl">
-        <div class="w-10 h-10 bg-white rounded-lg p-1 flex items-center justify-center">
-          <svg class="w-full h-full text-black" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2 2h8v8H2V2zm2 2v4h4V4H4zm10-2h8v8h-8V2zm2 2v4h4V4h-4zM2 14h8v8H2v-8zm2 2v4h4v-4H4zm14-2h4v4h-4v-4zm-4 0h2v2h-2v-2zm2 4h2v4h-2v-4zm2 2h2v2h-2v-2zm-6-2h2v4h-2v-4z"/>
-          </svg>
+      <div class="flex items-center gap-3 bg-black/70 backdrop-blur-md border border-white/15 px-4 py-2.5 rounded-2xl shadow-xl">
+        <div class="w-14 h-14 bg-white rounded-xl p-1 flex items-center justify-center shrink-0 shadow-inner">
+          <img id="slideshowQrImg" src="" alt="Scan QR" class="w-full h-full object-contain" />
         </div>
         <div class="text-left text-xs">
-          <div class="font-bold text-white">Scan untuk Memotret</div>
-          <div class="text-[10px] text-zinc-400">Buka kamera di HP Anda</div>
+          <div class="font-bold text-white flex items-center gap-1.5">
+            <span>Scan untuk Memotret</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </div>
+          <div class="text-[10px] text-zinc-400">Arahkan kamera HP Anda ke QR Code</div>
         </div>
       </div>
     </div>
@@ -807,6 +855,111 @@
       <button id="btnCloseContact" class="w-full py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold hover:bg-white/15 transition">
         Tutup
       </button>
+    </div>
+  </div>
+
+  <!-- MODAL: SHARE LINK & SCAN QR ACARA -->
+  <div id="modalShareQr" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-sm w-full p-5 text-center shadow-2xl relative">
+      <button id="btnCloseShareQr" class="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white flex items-center justify-center transition">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+
+      <div class="w-12 h-12 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center mx-auto mb-3">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2 2h8v8H2V2zm2 2v4h4V4H4zm10-2h8v8h-8V2zm2 2v4h4V4h-4zM2 14h8v8H2v-8zm2 2v4h4v-4H4zm14-2h4v4h-4v-4zm-4 0h2v2h-2v-2zm2 4h2v4h-2v-4zm2 2h2v2h-2v-2zm-6-2h2v4h-2v-4z"/>
+        </svg>
+      </div>
+
+      <h3 class="font-serif text-lg font-bold text-white mb-1" id="shareQrEventTitle">The Wedding of Sarah & Kevin</h3>
+      <p class="text-xs text-brand-gold font-medium mb-4" id="shareQrEventHashtag">#SarahKevinEverAfter</p>
+
+      <!-- QR Code Scannable Image -->
+      <div class="w-48 h-48 bg-white rounded-2xl p-2.5 mx-auto mb-4 shadow-xl flex items-center justify-center">
+        <img id="shareQrImg" src="" alt="QR Code Acara" class="w-full h-full object-contain" />
+      </div>
+      <p class="text-[11px] text-zinc-400 mb-3">Tamu dapat memindai QR code ini untuk langsung membuka disposable camera di HP mereka.</p>
+
+      <!-- URL Input & Copy -->
+      <div class="flex items-center gap-1.5 mb-3 bg-[#111116] border border-white/10 rounded-xl p-1.5">
+        <input type="text" id="shareQrUrlInput" readonly class="w-full bg-transparent px-2 text-xs text-zinc-300 outline-none" />
+        <button id="btnCopyShareUrl" class="shrink-0 px-3 py-1.5 rounded-lg bg-brand-gold text-black text-xs font-bold hover:brightness-110 active:scale-95 transition">
+          Salin
+        </button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="btnDownloadQrCode" class="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <span>⬇️ Unduh Gambar QR</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: TAMBAH AKUN PENGGUNA / OPERATOR KRU -->
+  <div id="modalAddUserAccount" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-xs w-full p-5 text-center shadow-2xl">
+      <div class="w-12 h-12 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center mx-auto mb-3">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>
+        </svg>
+      </div>
+      <h3 class="font-serif text-base font-bold text-white mb-1">Tambah Akun Pengguna</h3>
+      <p class="text-xs text-zinc-400 mb-4">Buat akun untuk operator kru atau panitia meja.</p>
+
+      <form id="formAddUserAccount" class="space-y-3 mb-2 text-left">
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Username Akun</label>
+          <input type="text" id="inputNewUserUsername" required placeholder="Contoh: kru_meja1" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Password</label>
+          <input type="password" id="inputNewUserPassword" required placeholder="Minimal 4 karakter" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Peran / Hak Akses</label>
+          <select id="selectNewUserRole" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none">
+            <option value="operator">Operator Kru (Kelola Foto & Event)</option>
+            <option value="admin">Administrator Penuh</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2 pt-2">
+          <button type="button" id="btnCancelAddUserModal" class="flex-1 py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold hover:bg-white/15 transition">Batal</button>
+          <button type="submit" id="btnSaveNewUserAccount" class="flex-1 py-2 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 transition">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: GANTI PASSWORD PENGGUNA -->
+  <div id="modalChangePassword" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-xs w-full p-5 text-center shadow-2xl">
+      <div class="w-12 h-12 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center mx-auto mb-3">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>
+        </svg>
+      </div>
+      <h3 class="font-serif text-base font-bold text-white mb-1">Ganti Password Akun</h3>
+      <p class="text-xs text-zinc-400 mb-4">Perbarui kata sandi akun login Anda.</p>
+
+      <form id="formChangePassword" class="space-y-3 mb-2 text-left">
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Password Saat Ini (Lama)</label>
+          <input type="password" id="inputOldPassword" required placeholder="Masukkan password lama" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Password Baru</label>
+          <input type="password" id="inputNewPassword1" required placeholder="Minimal 4 karakter" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Konfirmasi Password Baru</label>
+          <input type="password" id="inputNewPassword2" required placeholder="Ulangi password baru" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+        </div>
+        <div class="flex items-center gap-2 pt-2">
+          <button type="button" id="btnCancelChangePassword" class="flex-1 py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold hover:bg-white/15 transition">Batal</button>
+          <button type="submit" id="btnSubmitChangePassword" class="flex-1 py-2 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 transition">Perbarui</button>
+        </div>
+      </form>
     </div>
   </div>
 
