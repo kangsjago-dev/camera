@@ -416,14 +416,10 @@ async function initApp() {
     return;
   }
 
-  // Cek Identitas Tamu & Pulihkan Halaman Terakhir saat Refresh (F5)
-  if (!STATE.guestNama) {
-    showView('viewWelcome');
-  } else {
-    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
-    showView(savedView);
-    updateRemainingQuotaDisplay();
-  }
+  // Pulihkan Halaman Terakhir saat Refresh (F5) atau Mulai Langsung di Kamera (Camera-First Entry Flow)
+  const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
+  showView(savedView);
+  updateRemainingQuotaDisplay();
 
   // Cek Persistensi Slideshow atau Parameter URL
   if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
@@ -823,22 +819,7 @@ function applyEventToUI() {
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
-  // GERBANG WAJIB IDENTITAS TAMU: Screen 1 Gate
-  if (viewId === 'viewCamera') {
-    if (!STATE.guestNama || !STATE.guestNama.trim()) {
-      showToast('Silakan masukkan nama panggilan Anda terlebih dahulu!', 'warning');
-      showView('viewWelcome');
-      const inputEl = document.getElementById('inputGuestName');
-      if (inputEl) {
-        inputEl.focus();
-        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
-      }
-      const warnEl = document.getElementById('guestNameWarning');
-      if (warnEl) warnEl.classList.remove('hidden');
-      return;
-    }
-  }
-
+  // Hide all views first
   ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden');
@@ -856,8 +837,9 @@ function showView(viewId) {
     return;
   }
 
-  // Tampilkan atau sembunyikan navigasi bawah sesuai layar
-  if (viewId === 'viewWelcome' || viewId === 'viewAdmin') {
+  // Tampilkan navigasi bawah untuk tamu (Kamera, Galeri, dan Profil Tamu/Tulis Nama)
+  // Hanya disembunyikan pada panel Admin
+  if (viewId === 'viewAdmin') {
     if (bottomNav) bottomNav.classList.add('hidden');
   } else {
     if (bottomNav) bottomNav.classList.remove('hidden');
@@ -884,6 +866,14 @@ function showView(viewId) {
     document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
     document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
     renderGallery();
+  } else if (viewId === 'viewWelcome') {
+    document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
+    document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
+    // Sinkronkan input nama dengan profil tamu yang sudah tersimpan
+    const inputGuest = document.getElementById('inputGuestName');
+    if (inputGuest && STATE.guestNama) {
+      inputGuest.value = STATE.guestNama;
+    }
   }
 }
 
@@ -1267,6 +1257,21 @@ async function handleSavePhotoToDrive() {
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
   const caption = document.getElementById('inputPhotoCaption').value.trim();
+
+  // Pastikan ada nama tamu saat menyimpan foto ke Drive & Galeri (Camera-First Friendly Fallback)
+  if (!STATE.guestNama || !STATE.guestNama.trim()) {
+    const promptedName = window.prompt("Masukkan Nama Panggilan Anda agar tercatat di foto & voting acara:", "");
+    if (promptedName && promptedName.trim()) {
+      STATE.guestNama = promptedName.trim();
+      localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
+      const nameInputEl = document.getElementById('inputGuestName');
+      if (nameInputEl) nameInputEl.value = STATE.guestNama;
+    } else {
+      // Fallback nama ramah otomatis agar tamu tetap bisa menyimpan foto seketika
+      STATE.guestNama = `Tamu-${STATE.guestId ? STATE.guestId.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
+      localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
+    }
+  }
 
   btn.disabled = true;
   btnText.textContent = "Menyimpan...";
@@ -2303,7 +2308,7 @@ function bindEvents() {
     document.getElementById('guestNameWarning')?.classList.add('hidden');
   });
 
-  // Navigation Bar Buttons
+  // Navigation Bar Buttons (Kamera, Galeri, dan Profil Tamu / Tulis Nama)
   document.getElementById('navBtnCamera').addEventListener('click', () => {
     showView('viewCamera');
   });
@@ -2311,7 +2316,12 @@ function bindEvents() {
     showView('viewGallery');
   });
   document.getElementById('navBtnEventInfo').addEventListener('click', () => {
-    showToast(`Tamu: ${STATE.guestNama || 'Belum diisi'} (${STATE.guestId})`, "info");
+    showView('viewWelcome');
+  });
+
+  // Akses Cepat Galeri & Voting dari Halaman Tulis Nama (viewWelcome)
+  document.getElementById('btnWelcomeGoGallery')?.addEventListener('click', () => {
+    showView('viewGallery');
   });
 
   // Shutter Action
@@ -2582,11 +2592,7 @@ function bindEvents() {
   document.getElementById('btnSubmitAdminPin').addEventListener('click', verifyAdminLogin);
   document.getElementById('btnAdminLogout').addEventListener('click', () => {
     sessionStorage.removeItem('snapevent_admin_session');
-    if (!STATE.guestNama) {
-      showView('viewWelcome');
-    } else {
-      showView('viewCamera');
-    }
+    showView('viewCamera');
     showToast("Anda telah keluar dari panel Admin.", "info");
   });
 
