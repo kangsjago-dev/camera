@@ -7,11 +7,17 @@
 
 // --- 1. LOCAL STATE & IN-MEMORY CACHE ---
 const STATE = {
-  // Configuration
+  // Configuration & Custom Branding
   gasApiUrl: localStorage.getItem('snapevent_gas_url') || '',
+  appTitle: localStorage.getItem('snapevent_app_title') || 'SnapEvent Studio',
+  appLogoUrl: localStorage.getItem('snapevent_app_logo_url') || '',
+  appPhone: localStorage.getItem('snapevent_app_phone') || '0812-3456-7890',
+  appInstagram: localStorage.getItem('snapevent_app_instagram') || '@snapevent',
   adminUser: localStorage.getItem('snapevent_admin_user') || 'admin',
   adminPass: localStorage.getItem('snapevent_admin_pass') || 'admin123',
   adminPin: localStorage.getItem('snapevent_admin_pin') || '889900',
+  userAccounts: JSON.parse(localStorage.getItem('snapevent_user_accounts') || '[{"user":"crew","pass":"crew123","role":"operator"}]'),
+  currentUserRole: sessionStorage.getItem('snapevent_user_role') || 'guest',
   driveMasterId: localStorage.getItem('snapevent_drive_master_id') || '',
   customFrameImgObj: null,
   tempCustomFrameData: null,
@@ -30,17 +36,29 @@ const STATE = {
   activeFrame: 'GOLD_DECO',
   mediaStream: null,
   facingMode: 'environment', // 'environment' (back) or 'user' (front)
+  rawCapturedImageObj: null, // Clean captured snapshot without frame for dynamic frame switching
   currentCapturedDataUrl: null,
 
   // Gallery & Photos Cache
   photos: [],
-  votedPhotoIds: [],
+  votedPhotoIds: JSON.parse(localStorage.getItem('snapevent_voted_photos') || '[]'),
+  votedCategoryIds: JSON.parse(localStorage.getItem('snapevent_voted_categories') || '[]'),
   activeGalleryFilter: 'ALL',
 
   // Slideshow State
   slideshowIndex: 0,
   slideshowTimer: null
 };
+
+function extractDriveFolderId(input) {
+  if (!input) return "";
+  const str = String(input).trim();
+  const folderMatch = str.match(/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderMatch && folderMatch[1]) return folderMatch[1];
+  const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && idMatch[1]) return idMatch[1];
+  return str;
+}
 
 // Default Seed / Mock Data for Instant Browser & Offline Preview
 const MOCK_DATA = {
@@ -157,6 +175,24 @@ async function loadEventData() {
       if (res.status === 'success') {
         STATE.activeEvent = res.event;
         STATE.activeCategories = res.categories || [];
+
+        if (res.globalConfig) {
+          if (res.globalConfig.app_title) STATE.appTitle = res.globalConfig.app_title;
+          if (res.globalConfig.app_logo_url) STATE.appLogoUrl = res.globalConfig.app_logo_url;
+          if (res.globalConfig.app_phone) STATE.appPhone = res.globalConfig.app_phone;
+          if (res.globalConfig.app_instagram) STATE.appInstagram = res.globalConfig.app_instagram;
+          if (res.globalConfig.user_accounts) {
+            try { STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts); } catch (e) { }
+          }
+        }
+
+        if (res.guestStats && res.guestStats.guestVotesMap) {
+          const votedList = Object.keys(res.guestStats.guestVotesMap).filter(k => res.guestStats.guestVotesMap[k] > 0);
+          STATE.votedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
+          localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+        }
+
+        applyGlobalConfigToUI();
         applyEventToUI();
         await loadGallery();
         return;
@@ -170,6 +206,7 @@ async function loadEventData() {
   STATE.activeEvent = MOCK_DATA.event;
   STATE.activeCategories = MOCK_DATA.categories;
   STATE.photos = [...MOCK_DATA.samplePhotos];
+  applyGlobalConfigToUI();
   applyEventToUI();
   renderGallery();
 }
@@ -189,6 +226,46 @@ async function loadGallery() {
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
+  }
+}
+
+function applyGlobalConfigToUI() {
+  if (STATE.appTitle) {
+    const titleEl = document.getElementById('headerAppTitle');
+    if (titleEl) titleEl.textContent = STATE.appTitle;
+    document.title = `${STATE.appTitle} - Disposable Event Camera & Live Gallery`;
+  }
+
+  const logoImg = document.getElementById('headerCustomLogoImg');
+  const defaultIcon = document.getElementById('headerDefaultLogoIcon');
+  if (STATE.appLogoUrl) {
+    if (logoImg) {
+      logoImg.src = STATE.appLogoUrl;
+      logoImg.classList.remove('hidden');
+    }
+    if (defaultIcon) defaultIcon.classList.add('hidden');
+  } else {
+    if (logoImg) logoImg.classList.add('hidden');
+    if (defaultIcon) defaultIcon.classList.remove('hidden');
+  }
+
+  const btnContact = document.getElementById('btnHeaderContact');
+  if (STATE.appPhone || STATE.appInstagram) {
+    btnContact?.classList.remove('hidden');
+    const phoneLink = document.getElementById('contactPhoneLink');
+    if (phoneLink) {
+      phoneLink.textContent = STATE.appPhone || 'Tidak ada';
+      const cleanPhone = (STATE.appPhone || '').replace(/[^0-9]/g, '');
+      phoneLink.href = cleanPhone ? `https://wa.me/${cleanPhone}` : '#';
+    }
+    const igLink = document.getElementById('contactIgLink');
+    if (igLink) {
+      igLink.textContent = STATE.appInstagram || 'Tidak ada';
+      const cleanIg = (STATE.appInstagram || '').replace('@', '');
+      igLink.href = cleanIg ? `https://instagram.com/${cleanIg}` : '#';
+    }
+  } else {
+    btnContact?.classList.add('hidden');
   }
 }
 
@@ -268,6 +345,10 @@ function showView(viewId) {
   if (viewId === 'viewCamera') {
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
+    // Disposable Camera Otomatis Terbuka saat layar kamera aktif
+    if (!STATE.mediaStream) {
+      startCameraStream();
+    }
   } else if (viewId === 'viewGallery') {
     document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
     document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
@@ -276,6 +357,14 @@ function showView(viewId) {
 }
 
 // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
+function updateLiveCameraFilter() {
+  const video = document.getElementById('cameraVideo');
+  if (!video) return;
+  video.classList.remove('filter-live-raw', 'filter-live-800t', 'filter-live-warm', 'filter-live-bw');
+  const filterKey = (STATE.activeFilter || '800T').toLowerCase();
+  video.classList.add(`filter-live-${filterKey}`);
+}
+
 async function startCameraStream() {
   const video = document.getElementById('cameraVideo');
   const standby = document.getElementById('cameraStandbyNotice');
@@ -298,6 +387,7 @@ async function startCameraStream() {
     STATE.mediaStream = stream;
     video.srcObject = stream;
     standby.classList.add('hidden');
+    updateLiveCameraFilter();
   } catch (err) {
     console.warn("Live camera stream error (fallback to native file capture):", err.message);
     standby.classList.remove('hidden');
@@ -310,9 +400,12 @@ function triggerNativeCamera() {
   input.click();
 }
 
-function processPhotoWithFrameAndFilter(imgSource) {
+function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const canvas = document.getElementById('photoRenderCanvas');
   const ctx = canvas.getContext('2d');
+
+  // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
+  STATE.rawCapturedImageObj = imgSource;
 
   // Aspect ratio 4:5 Portrait Standard
   canvas.width = 1080;
@@ -343,7 +436,9 @@ function processPhotoWithFrameAndFilter(imgSource) {
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
   // 3. Render Selected Custom Frame & Hashtag
-  renderCustomFrameOverlay(ctx, canvas.width, canvas.height, STATE.activeFrame);
+  const frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  STATE.activeFrame = frameToUse;
+  renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
   // Tampilkan ke elemen <img> pratinjau agar pasti tampil tajam tanpa layar hitam
   const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
@@ -354,8 +449,36 @@ function processPhotoWithFrameAndFilter(imgSource) {
     reviewImg.src = dataUrl;
   }
 
-  document.getElementById('inputPhotoCaption').value = '';
+  // Render Pilihan Frame Pasca-Foto di Modal Review
+  renderReviewFramePills(frameToUse);
+
   document.getElementById('modalReviewPhoto').classList.remove('hidden');
+}
+
+function renderReviewFramePills(activeFrame) {
+  const container = document.getElementById('reviewFrameListContainer');
+  if (!container) return;
+
+  const ev = STATE.activeEvent;
+  const hasCustom = !!(ev && (ev.customFrameData || ev.customFrameUrl));
+
+  let customHtml = '';
+  if (hasCustom) {
+    customHtml = `<button data-frame="CUSTOM" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'CUSTOM' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Frame Acara</button>`;
+  }
+
+  container.innerHTML = `
+    <button data-frame="GOLD_DECO" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'GOLD_DECO' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Gold Deco</button>
+    ${customHtml}
+    <button data-frame="POLAROID" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'POLAROID' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">📷 Polaroid</button>
+    <button data-frame="MINIMAL" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'MINIMAL' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">▪️ Minimalist</button>
+    <button data-frame="NONE" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === 'NONE' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">Tanpa Bingkai</button>
+  `;
+
+  const nameEl = document.getElementById('reviewActiveFrameName');
+  if (nameEl) {
+    nameEl.textContent = activeFrame === 'GOLD_DECO' ? '✨ GOLD DECO' : activeFrame === 'POLAROID' ? '📷 POLAROID' : activeFrame === 'MINIMAL' ? '▪️ MINIMALIST' : activeFrame === 'CUSTOM' ? '✨ FRAME ACARA' : 'TANPA BINGKAI';
+  }
 }
 
 function applyColorFilter(ctx, w, h, filterName) {
@@ -570,6 +693,9 @@ async function handleSavePhotoToDrive() {
     if (STATE.gasApiUrl) {
       const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
         body: JSON.stringify(payload)
       });
       const res = await resp.json();
@@ -614,8 +740,17 @@ async function handleSavePhotoToDrive() {
   }
 }
 
-// --- 7. VOTING / LIKE SYSTEM ---
+// --- 7. VOTING / LIKE SYSTEM (MUTLAK 1X PER KATEGORI) ---
 async function handleVotePhoto(idFoto, idKategori = '') {
+  // Ambil kategori aktif atau kategori default
+  const targetCat = idKategori || (STATE.activeCategories[0]?.idKategori || 'KAT-001');
+
+  // Enforce 1 vote per category (Aturan Ketat)
+  if (STATE.votedCategoryIds.includes(targetCat)) {
+    showToast("Anda sudah memberikan voting pada kategori ini (Maksimal 1 kali voting per kategori)!", "warning");
+    return;
+  }
+
   if (STATE.votedPhotoIds.includes(idFoto)) {
     showToast("Anda sudah menyukai foto ini!", "warning");
     return;
@@ -627,19 +762,26 @@ async function handleVotePhoto(idFoto, idKategori = '') {
         action: "submitVote",
         eventId: STATE.activeEventId,
         idFoto: idFoto,
-        idKategori: idKategori,
+        idKategori: targetCat,
         guestId: STATE.guestId,
         guestNama: STATE.guestNama
       };
 
       const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
         body: JSON.stringify(payload)
       });
       const res = await resp.json();
 
       if (res.status === 'success') {
         STATE.votedPhotoIds.push(idFoto);
+        STATE.votedCategoryIds.push(targetCat);
+        localStorage.setItem('snapevent_voted_photos', JSON.stringify(STATE.votedPhotoIds));
+        localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+
         showToast("Suara Anda berhasil dicatat! ❤️", "success");
         await loadGallery();
       } else {
@@ -648,6 +790,10 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     } else {
       // Local Mock Vote
       STATE.votedPhotoIds.push(idFoto);
+      STATE.votedCategoryIds.push(targetCat);
+      localStorage.setItem('snapevent_voted_photos', JSON.stringify(STATE.votedPhotoIds));
+      localStorage.setItem('snapevent_voted_categories', JSON.stringify(STATE.votedCategoryIds));
+
       const target = STATE.photos.find(p => p.idFoto === idFoto);
       if (target) target.totalLikes += 1;
       showToast("Suara Anda berhasil dicatat! ❤️", "success");
@@ -782,6 +928,20 @@ function showSlideshowPhoto() {
     img.onload = () => {
       img.style.opacity = '1';
     };
+
+    // Update Uploader, Pesan & Waktu di Layar Proyektor
+    const uploaderBadge = document.getElementById('slideshowUploaderBadge');
+    if (uploaderBadge) {
+      uploaderBadge.textContent = 'Oleh: ' + (p.guestNama || 'Tamu');
+    }
+    const captionText = document.getElementById('slideshowCaptionText');
+    if (captionText) {
+      captionText.textContent = p.caption ? `"${p.caption}"` : '"Momen seru bersama para sahabat!"';
+    }
+    const timeBadge = document.getElementById('slideshowTimeBadge');
+    if (timeBadge) {
+      timeBadge.textContent = p.createdAt || 'Baru Saja';
+    }
   }, 500);
 }
 
@@ -837,15 +997,18 @@ async function verifyAdminLogin() {
     }
   }
 
-  // Fallback Kredensial Lokal
-  if (user === STATE.adminUser && pass === STATE.adminPass) {
+  // Fallback Kredensial Lokal (Admin atau Operator Kru Tambahan)
+  const matchedOperator = Array.isArray(STATE.userAccounts) && STATE.userAccounts.find(a => a.user === user && a.pass === pass);
+  if ((user === STATE.adminUser && pass === STATE.adminPass) || matchedOperator) {
     sessionStorage.setItem('snapevent_admin_session', 'true');
+    STATE.currentUserRole = matchedOperator ? (matchedOperator.role || 'operator') : 'admin';
+    sessionStorage.setItem('snapevent_user_role', STATE.currentUserRole);
     document.getElementById('modalAdminPin').classList.add('hidden');
     showView('viewAdmin');
     renderAdminDashboard();
-    showToast("Selamat datang, Admin!", "success");
+    showToast(`Selamat datang, ${matchedOperator ? 'Operator/Kru' : 'Administrator'}!`, "success");
   } else {
-    showToast("Username atau Password Admin salah!", "error");
+    showToast("Username atau Password login salah!", "error");
   }
 }
 
@@ -913,13 +1076,51 @@ function renderAdminDashboard() {
   });
 
   // Config Form Values
-  document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
-  document.getElementById('cfgAdminUser').value = STATE.adminUser;
-  document.getElementById('cfgAdminPass').value = STATE.adminPass;
-  document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
+  if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
+  if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
+  if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
+  if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
+  if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
+  if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
+  if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
+  if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
+
+  // Render User Accounts List
+  renderUserAccountsList();
 
   // Render Leaderboard
   renderLeaderboard();
+}
+
+function renderUserAccountsList() {
+  const container = document.getElementById('userAccountsContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!Array.isArray(STATE.userAccounts) || STATE.userAccounts.length === 0) {
+    container.innerHTML = '<p class="text-[11px] text-zinc-500 italic py-1">Belum ada akun kru/operator tambahan.</p>';
+    return;
+  }
+  STATE.userAccounts.forEach((acc, index) => {
+    const row = document.createElement('div');
+    row.className = "flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5 text-xs";
+    row.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span class="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[10px] text-zinc-400 font-bold">${index + 1}</span>
+        <div>
+          <span class="font-bold text-white">${acc.user}</span>
+          <span class="text-[10px] text-zinc-400 ml-1.5 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">${acc.role || 'operator'}</span>
+        </div>
+      </div>
+      <button type="button" class="btn-del-user text-red-400 hover:text-red-300 p-1 text-xs" data-idx="${index}" title="Hapus User">✕</button>
+    `;
+    row.querySelector('.btn-del-user').onclick = () => {
+      STATE.userAccounts.splice(index, 1);
+      localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+      renderUserAccountsList();
+      showToast("Akun operator dihapus.", "info");
+    };
+    container.appendChild(row);
+  });
 }
 
 function renderLeaderboard() {
@@ -1037,8 +1238,8 @@ function saveAdminEventForm() {
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const tanggal = document.getElementById('formEventTanggal').value;
   const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
-  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 3;
-  const driveFolder = document.getElementById('formEventDriveFolder').value.trim();
+  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 1;
+  const driveFolder = extractDriveFolderId(document.getElementById('formEventDriveFolder').value.trim());
 
   let revealMode = 'SEGERA';
   document.getElementsByName('revealModeRadio').forEach(r => {
@@ -1182,6 +1383,37 @@ function bindEvents() {
     STATE.activeFilter = pill.getAttribute('data-filter');
     document.getElementById('activeFilterName').textContent = pill.textContent.trim().toUpperCase();
     document.getElementById('vfFrameTopLeft').textContent = `SNAPEVENT ${STATE.activeFilter}`;
+    updateLiveCameraFilter();
+  });
+
+  // Review Frame Selector Pills (Pilih Bingkai Pasca-Foto)
+  document.getElementById('reviewFrameListContainer')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.rev-frame-pill');
+    if (!pill || !STATE.rawCapturedImageObj) return;
+    const chosenFrame = pill.getAttribute('data-frame');
+    processPhotoWithFrameAndFilter(STATE.rawCapturedImageObj, chosenFrame);
+  });
+
+  // Contact Modal Buttons
+  document.getElementById('btnHeaderContact')?.addEventListener('click', () => {
+    document.getElementById('modalContactInfo')?.classList.remove('hidden');
+  });
+  document.getElementById('btnCloseContact')?.addEventListener('click', () => {
+    document.getElementById('modalContactInfo')?.classList.add('hidden');
+  });
+
+  // Tambah Baris Akun User / Kru
+  document.getElementById('btnAddUserAccountRow')?.addEventListener('click', () => {
+    const username = prompt("Masukkan Username Kru / Operator Baru:");
+    if (!username) return;
+    const password = prompt("Masukkan Password untuk " + username + ":");
+    if (!password) return;
+
+    if (!Array.isArray(STATE.userAccounts)) STATE.userAccounts = [];
+    STATE.userAccounts.push({ user: username.trim(), pass: password.trim(), role: 'operator' });
+    localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+    renderUserAccountsList();
+    showToast(`Akun operator '${username}' berhasil ditambahkan!`, "success");
   });
 
   // Frame Selector Pills (Event Delegation)
@@ -1292,24 +1524,62 @@ function bindEvents() {
   });
 
   // Global Settings Form Save
-  document.getElementById('formGlobalSettings').addEventListener('submit', (e) => {
+  document.getElementById('formGlobalSettings').addEventListener('submit', async (e) => {
     e.preventDefault();
     const url = document.getElementById('cfgGasUrl').value.trim();
+    const appTitle = document.getElementById('cfgAppTitle').value.trim() || 'SnapEvent Studio';
+    const appLogoUrl = document.getElementById('cfgAppLogoUrl').value.trim();
+    const appPhone = document.getElementById('cfgAppPhone').value.trim();
+    const appInstagram = document.getElementById('cfgAppInstagram').value.trim();
     const user = document.getElementById('cfgAdminUser').value.trim() || 'admin';
     const pass = document.getElementById('cfgAdminPass').value.trim() || 'admin123';
-    const driveMaster = document.getElementById('cfgDriveMasterId').value.trim();
+    const driveMaster = extractDriveFolderId(document.getElementById('cfgDriveMasterId').value.trim());
 
     STATE.gasApiUrl = url;
+    STATE.appTitle = appTitle;
+    STATE.appLogoUrl = appLogoUrl;
+    STATE.appPhone = appPhone;
+    STATE.appInstagram = appInstagram;
     STATE.adminUser = user;
     STATE.adminPass = pass;
     STATE.driveMasterId = driveMaster;
 
     localStorage.setItem('snapevent_gas_url', url);
+    localStorage.setItem('snapevent_app_title', appTitle);
+    localStorage.setItem('snapevent_app_logo_url', appLogoUrl);
+    localStorage.setItem('snapevent_app_phone', appPhone);
+    localStorage.setItem('snapevent_app_instagram', appInstagram);
     localStorage.setItem('snapevent_admin_user', user);
     localStorage.setItem('snapevent_admin_pass', pass);
     localStorage.setItem('snapevent_drive_master_id', driveMaster);
 
-    showToast("Pengaturan global berhasil disimpan!", "success");
+    // Sinkronisasi ke Backend GAS jika URL aktif
+    if (url) {
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'adminUpdateGlobalConfig',
+            updates: {
+              app_title: appTitle,
+              app_logo_url: appLogoUrl,
+              app_phone: appPhone,
+              app_instagram: appInstagram,
+              admin_user: user,
+              admin_pass: pass,
+              master_drive_folder_id: driveMaster,
+              user_accounts: JSON.stringify(STATE.userAccounts)
+            }
+          })
+        });
+      } catch (err) {
+        console.warn("Sync global config error:", err.message);
+      }
+    }
+
+    applyGlobalConfigToUI();
+    showToast("Pengaturan global & branding berhasil disimpan!", "success");
     loadEventData();
   });
 

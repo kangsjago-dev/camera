@@ -1,6 +1,6 @@
 /* ==============================================================================
  * SNAPEVENT: STYLE.CSS
- * Luxury Dark Gold Aesthetic, Animations & Micro-Interactions
+ * Luxury Dark Gold Aesthetic, Live Camera Filters, & Micro-Interactions
  * ============================================================================== */
 
 /* Custom Scrollbar */
@@ -31,6 +31,37 @@
 
 .gold-gradient-bg {
   background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
+}
+
+/* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit) */
+.camera-page-container {
+  height: calc(100dvh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+/* Live Camera Filters (CSS Real-time Video Stream Preview) */
+.filter-live-raw {
+  filter: none;
+  transition: filter 0.3s ease;
+}
+
+.filter-live-800t {
+  filter: contrast(1.15) saturate(1.3) sepia(0.22) hue-rotate(-8deg);
+  transition: filter 0.3s ease;
+}
+
+.filter-live-warm {
+  filter: sepia(0.38) saturate(1.35) brightness(1.05) contrast(1.08);
+  transition: filter 0.3s ease;
+}
+
+.filter-live-bw {
+  filter: grayscale(1) contrast(1.4) brightness(0.92);
+  transition: filter 0.3s ease;
 }
 
 /* Shutter Press Haptic Feel */
@@ -78,4 +109,3 @@
 .ken-burns {
   animation: kenBurns 7s ease-in-out infinite alternate;
 }
-
