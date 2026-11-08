@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SnapEvent - Disposable Event Camera & Live Gallery</title>
+  
+  <!-- Google Fonts: Plus Jakarta Sans & Playfair Display untuk Luxury Anti-AI Aesthetic -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Caveat:wght@600&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              gold: '#D4AF37',
+              goldLight: '#F3E5AB',
+              goldDark: '#997F24',
+              surface: '#121216',
+              surfaceLight: '#1B1B22',
+              surfaceBorder: '#272732',
+              dark: '#0A0A0D'
+            }
+          },
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            serif: ['"Playfair Display"', 'serif'],
+            hand: ['"Caveat"', 'cursive']
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom Scrollbar & Luxury Glow */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0A0A0D; }
+    ::-webkit-scrollbar-thumb { background: #272732; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #D4AF37; }
+
+    .gold-gradient-text {
+      background: linear-gradient(135deg, #FFF1B0 0%, #D4AF37 50%, #AA8721 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .gold-gradient-bg {
+      background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
+    }
+    .shutter-press:active {
+      transform: scale(0.92);
+    }
+    .flash-anim {
+      animation: cameraFlash 0.35s ease-out forwards;
+    }
+    @keyframes cameraFlash {
+      0% { opacity: 0; }
+      20% { opacity: 0.95; background: white; }
+      100% { opacity: 0; }
+    }
+    .grain-overlay {
+      background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 0);
+      background-size: 4px 4px;
+    }
+    /* Ken Burns Slideshow Effect */
+    @keyframes kenBurns {
+      0% { transform: scale(1) translate(0, 0); }
+      50% { transform: scale(1.08) translate(-1%, -1%); }
+      100% { transform: scale(1.03) translate(1%, 0); }
+    }
+    .ken-burns {
+      animation: kenBurns 7s ease-in-out infinite alternate;
+    }
+  </style>
+</head>
+<body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
+
+  <!-- ============================================================================== -->
+  <!-- FLASH OVERLAY EFFECT (Triggered on Shutter Press) -->
+  <!-- ============================================================================== -->
+  <div id="flashOverlay" class="pointer-events-none fixed inset-0 z-50 opacity-0 bg-white"></div>
+
+  <!-- ============================================================================== -->
+  <!-- TOAST NOTIFICATION SYSTEM (Anti-Alert Bawaan Browser) -->
+  <!-- ============================================================================== -->
+  <div id="toastContainer" class="fixed top-5 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-2 pointer-events-none w-11/12 max-w-sm"></div>
+
+  <!-- ============================================================================== -->
+  <!-- TOP HEADER / APP BAR -->
+  <!-- ============================================================================== -->
+  <header class="sticky top-0 z-40 bg-[#0A0A0D]/85 backdrop-blur-md border-b border-white/5 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-gold to-amber-700 flex items-center justify-center text-black font-bold shadow-md shadow-brand-gold/20">
+        <!-- SVG Retro Camera Icon -->
+        <svg class="w-4 h-4 text-black" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+          <circle cx="12" cy="13" r="3"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-sm font-semibold tracking-wide text-zinc-100 flex items-center gap-1.5">
+          <span id="headerAppTitle">SnapEvent</span>
+          <span class="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-brand-gold/15 text-brand-gold border border-brand-gold/30">Camera</span>
+        </h1>
+        <p id="headerEventHashtag" class="text-[11px] text-zinc-400 font-medium">#SarahKevinEverAfter</p>
+      </div>
+    </div>
+
+    <!-- Right Quick Actions: Mode Slideshow, Ganti Event, & Admin -->
+    <div class="flex items-center gap-1.5">
+      <!-- Slideshow Button -->
+      <button id="btnOpenSlideshow" title="Layar Proyektor Panggung" class="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white transition">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect width="18" height="12" x="3" y="4" rx="2"/><line x1="8" x2="16" y1="20" y2="20"/><line x1="12" x2="12" y1="16" y2="20"/>
+        </svg>
+      </button>
+
+      <!-- Admin Panel Button -->
+      <button id="btnOpenAdmin" title="Menu Admin & Pengaturan" class="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-brand-gold transition flex items-center gap-1 text-xs">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================================================================== -->
+  <!-- MAIN CONTAINER (VIEW ROUTER) -->
+  <!-- ============================================================================== -->
+  <main class="flex-1 flex flex-col max-w-md w-full mx-auto pb-24 md:max-w-xl lg:max-w-4xl relative">
+
+    <!-- ========================================== -->
+    <!-- VIEW 1: WELCOME & GUEST IDENTITY MODAL/STEP -->
+    <!-- ========================================== -->
+    <section id="viewWelcome" class="hidden flex-1 flex flex-col items-center justify-center p-6 text-center">
+      <div class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-brand-goldDark to-brand-gold flex items-center justify-center text-black mb-6 shadow-xl shadow-brand-gold/15">
+        <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+          <circle cx="12" cy="13" r="3"/>
+        </svg>
+      </div>
+
+      <h2 id="welcomeEventTitle" class="font-serif text-2xl md:text-3xl font-bold text-white mb-2">The Wedding of Sarah & Kevin</h2>
+      <p id="welcomeEventDesc" class="text-zinc-400 text-sm max-w-xs mb-8">Abadikan setiap momen pesta malam ini dengan kamera sekali pakai digital!</p>
+
+      <div class="w-full max-w-xs bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-5 mb-6 text-left">
+        <label class="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Nama Panggilan Kamu</label>
+        <input type="text" id="inputGuestName" placeholder="Contoh: Sarah / Budi" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none transition mb-3" />
+        <p class="text-[11px] text-zinc-400">Nama akan dicetak di hasil foto dan voting foto terfavorit.</p>
+      </div>
+
+      <button id="btnStartCamera" class="w-full max-w-xs py-3.5 px-6 rounded-xl gold-gradient-bg text-black font-semibold text-sm shadow-lg shadow-brand-gold/25 hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-2">
+        <span>Buka Kamera Acara</span>
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- VIEW 2: DISPOSABLE CAMERA VIEWFINDER -->
+    <!-- ========================================== -->
+    <section id="viewCamera" class="flex-1 flex flex-col justify-between p-4">
+      
+      <!-- Film Roll Status & Event Hashtag -->
+      <div class="flex items-center justify-between bg-brand-surfaceLight/80 backdrop-blur-sm border border-brand-surfaceBorder px-4 py-2.5 rounded-xl mb-3">
+        <div class="flex items-center gap-2">
+          <!-- Film Cartridge Icon -->
+          <div class="w-6 h-6 rounded bg-amber-500/20 text-brand-gold flex items-center justify-center text-xs font-bold">
+            🎞️
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Sisa Jepretan</div>
+            <div id="camRemainingPhotosText" class="text-xs font-bold text-white tracking-wide">10 / 10 Foto Tersisa</div>
+          </div>
+        </div>
+        <div id="camEventBadge" class="text-xs font-medium text-brand-gold bg-brand-gold/10 px-2.5 py-1 rounded-full border border-brand-gold/20">
+          #SarahKevinEverAfter
+        </div>
+      </div>
+
+      <!-- CAMERA VIEWFINDER FRAME -->
+      <div class="relative w-full aspect-[4/5] bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center">
+        <!-- Live Video Element (If Supported) -->
+        <video id="cameraVideo" autoplay playsinline class="w-full h-full object-cover"></video>
+        
+        <!-- Live Frame Overlay Preview (Art Deco / Polaroid / Minimal) -->
+        <div id="viewfinderFrameOverlay" class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3.5 z-10">
+          <!-- Top Tag -->
+          <div class="flex justify-between items-center text-[11px] font-medium text-amber-200/90 tracking-widest uppercase drop-shadow">
+            <span id="vfFrameTopLeft">SNAPEVENT RAW</span>
+            <span id="vfFrameDate">20.11.2026</span>
+          </div>
+
+          <!-- Center Crosshairs / Viewfinder Focus Box -->
+          <div class="w-24 h-24 border border-white/20 rounded-lg mx-auto pointer-events-none flex items-center justify-center">
+            <div class="w-2 h-2 bg-brand-gold/60 rounded-full"></div>
+          </div>
+
+          <!-- Bottom Hashtag & Frame Border -->
+          <div class="text-center">
+            <p id="vfFrameBottomTitle" class="font-serif italic text-base text-amber-200 drop-shadow">The Wedding of Sarah & Kevin</p>
+            <p id="vfFrameBottomHashtag" class="text-[11px] text-white/80 font-hand tracking-wider">#SarahKevinEverAfter</p>
+          </div>
+        </div>
+
+        <!-- Fallback Placeholder when Camera Stream is Waiting / Static -->
+        <div id="cameraStandbyNotice" class="absolute inset-0 bg-[#121217] flex flex-col items-center justify-center p-6 text-center z-0">
+          <div class="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-brand-gold mb-3">
+            <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+              <circle cx="12" cy="13" r="3"/>
+            </svg>
+          </div>
+          <p class="text-sm font-medium text-white mb-1">Kamera Siap Digunakan</p>
+          <p class="text-xs text-zinc-400 max-w-xs mb-4">Tekan tombol jepret di bawah atau pilih foto langsung dari galeri ponselmu.</p>
+          <button id="btnInitStream" class="text-xs py-2 px-4 rounded-lg bg-white/10 hover:bg-white/15 text-zinc-200 transition">
+            Aktifkan Live Viewfinder HP
+          </button>
+        </div>
+
+        <!-- Hidden Native File Input (Solid Native Camera Fallback) -->
+        <input type="file" id="nativeCameraInput" accept="image/*" capture="environment" class="hidden" />
+      </div>
+
+      <!-- FILTER & FRAME SELECTOR CAROUSEL -->
+      <div class="mt-4 space-y-2.5">
+        <!-- Filter Selector -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-zinc-400 mb-1.5 px-1">
+            <span>Gaya Kamera / Filter</span>
+            <span id="activeFilterName" class="text-brand-gold font-bold">800T CINE</span>
+          </div>
+          <div class="flex items-center gap-2 overflow-x-auto pb-1" id="filterListContainer">
+            <!-- Filter Pills -->
+            <button data-filter="RAW" class="filter-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              RAW Asli
+            </button>
+            <button data-filter="800T" class="filter-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
+              800T Cine
+            </button>
+            <button data-filter="WARM" class="filter-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              Warm Sun
+            </button>
+            <button data-filter="BW" class="filter-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              B&W Noir
+            </button>
+          </div>
+        </div>
+
+        <!-- Frame Selector -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-zinc-400 mb-1.5 px-1">
+            <span>Bingkai Acara (Custom Frame)</span>
+            <span id="activeFrameName" class="text-brand-gold font-bold">GOLD ART DECO</span>
+          </div>
+          <div class="flex items-center gap-2 overflow-x-auto pb-1" id="frameListContainer">
+            <button data-frame="GOLD_DECO" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition">
+              ✨ Gold Deco
+            </button>
+            <button data-frame="POLAROID" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              📷 Polaroid
+            </button>
+            <button data-frame="MINIMAL" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              ▪️ Minimalist
+            </button>
+            <button data-frame="NONE" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+              Tanpa Bingkai
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CAMERA CONTROLS: SHUTTER BUTTON -->
+      <div class="flex items-center justify-around pt-4 pb-2">
+        <!-- Switch Camera Lens (Front/Back) -->
+        <button id="btnSwitchCamera" class="w-12 h-12 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Putar Kamera">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+            <path d="M16 21h5v-5"/>
+          </svg>
+        </button>
+
+        <!-- Big Shutter Button -->
+        <button id="btnShutter" class="relative group shutter-press flex items-center justify-center" title="Jepret Foto">
+          <div class="w-20 h-20 rounded-full border-4 border-brand-gold/80 flex items-center justify-center p-1.5 bg-[#1B1B22] shadow-xl shadow-brand-gold/20 group-hover:scale-105 transition">
+            <div class="w-full h-full rounded-full gold-gradient-bg shadow-inner"></div>
+          </div>
+        </button>
+
+        <!-- Native Gallery Upload Button -->
+        <button id="btnOpenGalleryUpload" class="w-12 h-12 rounded-full bg-brand-surfaceLight border border-brand-surfaceBorder flex items-center justify-center text-zinc-300 hover:text-white active:scale-95 transition" title="Pilih dari Galeri">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+            <circle cx="9" cy="9" r="2"/>
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- VIEW 3: EVENT GALLERY & POLING/VOTING -->
+    <!-- ========================================== -->
+    <section id="viewGallery" class="hidden flex-1 flex flex-col p-4">
+      
+      <!-- Gallery Header Banner -->
+      <div class="bg-gradient-to-r from-brand-surfaceLight via-[#1A1A24] to-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4 mb-4">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-[11px] font-bold text-brand-gold uppercase tracking-widest">Album Foto Bersama</span>
+          <span id="galleryPhotoCountBadge" class="text-xs bg-white/10 px-2.5 py-0.5 rounded-full text-zinc-300 font-semibold">0 Foto</span>
+        </div>
+        <h2 id="galleryEventTitle" class="font-serif text-xl font-bold text-white mb-1">The Wedding of Sarah & Kevin</h2>
+        <p id="galleryEventHashtag" class="text-xs text-zinc-400">Semua foto yang dijepret tamu akan berkumpul di sini.</p>
+      </div>
+
+      <!-- Voting Category Tabs -->
+      <div class="mb-4">
+        <div class="flex items-center justify-between text-xs font-semibold text-zinc-400 mb-2">
+          <span>Kategori Voting Foto</span>
+          <span id="userVoteQuotaInfo" class="text-brand-gold text-[11px]">Sisa Suara: 3</span>
+        </div>
+        <div class="flex items-center gap-2 overflow-x-auto pb-1" id="galleryCategoryTabs">
+          <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
+            Semua Foto
+          </button>
+          <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+            🔥 Paling Populer
+          </button>
+          <!-- Dynamic Category Pills injected here -->
+        </div>
+      </div>
+
+      <!-- REVEAL LOCK NOTICE (Jika Mode 'Setelah Acara' & Belum Di-reveal) -->
+      <div id="galleryLockedNotice" class="hidden bg-brand-surfaceLight border border-amber-500/30 rounded-2xl p-8 text-center my-6">
+        <div class="w-16 h-16 rounded-full bg-amber-500/10 text-brand-gold flex items-center justify-center mx-auto mb-4 text-2xl">
+          🔒
+        </div>
+        <h3 class="font-serif text-lg font-bold text-white mb-2">Foto-Foto Sedang Dirol Rahasia!</h3>
+        <p class="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed mb-4">
+          Seperti kamera sekali pakai asli, foto-foto yang kamu dan tamu lain jepret akan diungkapkan secara serentak setelah pesta selesai.
+        </p>
+        <span class="inline-block text-[11px] font-semibold text-brand-gold bg-brand-gold/10 px-3 py-1 rounded-full border border-brand-gold/20">
+          Nantikan Pengungkapan Galeri!
+        </span>
+      </div>
+
+      <!-- EMPTY STATE GALLERY -->
+      <div id="galleryEmptyNotice" class="hidden text-center py-12">
+        <div class="w-14 h-14 rounded-full bg-white/5 text-zinc-500 flex items-center justify-center mx-auto mb-3">
+          <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+            <circle cx="9" cy="9" r="2"/>
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+          </svg>
+        </div>
+        <p class="text-sm font-semibold text-zinc-300 mb-1">Belum Ada Foto Terbit</p>
+        <p class="text-xs text-zinc-500 mb-4">Jadilah orang pertama yang mengabadikan momen malam ini!</p>
+        <button id="btnEmptyGoCamera" class="py-2.5 px-4 rounded-xl gold-gradient-bg text-black font-semibold text-xs shadow-md">
+          Mulai Jepret Sekarang
+        </button>
+      </div>
+
+      <!-- PHOTO GRID (Responsive 2 Columns Mobile, 3-4 Desktop) -->
+      <div id="galleryPhotoGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        <!-- Photo Cards dynamically injected here -->
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- VIEW 4: ADMIN DASHBOARD & EVENT WIZARD -->
+    <!-- ========================================== -->
+    <section id="viewAdmin" class="hidden flex-1 flex flex-col p-4">
+      
+      <!-- Admin Top Navigation Tabs -->
+      <div class="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>Panel Pengelola Acara</span>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30">Admin</span>
+          </h2>
+          <p class="text-xs text-zinc-400">Atur event, kuota kamera, dan kontrol galeri Drive.</p>
+        </div>
+        <button id="btnAdminLogout" class="text-xs text-zinc-400 hover:text-red-400 p-1.5 rounded bg-white/5 transition">
+          Keluar
+        </button>
+      </div>
+
+      <!-- Admin Tab Switcher -->
+      <div class="flex items-center gap-2 overflow-x-auto pb-2 mb-4 text-xs font-semibold">
+        <button data-admintab="events" class="adm-tab px-3 py-1.5 rounded-lg bg-brand-gold text-black transition">
+          Daftar Event
+        </button>
+        <button data-admintab="create" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+          + Buat Event Baru
+        </button>
+        <button data-admintab="leaderboard" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+          Pemenang Voting
+        </button>
+        <button data-admintab="settings" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+          Pengaturan Global
+        </button>
+      </div>
+
+      <!-- TAB 1: LIST EVENTS & METRICS -->
+      <div id="adminTabEvents" class="space-y-4">
+        <!-- 3-Column Metrics Grid (Standard ZettBOT anti-tumpuk) -->
+        <div class="grid grid-cols-3 gap-2.5">
+          <div class="bg-brand-surfaceLight border border-brand-surfaceBorder p-3 rounded-xl text-center">
+            <div class="text-[10px] uppercase font-bold text-zinc-400 mb-0.5">Total Event</div>
+            <div id="admMetricEvents" class="text-lg font-bold text-white">1</div>
+          </div>
+          <div class="bg-brand-surfaceLight border border-brand-surfaceBorder p-3 rounded-xl text-center">
+            <div class="text-[10px] uppercase font-bold text-zinc-400 mb-0.5">Total Foto</div>
+            <div id="admMetricPhotos" class="text-lg font-bold text-brand-gold">0</div>
+          </div>
+          <div class="bg-brand-surfaceLight border border-brand-surfaceBorder p-3 rounded-xl text-center">
+            <div class="text-[10px] uppercase font-bold text-zinc-400 mb-0.5">Total Suara</div>
+            <div id="admMetricVotes" class="text-lg font-bold text-emerald-400">0</div>
+          </div>
+        </div>
+
+        <!-- Event List Cards -->
+        <div class="space-y-3" id="adminEventListContainer">
+          <!-- Injected via JavaScript -->
+        </div>
+      </div>
+
+      <!-- TAB 2: WIZARD FORM BUAT / EDIT EVENT (Sesuai 5 Screenshot Referensi!) -->
+      <div id="adminTabCreate" class="hidden space-y-4">
+        <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-5">
+          <h3 id="formEventTitle" class="font-serif text-lg font-bold text-white mb-4">Pengaturan Acara Baru</h3>
+
+          <form id="formSaveEvent" class="space-y-4">
+            <input type="hidden" id="formEventId" value="" />
+
+            <!-- Nama & Slug Event -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1">Nama Acara</label>
+                <input type="text" id="formEventNama" required placeholder="Contoh: The Wedding of Sarah & Kevin" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1">Tanda Pagar Acara (#Hashtag)</label>
+                <input type="text" id="formEventHashtag" placeholder="#SarahKevinEverAfter" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              </div>
+            </div>
+
+            <!-- Tanggal & Kuota -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1">Tanggal Acara</label>
+                <input type="date" id="formEventTanggal" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1">Maks. Foto per Tamu</label>
+                <input type="number" id="formEventMaxFoto" min="1" max="100" value="10" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-zinc-300 mb-1">Maks. Vote per Tamu</label>
+                <input type="number" id="formEventMaxVote" min="1" max="20" value="3" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              </div>
+            </div>
+
+            <!-- Mode Waktu Pengungkapan Foto (Screenshot #4) -->
+            <div class="border border-white/10 rounded-xl p-3.5 bg-black/20">
+              <label class="block text-xs font-semibold text-zinc-200 mb-1">Kapan foto-foto diungkapkan?</label>
+              <p class="text-[11px] text-zinc-400 mb-2.5">Pilih kapan para tamu undangan boleh melihat hasil jepretan.</p>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="cursor-pointer border border-white/10 has-[:checked]:border-brand-gold has-[:checked]:bg-brand-gold/10 rounded-xl p-3 flex flex-col items-center text-center transition">
+                  <input type="radio" name="revealModeRadio" value="SEGERA" checked class="hidden" />
+                  <span class="text-xs font-bold text-white mb-0.5">⏱️ Selama Acara</span>
+                  <span class="text-[10px] text-zinc-400">Terungkap langsung saat dijepret</span>
+                </label>
+                <label class="cursor-pointer border border-white/10 has-[:checked]:border-brand-gold has-[:checked]:bg-brand-gold/10 rounded-xl p-3 flex flex-col items-center text-center transition">
+                  <input type="radio" name="revealModeRadio" value="SETELAH" class="hidden" />
+                  <span class="text-xs font-bold text-white mb-0.5">🔒 Setelah Acara</span>
+                  <span class="text-[10px] text-zinc-400">Ditahan sampai acara selesai</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Toggle Izin & Fitur Like (Screenshot #1 & #2) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="flex items-center justify-between border border-white/10 rounded-xl p-3 bg-black/20">
+                <div>
+                  <div class="text-xs font-semibold text-white">Like Foto & Poling</div>
+                  <div class="text-[10px] text-zinc-400">Tamu dapat menyukai foto favorit</div>
+                </div>
+                <input type="checkbox" id="formCheckLike" checked class="w-5 h-5 accent-amber-500 rounded cursor-pointer" />
+              </div>
+              <div class="flex items-center justify-between border border-white/10 rounded-xl p-3 bg-black/20">
+                <div>
+                  <div class="text-xs font-semibold text-white">Izin Visibilitas Galeri</div>
+                  <div class="text-[10px] text-zinc-400">Semua yang punya link dapat lihat</div>
+                </div>
+                <input type="checkbox" id="formCheckVisibility" checked class="w-5 h-5 accent-amber-500 rounded cursor-pointer" />
+              </div>
+            </div>
+
+            <!-- Kategori Voting Dinamis -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-semibold text-zinc-300">Kategori Poling / Voting</label>
+                <button type="button" id="btnAddCategoryRow" class="text-[11px] font-bold text-brand-gold hover:underline">
+                  + Tambah Kategori
+                </button>
+              </div>
+              <div id="categoryInputsContainer" class="space-y-2">
+                <!-- Dynamically injected category rows -->
+              </div>
+            </div>
+
+            <!-- Folder Google Drive ID (Opsional) -->
+            <div>
+              <label class="block text-xs font-semibold text-zinc-300 mb-1">ID Folder Google Drive (Opsional)</label>
+              <input type="text" id="formEventDriveFolder" placeholder="Kosongkan jika ingin sistem auto-generate folder di Drive" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              <p class="text-[10px] text-zinc-400 mt-1">Sistem akan otomatis membuat subfolder khusus di Google Drive Anda.</p>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="pt-2 flex items-center justify-end gap-2">
+              <button type="button" id="btnCancelEditEvent" class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold transition">
+                Batal
+              </button>
+              <button type="submit" id="btnSubmitSaveEvent" class="px-5 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 transition flex items-center gap-1.5">
+                <span>Simpan Pengaturan Acara</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- TAB 3: LEADERBOARD PEMENANG VOTING -->
+      <div id="adminTabLeaderboard" class="hidden space-y-4">
+        <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-serif text-base font-bold text-white">Peringkat Foto Terfavorit</h3>
+            <span class="text-[11px] text-brand-gold font-semibold">Hasil Poling Tamu</span>
+          </div>
+          <div id="adminLeaderboardList" class="space-y-2.5">
+            <!-- Dynamically injected ranking rows -->
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: GLOBAL SETTINGS -->
+      <div id="adminTabSettings" class="hidden space-y-4">
+        <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-5">
+          <h3 class="font-serif text-base font-bold text-white mb-4">Pengaturan Sistem Global</h3>
+          <form id="formGlobalSettings" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-zinc-300 mb-1">URL Backend Google Apps Script (Web App Endpoint)</label>
+              <input type="text" id="cfgGasUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+              <p class="text-[10px] text-zinc-400 mt-1">Masukkan URL Web App hasil deploy code.gs untuk menghubungkan penyimpanan Drive & Google Sheets.</p>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-zinc-300 mb-1">Master PIN Admin Baru</label>
+              <input type="text" id="cfgAdminPin" placeholder="889900" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+            </div>
+
+            <div class="pt-2 flex items-center justify-between">
+              <button type="button" id="btnResetDemoData" class="text-xs text-red-400 hover:underline">
+                Reset ke Contoh Demo
+              </button>
+              <button type="submit" id="btnSaveGlobalSettings" class="px-5 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold transition">
+                Simpan Konfigurasi
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ============================================================================== -->
+  <!-- BOTTOM FIXED NAVIGATION BAR (Mobile-First Thumb Navigation) -->
+  <!-- ============================================================================== -->
+  <nav id="bottomNavBar" class="fixed bottom-0 left-0 right-0 z-40 bg-[#0A0A0D]/90 backdrop-blur-lg border-t border-white/10 py-2 px-6">
+    <div class="max-w-md mx-auto flex items-center justify-around">
+      <!-- Nav Button: Kamera -->
+      <button id="navBtnCamera" class="nav-item active flex flex-col items-center gap-1 text-brand-gold transition">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+          <circle cx="12" cy="13" r="3"/>
+        </svg>
+        <span class="text-[10px] font-semibold tracking-wider uppercase">Kamera</span>
+      </button>
+
+      <!-- Nav Button: Galeri & Poling -->
+      <button id="navBtnGallery" class="nav-item flex flex-col items-center gap-1 text-zinc-400 hover:text-white transition">
+        <div class="relative">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+            <circle cx="9" cy="9" r="2"/>
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+          </svg>
+          <span id="navGalleryDot" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-brand-gold"></span>
+        </div>
+        <span class="text-[10px] font-semibold tracking-wider uppercase">Galeri</span>
+      </button>
+
+      <!-- Nav Button: Info & Tamu -->
+      <button id="navBtnEventInfo" class="nav-item flex flex-col items-center gap-1 text-zinc-400 hover:text-white transition">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span class="text-[10px] font-semibold tracking-wider uppercase">Profil Tamu</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL: REVIEW FOTO SEBELUM SIMPAN (FRAME CANVAS RENDER) -->
+  <!-- ============================================================================== -->
+  <div id="modalReviewPhoto" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-sm w-full p-4 flex flex-col items-center shadow-2xl">
+      <h3 class="font-serif text-base font-bold text-white mb-2">Pratinjau Foto Acara</h3>
+      
+      <!-- Rendered Image Canvas Container -->
+      <div class="relative w-full aspect-[4/5] bg-black rounded-xl overflow-hidden border border-white/10 mb-3 flex items-center justify-center">
+        <canvas id="photoRenderCanvas" class="w-full h-full object-contain"></canvas>
+      </div>
+
+      <!-- Caption Input Field -->
+      <div class="w-full mb-3">
+        <input type="text" id="inputPhotoCaption" placeholder="Tambahkan ucapan / kesan singkat..." class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 outline-none transition" />
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="w-full flex items-center gap-2">
+        <button id="btnRetakePhoto" class="flex-1 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-zinc-300 text-xs font-semibold transition">
+          Foto Ulang
+        </button>
+        <button id="btnSaveToDrive" class="flex-1 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-1.5">
+          <span id="btnSaveText">Simpan ke Rol</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL: PIN LOGIN ADMIN -->
+  <!-- ============================================================================== -->
+  <div id="modalAdminPin" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-xs w-full p-5 text-center shadow-2xl">
+      <div class="w-12 h-12 rounded-full bg-brand-gold/15 text-brand-gold flex items-center justify-center mx-auto mb-3">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+      <h3 class="font-serif text-base font-bold text-white mb-1">Akses Pengelola Acara</h3>
+      <p class="text-xs text-zinc-400 mb-4">Masukkan Master PIN Admin untuk mengelola event.</p>
+      
+      <input type="password" id="inputAdminPin" maxlength="10" placeholder="PIN (Default: 889900)" class="w-full text-center tracking-widest text-base font-bold bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl py-2.5 text-white outline-none mb-4" />
+      
+      <div class="flex items-center gap-2">
+        <button id="btnCancelAdminPin" class="flex-1 py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold">Batal</button>
+        <button id="btnSubmitAdminPin" class="flex-1 py-2 rounded-xl gold-gradient-bg text-black text-xs font-bold">Masuk</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL: LIVE VENUE SLIDESHOW (PROYEKTOR / TV SCREEN BALLROOM) -->
+  <!-- ============================================================================== -->
+  <div id="modalSlideshow" class="hidden fixed inset-0 z-[60] bg-black flex flex-col justify-between overflow-hidden">
+    <!-- Top Bar -->
+    <div class="relative z-10 flex items-center justify-between p-6 bg-gradient-to-b from-black/80 to-transparent">
+      <div>
+        <h2 id="slideshowTitle" class="font-serif text-2xl md:text-3xl font-bold text-white drop-shadow">The Wedding of Sarah & Kevin</h2>
+        <p id="slideshowHashtag" class="text-sm text-brand-gold font-semibold tracking-wider">#SarahKevinEverAfter</p>
+      </div>
+      <button id="btnCloseSlideshow" class="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition" title="Tutup Layar Penuh">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Center Stage Photo (Ken Burns Animation) -->
+    <div class="absolute inset-0 flex items-center justify-center p-8 z-0">
+      <img id="slideshowImg" src="" alt="Live Event Photo" class="max-h-full max-w-full object-contain rounded-2xl shadow-2xl transition-opacity duration-1000 opacity-0 ken-burns" />
+      <div id="slideshowEmptyMsg" class="hidden text-center text-zinc-400">
+        <p class="font-serif text-xl text-white mb-2">Live Photo Stream</p>
+        <p class="text-xs">Foto yang diunggah para tamu akan otomatis muncul bergantian di layar ini.</p>
+      </div>
+    </div>
+
+    <!-- Bottom Bar with Floating QR Code for Guests at Tables -->
+    <div class="relative z-10 flex items-center justify-between p-6 bg-gradient-to-t from-black/80 to-transparent">
+      <div class="flex items-center gap-3">
+        <!-- Live Dot -->
+        <span class="flex h-3 w-3 relative">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+        </span>
+        <span class="text-xs uppercase font-bold text-white tracking-widest">LIVE EVENT SLIDESHOW</span>
+      </div>
+
+      <!-- QR Code Mini Pill -->
+      <div class="flex items-center gap-3 bg-black/60 backdrop-blur-md border border-white/10 px-4 py-2 rounded-2xl">
+        <div class="w-10 h-10 bg-white rounded-lg p-1 flex items-center justify-center">
+          <!-- Mini QR Placeholder SVG -->
+          <svg class="w-full h-full text-black" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M2 2h8v8H2V2zm2 2v4h4V4H4zm10-2h8v8h-8V2zm2 2v4h4V4h-4zM2 14h8v8H2v-8zm2 2v4h4v-4H4zm14-2h4v4h-4v-4zm-4 0h2v2h-2v-2zm2 4h2v4h-2v-4zm2 2h2v2h-2v-2zm-6-2h2v4h-2v-4z"/>
+          </svg>
+        </div>
+        <div class="text-left text-xs">
+          <div class="font-bold text-white">Scan untuk Memotret</div>
+          <div class="text-[10px] text-zinc-400">Buka kamera di HP Anda</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL: ZOOM DETAIL FOTO & VOTING -->
+  <!-- ============================================================================== -->
+  <div id="modalZoomPhoto" class="hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="relative max-w-sm w-full bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl overflow-hidden p-4">
+      <button id="btnCloseZoom" class="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+
+      <div class="w-full aspect-[4/5] bg-black rounded-xl overflow-hidden mb-3">
+        <img id="zoomImg" src="" alt="Detail Foto" class="w-full h-full object-contain" />
+      </div>
+
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <h4 id="zoomGuestNama" class="text-sm font-bold text-white">Oleh Tamu</h4>
+          <p id="zoomTime" class="text-[10px] text-zinc-400">Beberapa saat lalu</p>
+        </div>
+        <div id="zoomLikesBadge" class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold/15 text-brand-gold text-xs font-bold border border-brand-gold/30">
+          <span>❤️</span>
+          <span id="zoomLikesCount">0 Suka</span>
+        </div>
+      </div>
+
+      <p id="zoomCaption" class="text-xs text-zinc-300 italic mb-4">"Momen seru pesta!"</p>
+
+      <div class="flex items-center gap-2">
+        <button id="btnZoomVote" class="flex-1 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-1.5">
+          <span>Beri Suara / Like</span>
+        </button>
+        <button id="btnZoomDownload" class="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition" title="Unduh Foto">
+          ⬇️ Unduh
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- JAVASCRIPT APPLICATION CORE (SPA CONTROLLER) -->
+  <!-- ============================================================================== -->
+  <script>
+    /**
+     * SNAPEVENT CLIENT ENGINE
+     * Mobile-first Disposable Camera & Live Gallery Architecture
+     */
+
+    // --- 1. LOCAL STATE & IN-MEMORY CACHE ---
+    const STATE = {
+      // Configuration
+      gasApiUrl: localStorage.getItem('snapevent_gas_url') || '',
+      adminPin: localStorage.getItem('snapevent_admin_pin') || '889900',
+      
+      // Guest Profile (Stored in localStorage)
+      guestId: getOrCreateGuestId(),
+      guestNama: localStorage.getItem('snapevent_guest_nama') || '',
+
+      // Active Event Context
+      activeEventId: 'EVT-202611-001',
+      activeEvent: null,
+      activeCategories: [],
+      
+      // Camera & Canvas Selection
+      activeFilter: '800T',
+      activeFrame: 'GOLD_DECO',
+      mediaStream: null,
+      facingMode: 'environment', // 'environment' (back) or 'user' (front)
+      currentCapturedDataUrl: null,
+
+      // Gallery & Photos Cache
+      photos: [],
+      votedPhotoIds: [],
+      activeGalleryFilter: 'ALL',
+
+      // Slideshow State
+      slideshowIndex: 0,
+      slideshowTimer: null
+    };
+
+    // Default Seed / Mock Data for Offline & Instant Browser Testing
+    const MOCK_DATA = {
+      event: {
+        idEvent: "EVT-202611-001",
+        namaEvent: "The Wedding of Sarah & Kevin",
+        slugEvent: "sarah-kevin",
+        tanggalEvent: "2026-11-20",
+        hashtagEvent: "#SarahKevinEverAfter",
+        maxFotoPerGuest: 10,
+        maxVotePerGuest: 3,
+        revealMode: "SEGERA", // "SEGERA" or "SETELAH"
+        isRevealed: true,
+        likeEnabled: true,
+        publicVisible: true,
+        activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+        activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"]
+      },
+      categories: [
+        { idKategori: "KAT-001", namaKategori: "Best Outfit", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+        { idKategori: "KAT-002", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru", urutan: 2 },
+        { idKategori: "KAT-003", namaKategori: "Momen Terbaper", deskripsi: "Momen paling romantis dan menyentuh", urutan: 3 }
+      ],
+      samplePhotos: [
+        {
+          idFoto: "FTO-DEMO-001",
+          guestNama: "Sarah & Kevin",
+          caption: "Momen terbaik malam ini bersama sahabat tercinta!",
+          cameraStyle: "800T",
+          frameStyle: "GOLD_DECO",
+          gdriveViewUrl: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80",
+          totalLikes: 14,
+          isFeatured: true,
+          createdAt: "2026-11-08 19:15:00"
+        },
+        {
+          idFoto: "FTO-DEMO-002",
+          guestNama: "David L.",
+          caption: "Keluarga besar groomsmen siap meriahkan pesta!",
+          cameraStyle: "WARM",
+          frameStyle: "POLAROID",
+          gdriveViewUrl: "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=800&q=80",
+          totalLikes: 9,
+          isFeatured: false,
+          createdAt: "2026-11-08 19:30:00"
+        },
+        {
+          idFoto: "FTO-DEMO-003",
+          guestNama: "Clara",
+          caption: "Cheers untuk cinta abadi!",
+          cameraStyle: "BW",
+          frameStyle: "MINIMAL",
+          gdriveViewUrl: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=800&q=80",
+          totalLikes: 7,
+          isFeatured: false,
+          createdAt: "2026-11-08 19:45:00"
+        }
+      ]
+    };
+
+    // --- 2. INITIALIZATION ON DOM READY ---
+    window.addEventListener('DOMContentLoaded', () => {
+      initApp();
+      bindEvents();
+    });
+
+    async function initApp() {
+      // Periksa parameter URL (e.g. ?event=sarah-kevin&view=slideshow)
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('event')) {
+        STATE.activeEventId = urlParams.get('event');
+      }
+
+      // Load initial event data from GAS API or Fallback Mock
+      await loadEventData();
+
+      // Check Guest Identity
+      if (!STATE.guestNama) {
+        showView('viewWelcome');
+      } else {
+        showView('viewCamera');
+        updateRemainingQuotaDisplay();
+      }
+
+      if (urlParams.get('view') === 'slideshow') {
+        openSlideshow();
+      }
+    }
+
+    function getOrCreateGuestId() {
+      let id = localStorage.getItem('snapevent_guest_id');
+      if (!id) {
+        id = 'GUEST-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+        localStorage.setItem('snapevent_guest_id', id);
+      }
+      return id;
+    }
+
+    // --- 3. DATA FETCHING (GAS API OR MOCK) ---
+    async function loadEventData() {
+      if (STATE.gasApiUrl) {
+        try {
+          const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
+          const res = await resp.json();
+          if (res.status === 'success') {
+            STATE.activeEvent = res.event;
+            STATE.activeCategories = res.categories || [];
+            applyEventToUI();
+            await loadGallery();
+            return;
+          }
+        } catch (e) {
+          console.warn("Koneksi GAS API belum aktif, menggunakan mode demo:", e.message);
+        }
+      }
+
+      // Fallback ke Mock Data
+      STATE.activeEvent = MOCK_DATA.event;
+      STATE.activeCategories = MOCK_DATA.categories;
+      STATE.photos = [...MOCK_DATA.samplePhotos];
+      applyEventToUI();
+      renderGallery();
+    }
+
+    async function loadGallery() {
+      if (!STATE.gasApiUrl) return;
+      try {
+        const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
+        const res = await resp.json();
+        if (res.status === 'success') {
+          STATE.photos = res.photos || [];
+          STATE.votedPhotoIds = res.votedPhotoIds || [];
+          renderGallery();
+        } else if (res.status === 'locked') {
+          document.getElementById('galleryLockedNotice').classList.remove('hidden');
+          document.getElementById('galleryPhotoGrid').innerHTML = '';
+        }
+      } catch (e) {
+        console.warn("Gagal memuat galeri GAS:", e.message);
+      }
+    }
+
+    function applyEventToUI() {
+      const ev = STATE.activeEvent;
+      if (!ev) return;
+
+      document.getElementById('headerEventHashtag').textContent = ev.hashtagEvent || '#SnapEvent';
+      document.getElementById('camEventBadge').textContent = ev.hashtagEvent || '#SnapEvent';
+      document.getElementById('welcomeEventTitle').textContent = ev.namaEvent;
+      document.getElementById('galleryEventTitle').textContent = ev.namaEvent;
+      document.getElementById('galleryEventHashtag').textContent = ev.hashtagEvent;
+      document.getElementById('slideshowTitle').textContent = ev.namaEvent;
+      document.getElementById('slideshowHashtag').textContent = ev.hashtagEvent;
+
+      document.getElementById('vfFrameBottomTitle').textContent = ev.namaEvent;
+      document.getElementById('vfFrameBottomHashtag').textContent = ev.hashtagEvent;
+      document.getElementById('vfFrameDate').textContent = ev.tanggalEvent || '20.11.2026';
+
+      // Render Dynamic Category Tabs in Gallery
+      const catContainer = document.getElementById('galleryCategoryTabs');
+      // Keep All and Popular
+      catContainer.innerHTML = `
+        <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">Semua Foto</button>
+        <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">🔥 Paling Populer</button>
+      `;
+
+      STATE.activeCategories.forEach(cat => {
+        const btn = document.createElement('button');
+        btn.setAttribute('data-cat', cat.idKategori);
+        btn.className = "cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition";
+        btn.textContent = `👑 ${cat.namaKategori}`;
+        catContainer.appendChild(btn);
+      });
+    }
+
+    // --- 4. VIEW ROUTER & NAVIGATION ---
+    function showView(viewId) {
+      ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+      });
+
+      const target = document.getElementById(viewId);
+      if (target) target.classList.remove('hidden');
+
+      // Update Nav Buttons Active State
+      document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.classList.remove('text-brand-gold');
+        btn.classList.add('text-zinc-400');
+      });
+
+      if (viewId === 'viewCamera') {
+        document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
+        document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
+      } else if (viewId === 'viewGallery') {
+        document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
+        document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
+        renderGallery();
+      }
+    }
+
+    // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
+    async function startCameraStream() {
+      const video = document.getElementById('cameraVideo');
+      const standby = document.getElementById('cameraStandbyNotice');
+      
+      try {
+        if (STATE.mediaStream) {
+          STATE.mediaStream.getTracks().forEach(t => t.stop());
+        }
+
+        const constraints = {
+          video: {
+            facingMode: { ideal: STATE.facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        STATE.mediaStream = stream;
+        video.srcObject = stream;
+        standby.classList.add('hidden');
+      } catch (err) {
+        console.warn("Live camera stream error (fallback to native file capture):", err.message);
+        standby.classList.remove('hidden');
+        showToast("Mode jepret langsung ponsel aktif", "info");
+      }
+    }
+
+    function triggerNativeCamera() {
+      const input = document.getElementById('nativeCameraInput');
+      input.click();
+    }
+
+    function processPhotoWithFrameAndFilter(imgSource) {
+      const canvas = document.getElementById('photoRenderCanvas');
+      const ctx = canvas.getContext('2d');
+
+      // Aspect ratio 4:5 Portrait Standard
+      canvas.width = 1080;
+      canvas.height = 1350;
+
+      // 1. Draw Raw Photo Scaled to Fill
+      const imgRatio = imgSource.width / imgSource.height;
+      const targetRatio = canvas.width / canvas.height;
+      let renderW, renderH, offsetX, offsetY;
+
+      if (imgRatio > targetRatio) {
+        renderH = canvas.height;
+        renderW = canvas.height * imgRatio;
+        offsetX = (canvas.width - renderW) / 2;
+        offsetY = 0;
+      } else {
+        renderW = canvas.width;
+        renderH = canvas.width / imgRatio;
+        offsetX = 0;
+        offsetY = (canvas.height - renderH) / 2;
+      }
+
+      ctx.drawImage(imgSource, offsetX, offsetY, renderW, renderH);
+
+      // 2. Apply Vintage / Analog Filter Grading
+      applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
+
+      // 3. Render Selected Custom Frame & Hashtag
+      renderCustomFrameOverlay(ctx, canvas.width, canvas.height, STATE.activeFrame);
+
+      // Store in State for Review Modal
+      STATE.currentCapturedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+      document.getElementById('inputPhotoCaption').value = '';
+      document.getElementById('modalReviewPhoto').classList.remove('hidden');
+    }
+
+    function applyColorFilter(ctx, w, h, filterName) {
+      if (filterName === 'RAW') return;
+
+      if (filterName === '800T') {
+        // 800T Cine Warm Gold & Teal Halation tint
+        ctx.fillStyle = 'rgba(212, 175, 55, 0.08)';
+        ctx.fillRect(0, 0, w, h);
+        // Vignette
+        const grad = ctx.createRadialGradient(w/2, h/2, w/3, w/2, h/2, w/1.2);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, 'rgba(15, 10, 5, 0.45)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+      } else if (filterName === 'WARM') {
+        // Golden Hour Glow
+        ctx.fillStyle = 'rgba(255, 160, 40, 0.12)';
+        ctx.fillRect(0, 0, w, h);
+      } else if (filterName === 'BW') {
+        // Black and White Noir
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const v = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+          // Boost contrast slightly
+          const c = v > 128 ? Math.min(255, v * 1.1) : Math.max(0, v * 0.9);
+          d[i] = c; d[i+1] = c; d[i+2] = c;
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }
+    }
+
+    function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
+      const evName = STATE.activeEvent?.namaEvent || "The Wedding of Sarah & Kevin";
+      const hashtag = STATE.activeEvent?.hashtagEvent || "#SarahKevinEverAfter";
+      const dateStr = STATE.activeEvent?.tanggalEvent || "20.11.2026";
+
+      if (frameStyle === 'GOLD_DECO') {
+        // Luxury Double Border Gold Art Deco (Matching screenshot #3)
+        ctx.lineWidth = 14;
+        ctx.strokeStyle = '#D4AF37';
+        ctx.strokeRect(30, 30, w - 60, h - 60);
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#F3E5AB';
+        ctx.strokeRect(48, 48, w - 96, h - 96);
+
+        // Corner Ornaments
+        drawDecoCorner(ctx, 48, 48);
+        drawDecoCorner(ctx, w - 48, 48, true);
+        drawDecoCorner(ctx, 48, h - 48, false, true);
+        drawDecoCorner(ctx, w - 48, h - 48, true, true);
+
+        // Bottom Banner Plaque
+        ctx.fillStyle = 'rgba(12, 12, 16, 0.85)';
+        ctx.fillRect(60, h - 180, w - 120, 115);
+        ctx.strokeStyle = '#D4AF37';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(60, h - 180, w - 120, 115);
+
+        // Event Text
+        ctx.fillStyle = '#F3E5AB';
+        ctx.font = 'bold 36px "Playfair Display", serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(evName, w / 2, h - 125);
+
+        ctx.fillStyle = '#D4AF37';
+        ctx.font = '22px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(`${hashtag}  •  ${dateStr}`, w / 2, h - 85);
+
+      } else if (frameStyle === 'POLAROID') {
+        // Classic White Polaroid Border
+        ctx.lineWidth = 35;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.strokeRect(0, 0, w, h);
+
+        // Heavy Bottom White Chin
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, h - 230, w, 230);
+
+        // Handwritten Text
+        ctx.fillStyle = '#1A1A1A';
+        ctx.font = 'bold 50px "Caveat", cursive';
+        ctx.textAlign = 'center';
+        ctx.fillText(evName, w / 2, h - 130);
+
+        ctx.fillStyle = '#666666';
+        ctx.font = '24px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(`${hashtag} — ${dateStr}`, w / 2, h - 70);
+
+      } else if (frameStyle === 'MINIMAL') {
+        // Minimal Dark Border with Sleek Typography
+        ctx.lineWidth = 20;
+        ctx.strokeStyle = '#121217';
+        ctx.strokeRect(0, 0, w, h);
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(20, h - 90, w - 40, 70);
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${evName}  |  ${hashtag}`, w / 2, h - 45);
+      }
+    }
+
+    function drawDecoCorner(ctx, x, y, flipX = false, flipY = false) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+      ctx.strokeStyle = '#D4AF37';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 25);
+      ctx.lineTo(25, 0);
+      ctx.moveTo(5, 30);
+      ctx.lineTo(30, 5);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // --- 6. UPLOAD PHOTO (GAS API OR LOCAL MOCK) ---
+    async function handleSavePhotoToDrive() {
+      const btn = document.getElementById('btnSaveToDrive');
+      const btnText = document.getElementById('btnSaveText');
+      const caption = document.getElementById('inputPhotoCaption').value.trim();
+
+      btn.disabled = true;
+      btnText.textContent = "Mengunggah...";
+
+      try {
+        const payload = {
+          action: "uploadPhoto",
+          eventId: STATE.activeEventId,
+          guestId: STATE.guestId,
+          guestNama: STATE.guestNama || "Tamu",
+          caption: caption,
+          cameraStyle: STATE.activeFilter,
+          frameStyle: STATE.activeFrame,
+          imageBase64: STATE.currentCapturedDataUrl
+        };
+
+        if (STATE.gasApiUrl) {
+          const resp = await fetch(STATE.gasApiUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          });
+          const res = await resp.json();
+
+          if (res.status === 'success') {
+            showToast("Foto berhasil disimpan ke Google Drive!", "success");
+            document.getElementById('modalReviewPhoto').classList.add('hidden');
+            await loadGallery();
+            showView('viewGallery');
+          } else if (res.status === 'limit_reached') {
+            showToast(res.message, "warning");
+            document.getElementById('modalReviewPhoto').classList.add('hidden');
+          } else {
+            showToast(res.message || "Gagal mengunggah foto", "error");
+          }
+        } else {
+          // Mock Upload Success
+          const newPhoto = {
+            idFoto: "FTO-LOCAL-" + Date.now(),
+            guestNama: STATE.guestNama,
+            caption: caption || "Momen seru!",
+            cameraStyle: STATE.activeFilter,
+            frameStyle: STATE.activeFrame,
+            gdriveViewUrl: STATE.currentCapturedDataUrl,
+            totalLikes: 0,
+            isFeatured: false,
+            createdAt: "Baru Saja"
+          };
+          STATE.photos.unshift(newPhoto);
+          showToast("Foto berhasil disimpan ke Rol Acara!", "success");
+          document.getElementById('modalReviewPhoto').classList.add('hidden');
+          renderGallery();
+          showView('viewGallery');
+        }
+
+        updateRemainingQuotaDisplay();
+      } catch (err) {
+        showToast("Terjadi kesalahan: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = "Simpan ke Rol";
+      }
+    }
+
+    // --- 7. VOTING / LIKE SYSTEM ---
+    async function handleVotePhoto(idFoto, idKategori = '') {
+      if (STATE.votedPhotoIds.includes(idFoto)) {
+        showToast("Anda sudah menyukai foto ini!", "warning");
+        return;
+      }
+
+      try {
+        if (STATE.gasApiUrl) {
+          const payload = {
+            action: "submitVote",
+            eventId: STATE.activeEventId,
+            idFoto: idFoto,
+            idKategori: idKategori,
+            guestId: STATE.guestId,
+            guestNama: STATE.guestNama
+          };
+
+          const resp = await fetch(STATE.gasApiUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          });
+          const res = await resp.json();
+
+          if (res.status === 'success') {
+            STATE.votedPhotoIds.push(idFoto);
+            showToast("Suara Anda berhasil dicatat! ❤️", "success");
+            await loadGallery();
+          } else {
+            showToast(res.message, "warning");
+          }
+        } else {
+          // Local Mock Vote
+          STATE.votedPhotoIds.push(idFoto);
+          const target = STATE.photos.find(p => p.idFoto === idFoto);
+          if (target) target.totalLikes += 1;
+          showToast("Suara Anda berhasil dicatat! ❤️", "success");
+          renderGallery();
+        }
+
+        // Update modal zoom view if open
+        const zoomLikesCount = document.getElementById('zoomLikesCount');
+        if (zoomLikesCount) {
+          const currentLikes = (STATE.photos.find(p => p.idFoto === idFoto)?.totalLikes || 0);
+          zoomLikesCount.textContent = `${currentLikes} Suka`;
+        }
+      } catch (e) {
+        showToast("Gagal mencatat vote: " + e.message, "error");
+      }
+    }
+
+    // --- 8. GALLERY RENDERING ---
+    function renderGallery() {
+      const grid = document.getElementById('galleryPhotoGrid');
+      const empty = document.getElementById('galleryEmptyNotice');
+      const countBadge = document.getElementById('galleryPhotoCountBadge');
+      
+      let filtered = [...STATE.photos];
+
+      if (STATE.activeGalleryFilter === 'POPULAR') {
+        filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+      }
+
+      countBadge.textContent = `${filtered.length} Foto`;
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+
+      empty.classList.add('hidden');
+      grid.innerHTML = '';
+
+      filtered.forEach(photo => {
+        const isVoted = STATE.votedPhotoIds.includes(photo.idFoto);
+        const card = document.createElement('div');
+        card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
+        card.setAttribute('data-id', photo.idFoto);
+
+        card.innerHTML = `
+          <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
+            <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
+              <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama}</span>
+            </div>
+          </div>
+          <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
+            <div class="truncate pr-1">
+              <div class="text-[11px] font-bold text-white truncate">${photo.guestNama}</div>
+              <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+            </div>
+            <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
+              <span>${isVoted ? '❤️' : '🤍'}</span>
+              <span>${photo.totalLikes || 0}</span>
+            </button>
+          </div>
+        `;
+
+        // Event delegation for opening zoom
+        card.querySelector('.img-click-zone').addEventListener('click', () => {
+          openPhotoZoom(photo);
+        });
+
+        // Event listener for like button
+        card.querySelector('.btn-like-photo').addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleVotePhoto(photo.idFoto);
+        });
+
+        grid.appendChild(card);
+      });
+    }
+
+    function openPhotoZoom(photo) {
+      document.getElementById('zoomImg').src = photo.gdriveViewUrl;
+      document.getElementById('zoomGuestNama').textContent = `Oleh: ${photo.guestNama}`;
+      document.getElementById('zoomTime').textContent = photo.createdAt || 'Baru Saja';
+      document.getElementById('zoomCaption').textContent = photo.caption ? `"${photo.caption}"` : '';
+      document.getElementById('zoomLikesCount').textContent = `${photo.totalLikes || 0} Suka`;
+
+      const btnVote = document.getElementById('btnZoomVote');
+      btnVote.onclick = () => handleVotePhoto(photo.idFoto);
+
+      const btnDl = document.getElementById('btnZoomDownload');
+      btnDl.onclick = () => {
+        const a = document.createElement('a');
+        a.href = photo.gdriveViewUrl;
+        a.download = `SnapEvent_${photo.idFoto}.jpg`;
+        a.target = '_blank';
+        a.click();
+      };
+
+      document.getElementById('modalZoomPhoto').classList.remove('hidden');
+    }
+
+    // --- 9. LIVE SLIDESHOW ENGINE ---
+    function openSlideshow() {
+      const modal = document.getElementById('modalSlideshow');
+      modal.classList.remove('hidden');
+
+      if (STATE.photos.length === 0) {
+        document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
+        document.getElementById('slideshowImg').classList.add('hidden');
+        return;
+      }
+
+      document.getElementById('slideshowEmptyMsg').classList.add('hidden');
+      document.getElementById('slideshowImg').classList.remove('hidden');
+
+      STATE.slideshowIndex = 0;
+      showSlideshowPhoto();
+
+      if (STATE.slideshowTimer) clearInterval(STATE.slideshowTimer);
+      STATE.slideshowTimer = setInterval(() => {
+        STATE.slideshowIndex = (STATE.slideshowIndex + 1) % STATE.photos.length;
+        showSlideshowPhoto();
+      }, 6000);
+    }
+
+    function showSlideshowPhoto() {
+      if (STATE.photos.length === 0) return;
+      const img = document.getElementById('slideshowImg');
+      const p = STATE.photos[STATE.slideshowIndex];
+
+      img.style.opacity = '0';
+      setTimeout(() => {
+        img.src = p.gdriveViewUrl;
+        img.onload = () => {
+          img.style.opacity = '1';
+        };
+      }, 500);
+    }
+
+    function closeSlideshow() {
+      document.getElementById('modalSlideshow').classList.add('hidden');
+      if (STATE.slideshowTimer) clearInterval(STATE.slideshowTimer);
+    }
+
+    // --- 10. ADMIN DASHBOARD LOGIC ---
+    function openAdminPanel() {
+      const modal = document.getElementById('modalAdminPin');
+      modal.classList.remove('hidden');
+      document.getElementById('inputAdminPin').value = '';
+    }
+
+    function verifyAdminPin() {
+      const inputPin = document.getElementById('inputAdminPin').value.trim();
+      if (inputPin === STATE.adminPin) {
+        document.getElementById('modalAdminPin').classList.add('hidden');
+        showView('viewAdmin');
+        renderAdminDashboard();
+        showToast("Selamat datang, Admin!", "success");
+      } else {
+        showToast("PIN Admin salah! Coba lagi.", "error");
+      }
+    }
+
+    function renderAdminDashboard() {
+      document.getElementById('admMetricEvents').textContent = "1";
+      document.getElementById('admMetricPhotos').textContent = STATE.photos.length;
+      
+      const totalVotes = STATE.photos.reduce((acc, p) => acc + (p.totalLikes || 0), 0);
+      document.getElementById('admMetricVotes').textContent = totalVotes;
+
+      // Render Active Event Card
+      const ev = STATE.activeEvent || MOCK_DATA.event;
+      const listContainer = document.getElementById('adminEventListContainer');
+      listContainer.innerHTML = `
+        <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
+            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
+              ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
+            </span>
+          </div>
+          <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
+          <p class="text-xs text-zinc-400 mb-3">${ev.hashtagEvent} • Kuota: ${ev.maxFotoPerGuest} Foto / Tamu</p>
+          
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
+            <button id="admBtnEditEvent" class="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+              ✏️ Edit Acara
+            </button>
+            <button id="admBtnToggleReveal" class="py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
+              ${ev.isRevealed ? '🔒 Kunci Galeri' : '🔓 Buka Galeri'}
+            </button>
+            <button id="admBtnSlideshow" class="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+              📺 Proyektor
+            </button>
+            <button id="admBtnShareQr" class="py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
+              📲 Link & QR
+            </button>
+          </div>
+        </div>
+      `;
+
+      // Bind actions
+      document.getElementById('admBtnEditEvent').addEventListener('click', () => {
+        populateEditEventForm(ev);
+        switchAdminTab('create');
+      });
+
+      document.getElementById('admBtnToggleReveal').addEventListener('click', () => {
+        ev.isRevealed = !ev.isRevealed;
+        showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
+        renderAdminDashboard();
+      });
+
+      document.getElementById('admBtnSlideshow').addEventListener('click', openSlideshow);
+      document.getElementById('admBtnShareQr').addEventListener('click', () => {
+        const link = window.location.href.split('?')[0] + `?event=${ev.slugEvent || ev.idEvent}`;
+        navigator.clipboard?.writeText(link);
+        showToast("Tautan acara berhasil disalin ke clipboard!", "success");
+      });
+
+      // Config form
+      document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
+      document.getElementById('cfgAdminPin').value = STATE.adminPin;
+
+      // Render Leaderboard
+      renderLeaderboard();
+    }
+
+    function renderLeaderboard() {
+      const container = document.getElementById('adminLeaderboardList');
+      const sorted = [...STATE.photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+
+      if (sorted.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500 text-center py-4">Belum ada foto yang divote.</p>';
+        return;
+      }
+
+      container.innerHTML = '';
+      sorted.slice(0, 5).forEach((p, idx) => {
+        const row = document.createElement('div');
+        row.className = "flex items-center justify-between p-2.5 rounded-xl bg-black/30 border border-white/5";
+        row.innerHTML = `
+          <div class="flex items-center gap-3">
+            <span class="w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${idx === 0 ? 'bg-amber-400 text-black' : idx === 1 ? 'bg-zinc-300 text-black' : idx === 2 ? 'bg-amber-700 text-white' : 'bg-white/10 text-zinc-400'}">
+              ${idx + 1}
+            </span>
+            <img src="${p.gdriveViewUrl}" class="w-10 h-10 rounded-lg object-cover" />
+            <div>
+              <div class="text-xs font-bold text-white">${p.guestNama}</div>
+              <div class="text-[10px] text-zinc-400 truncate max-w-[150px]">${p.caption || 'Tanpa keterangan'}</div>
+            </div>
+          </div>
+          <div class="text-xs font-bold text-brand-gold">
+            ❤️ ${p.totalLikes || 0}
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    function populateEditEventForm(ev) {
+      document.getElementById('formEventTitle').textContent = "Edit Detail Acara";
+      document.getElementById('formEventId').value = ev.idEvent;
+      document.getElementById('formEventNama').value = ev.namaEvent;
+      document.getElementById('formEventHashtag').value = ev.hashtagEvent;
+      document.getElementById('formEventTanggal').value = ev.tanggalEvent || '';
+      document.getElementById('formEventMaxFoto').value = ev.maxFotoPerGuest;
+      document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest;
+      
+      const radios = document.getElementsByName('revealModeRadio');
+      radios.forEach(r => { r.checked = (r.value === ev.revealMode); });
+
+      document.getElementById('formCheckLike').checked = ev.likeEnabled !== false;
+      document.getElementById('formCheckVisibility').checked = ev.publicVisible !== false;
+
+      // Populate Categories
+      renderCategoryInputRows(STATE.activeCategories);
+    }
+
+    function renderCategoryInputRows(cats) {
+      const container = document.getElementById('categoryInputsContainer');
+      container.innerHTML = '';
+      const list = cats && cats.length > 0 ? cats : [
+        { namaKategori: "Best Outfit" },
+        { namaKategori: "Pose Terheboh" }
+      ];
+
+      list.forEach((c, i) => {
+        const row = document.createElement('div');
+        row.className = "flex items-center gap-2";
+        row.innerHTML = `
+          <input type="text" value="${c.namaKategori}" class="cat-input flex-1 bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" placeholder="Nama Kategori (misal: Best Outfit)" />
+          <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs">✕</button>
+        `;
+        row.querySelector('.btn-remove-cat').onclick = () => row.remove();
+        container.appendChild(row);
+      });
+    }
+
+    function switchAdminTab(tabName) {
+      document.querySelectorAll('.adm-tab').forEach(b => {
+        b.classList.remove('bg-brand-gold', 'text-black');
+        b.classList.add('bg-white/5', 'text-zinc-300');
+      });
+      const activeBtn = document.querySelector(`[data-admintab="${tabName}"]`);
+      if (activeBtn) {
+        activeBtn.classList.remove('bg-white/5', 'text-zinc-300');
+        activeBtn.classList.add('bg-brand-gold', 'text-black');
+      }
+
+      ['adminTabEvents', 'adminTabCreate', 'adminTabLeaderboard', 'adminTabSettings'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+
+      if (tabName === 'events') document.getElementById('adminTabEvents').classList.remove('hidden');
+      if (tabName === 'create') document.getElementById('adminTabCreate').classList.remove('hidden');
+      if (tabName === 'leaderboard') document.getElementById('adminTabLeaderboard').classList.remove('hidden');
+      if (tabName === 'settings') document.getElementById('adminTabSettings').classList.remove('hidden');
+    }
+
+    // --- 11. EVENT LISTENERS BINDING ---
+    function bindEvents() {
+      // Welcome screen guest submit
+      document.getElementById('btnStartCamera').addEventListener('click', () => {
+        const name = document.getElementById('inputGuestName').value.trim();
+        if (!name) {
+          showToast("Masukkan nama panggilanmu terlebih dahulu!", "warning");
+          return;
+        }
+        STATE.guestNama = name;
+        localStorage.setItem('snapevent_guest_nama', name);
+        showView('viewCamera');
+        startCameraStream();
+      });
+
+      // Navigation Bar
+      document.getElementById('navBtnCamera').addEventListener('click', () => {
+        showView('viewCamera');
+        if (!STATE.mediaStream) startCameraStream();
+      });
+      document.getElementById('navBtnGallery').addEventListener('click', () => {
+        showView('viewGallery');
+      });
+      document.getElementById('navBtnEventInfo').addEventListener('click', () => {
+        showToast(`Tamu: ${STATE.guestNama || 'Tamu'} (${STATE.guestId})`, "info");
+      });
+
+      // Shutter Button
+      document.getElementById('btnShutter').addEventListener('click', () => {
+        triggerCameraShutter();
+      });
+
+      // Live Video Trigger & Native Fallback
+      document.getElementById('btnInitStream').addEventListener('click', startCameraStream);
+      document.getElementById('btnOpenGalleryUpload').addEventListener('click', triggerNativeCamera);
+
+      // Handle Native File Capture
+      document.getElementById('nativeCameraInput').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => processPhotoWithFrameAndFilter(img);
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // Switch Camera (Front/Back)
+      document.getElementById('btnSwitchCamera').addEventListener('click', () => {
+        STATE.facingMode = (STATE.facingMode === 'environment') ? 'user' : 'environment';
+        startCameraStream();
+      });
+
+      // Filter Selector Pills
+      document.getElementById('filterListContainer').addEventListener('click', (e) => {
+        const pill = e.target.closest('.filter-pill');
+        if (!pill) return;
+        document.querySelectorAll('.filter-pill').forEach(p => {
+          p.classList.remove('bg-brand-gold', 'text-black');
+          p.classList.add('bg-white/5', 'text-zinc-300');
+        });
+        pill.classList.remove('bg-white/5', 'text-zinc-300');
+        pill.classList.add('bg-brand-gold', 'text-black');
+        STATE.activeFilter = pill.getAttribute('data-filter');
+        document.getElementById('activeFilterName').textContent = pill.textContent.trim().toUpperCase();
+        document.getElementById('vfFrameTopLeft').textContent = `SNAPEVENT ${STATE.activeFilter}`;
+      });
+
+      // Frame Selector Pills
+      document.getElementById('frameListContainer').addEventListener('click', (e) => {
+        const pill = e.target.closest('.frame-pill');
+        if (!pill) return;
+        document.querySelectorAll('.frame-pill').forEach(p => {
+          p.classList.remove('bg-brand-gold', 'text-black');
+          p.classList.add('bg-white/5', 'text-zinc-300');
+        });
+        pill.classList.remove('bg-white/5', 'text-zinc-300');
+        pill.classList.add('bg-brand-gold', 'text-black');
+        STATE.activeFrame = pill.getAttribute('data-frame');
+        document.getElementById('activeFrameName').textContent = pill.textContent.trim().toUpperCase();
+      });
+
+      // Photo Review Modal
+      document.getElementById('btnRetakePhoto').addEventListener('click', () => {
+        document.getElementById('modalReviewPhoto').classList.add('hidden');
+      });
+      document.getElementById('btnSaveToDrive').addEventListener('click', handleSavePhotoToDrive);
+
+      // Gallery Category Tabs
+      document.getElementById('galleryCategoryTabs').addEventListener('click', (e) => {
+        const tab = e.target.closest('.cat-tab');
+        if (!tab) return;
+        document.querySelectorAll('.cat-tab').forEach(t => {
+          t.classList.remove('bg-brand-gold', 'text-black');
+          t.classList.add('bg-white/5', 'text-zinc-300');
+        });
+        tab.classList.remove('bg-white/5', 'text-zinc-300');
+        tab.classList.add('bg-brand-gold', 'text-black');
+        STATE.activeGalleryFilter = tab.getAttribute('data-cat');
+        renderGallery();
+      });
+
+      // Slideshow Controls
+      document.getElementById('btnOpenSlideshow').addEventListener('click', openSlideshow);
+      document.getElementById('btnCloseSlideshow').addEventListener('click', closeSlideshow);
+
+      // Admin Login & Navigation
+      document.getElementById('btnOpenAdmin').addEventListener('click', openAdminPanel);
+      document.getElementById('btnCancelAdminPin').addEventListener('click', () => {
+        document.getElementById('modalAdminPin').classList.add('hidden');
+      });
+      document.getElementById('btnSubmitAdminPin').addEventListener('click', verifyAdminPin);
+      document.getElementById('btnAdminLogout').addEventListener('click', () => {
+        showView('viewCamera');
+      });
+
+      // Admin Tabs Switcher
+      document.querySelectorAll('.adm-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          switchAdminTab(btn.getAttribute('data-admintab'));
+        });
+      });
+
+      // Admin Event Form Save
+      document.getElementById('formSaveEvent').addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveAdminEventForm();
+      });
+      document.getElementById('btnAddCategoryRow').addEventListener('click', () => {
+        const container = document.getElementById('categoryInputsContainer');
+        const row = document.createElement('div');
+        row.className = "flex items-center gap-2";
+        row.innerHTML = `
+          <input type="text" class="cat-input flex-1 bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" placeholder="Nama Kategori Baru" />
+          <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs">✕</button>
+        `;
+        row.querySelector('.btn-remove-cat').onclick = () => row.remove();
+        container.appendChild(row);
+      });
+      document.getElementById('btnCancelEditEvent').addEventListener('click', () => {
+        switchAdminTab('events');
+      });
+
+      // Admin Global Settings Form Save
+      document.getElementById('formGlobalSettings').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const url = document.getElementById('cfgGasUrl').value.trim();
+        const pin = document.getElementById('cfgAdminPin').value.trim();
+
+        STATE.gasApiUrl = url;
+        STATE.adminPin = pin || '889900';
+
+        localStorage.setItem('snapevent_gas_url', url);
+        localStorage.setItem('snapevent_admin_pin', STATE.adminPin);
+
+        showToast("Pengaturan global berhasil disimpan!", "success");
+        loadEventData();
+      });
+
+      document.getElementById('btnResetDemoData').addEventListener('click', () => {
+        localStorage.removeItem('snapevent_gas_url');
+        STATE.gasApiUrl = '';
+        STATE.photos = [...MOCK_DATA.samplePhotos];
+        showToast("Reset ke mode demo berhasil!", "info");
+        renderAdminDashboard();
+        renderGallery();
+      });
+
+      // Zoom Modal Close
+      document.getElementById('btnCloseZoom').addEventListener('click', () => {
+        document.getElementById('modalZoomPhoto').classList.add('hidden');
+      });
+
+      document.getElementById('btnEmptyGoCamera').addEventListener('click', () => {
+        showView('viewCamera');
+      });
+    }
+
+    function triggerCameraShutter() {
+      // Flash Animation
+      const flash = document.getElementById('flashOverlay');
+      flash.classList.remove('flash-anim');
+      void flash.offsetWidth; // Trigger reflow
+      flash.classList.add('flash-anim');
+
+      const video = document.getElementById('cameraVideo');
+      if (STATE.mediaStream && video.videoWidth > 0) {
+        // Capture frame from active video stream
+        processPhotoWithFrameAndFilter(video);
+      } else {
+        // Fallback to Native Camera Trigger
+        triggerNativeCamera();
+      }
+    }
+
+    function saveAdminEventForm() {
+      const nama = document.getElementById('formEventNama').value.trim();
+      const hashtag = document.getElementById('formEventHashtag').value.trim();
+      const tanggal = document.getElementById('formEventTanggal').value;
+      const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
+      const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 3;
+      
+      let revealMode = 'SEGERA';
+      document.getElementsByName('revealModeRadio').forEach(r => {
+        if (r.checked) revealMode = r.value;
+      });
+
+      const likeEnabled = document.getElementById('formCheckLike').checked;
+      const publicVisible = document.getElementById('formCheckVisibility').checked;
+
+      // Extract Categories
+      const catInputs = document.querySelectorAll('.cat-input');
+      const cats = [];
+      catInputs.forEach((inp, idx) => {
+        const val = inp.value.trim();
+        if (val) cats.push({ idKategori: `KAT-${idx+1}`, namaKategori: val, urutan: idx+1 });
+      });
+
+      STATE.activeEvent = {
+        idEvent: document.getElementById('formEventId').value || 'EVT-' + Date.now(),
+        namaEvent: nama,
+        slugEvent: nama.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+        tanggalEvent: tanggal,
+        hashtagEvent: hashtag,
+        maxFotoPerGuest: maxFoto,
+        maxVotePerGuest: maxVote,
+        revealMode: revealMode,
+        isRevealed: (revealMode === 'SEGERA'),
+        likeEnabled: likeEnabled,
+        publicVisible: publicVisible
+      };
+
+      STATE.activeCategories = cats;
+      applyEventToUI();
+      showToast("Acara berhasil disimpan!", "success");
+      switchAdminTab('events');
+      renderAdminDashboard();
+    }
+
+    function updateRemainingQuotaDisplay() {
+      const max = STATE.activeEvent?.maxFotoPerGuest || 10;
+      const guestUploadedCount = STATE.photos.filter(p => p.guestNama === STATE.guestNama).length;
+      const remaining = Math.max(0, max - guestUploadedCount);
+      const textEl = document.getElementById('camRemainingPhotosText');
+      if (textEl) textEl.textContent = `${remaining} / ${max} Foto Tersisa`;
+    }
+
+    // --- 12. TOAST NOTIFICATION HELPER ---
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      const colors = {
+        success: 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200',
+        error: 'bg-red-950/90 border-red-500/40 text-red-200',
+        warning: 'bg-amber-950/90 border-amber-500/40 text-amber-200',
+        info: 'bg-brand-surfaceLight/95 border-brand-surfaceBorder text-zinc-100'
+      };
+
+      toast.className = `flex items-center gap-2.5 px-4 py-3 rounded-2xl border text-xs font-medium shadow-2xl backdrop-blur-md transition-all duration-300 transform -translate-y-2 opacity-0 ${colors[type] || colors.info}`;
+      toast.innerHTML = `
+        <span>${type === 'success' ? '✓' : type === 'warning' ? '⚠️' : type === 'error' ? '✕' : 'ℹ️'}</span>
+        <span>${message}</span>
+      `;
+
+      container.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove('-translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('-translate-y-2', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+  </script>
+</body>
+</html>
+
