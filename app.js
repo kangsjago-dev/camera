@@ -1264,6 +1264,7 @@ async function verifyAdminLogin() {
     try {
       const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: 'adminLogin', username: user, password: pass })
       });
       const res = await resp.json();
@@ -1450,11 +1451,27 @@ function renderAdminDashboard() {
       switchAdminTab('create');
     });
 
-    card.querySelector('.btn-toggle-reveal').addEventListener('click', () => {
+    card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
       ev.isRevealed = !ev.isRevealed;
       localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
       showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
       renderAdminDashboard();
+
+      if (STATE.gasApiUrl) {
+        try {
+          await fetch(STATE.gasApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'adminToggleReveal',
+              idEvent: ev.idEvent,
+              isRevealed: ev.isRevealed
+            })
+          });
+        } catch (err) {
+          console.warn("GAS reveal sync warn:", err.message);
+        }
+      }
     });
 
     card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
@@ -1705,6 +1722,7 @@ function saveAdminEventForm() {
   if (STATE.gasApiUrl) {
     fetch(STATE.gasApiUrl, {
       method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'adminSaveEvent',
         idEvent: STATE.activeEvent.idEvent,
@@ -1739,8 +1757,41 @@ function updateRemainingQuotaDisplay() {
   if (textEl) textEl.textContent = `${remaining} / ${max} Foto Tersisa`;
 }
 
+// Uji Koneksi Langsung ke Backend Google Apps Script
+async function testGasConnection() {
+  const inputEl = document.getElementById('cfgGasUrl');
+  const url = (inputEl ? inputEl.value.trim() : '') || STATE.gasApiUrl;
+  if (!url) {
+    showToast("Masukkan URL Web App Google Apps Script terlebih dahulu!", "warning");
+    if (inputEl) inputEl.focus();
+    return;
+  }
+
+  showToast("Menguji koneksi ke Google Apps Script...", "info");
+  try {
+    const resp = await fetch(`${url}?action=ping`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    const res = await resp.json();
+    if (res.status === 'success') {
+      STATE.gasApiUrl = url;
+      localStorage.setItem('snapevent_gas_url', url);
+      showToast("✅ Berhasil! Google Apps Script Online & Sinkronisasi Aktif.", "success");
+      await loadEventData();
+    } else {
+      showToast("⚠️ Respon server: " + (res.message || "Gagal sinkron"), "warning");
+    }
+  } catch (err) {
+    console.error("Test GAS connection error:", err);
+    showToast("❌ Gagal terhubung ke GAS. Pastikan saat deploy Web App dipilih 'Who has access: Anyone'!", "error");
+  }
+}
+
 // --- 11. BIND ALL EVENT LISTENERS ---
 function bindEvents() {
+  // Tombol Uji Koneksi & Sinkronisasi GAS
+  document.getElementById('btnTestGasConnection')?.addEventListener('click', testGasConnection);
   // Welcome View Guest Name Submit (MANDATORY GATE)
   document.getElementById('btnStartCamera').addEventListener('click', () => {
     const nameInput = document.getElementById('inputGuestName');
@@ -2061,8 +2112,6 @@ function bindEvents() {
         resetCreateEventForm();
       }
       switchAdminTab(tab);
-    });
-  });
     });
   });
 

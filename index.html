@@ -563,7 +563,12 @@
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-zinc-300 mb-1">URL Backend Google Apps Script (Web App Endpoint)</label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold text-zinc-300">URL Backend Google Apps Script (Web App Endpoint)</label>
+                <button type="button" id="btnTestGasConnection" class="text-[11px] font-bold text-brand-gold hover:text-amber-300 flex items-center gap-1 transition" title="Uji Koneksi Backend GAS">
+                  <span>⚡ Tes Koneksi & Sinkronisasi</span>
+                </button>
+              </div>
               <input type="text" id="cfgGasUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
               <p class="text-[10px] text-zinc-400 mt-1">Masukkan URL Web App hasil deploy code.gs untuk menghubungkan penyimpanan Drive & Google Sheets.</p>
             </div>
