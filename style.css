@@ -1,0 +1,81 @@
+/* ==============================================================================
+ * SNAPEVENT: STYLE.CSS
+ * Luxury Dark Gold Aesthetic, Animations & Micro-Interactions
+ * ============================================================================== */
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A0A0D;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #272732;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+/* Luxury Gold Gradients & Accents */
+.gold-gradient-text {
+  background: linear-gradient(135deg, #FFF1B0 0%, #D4AF37 50%, #AA8721 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gold-gradient-bg {
+  background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
+}
+
+/* Shutter Press Haptic Feel */
+.shutter-press:active {
+  transform: scale(0.92);
+}
+
+/* Camera Blitz Flash Effect */
+.flash-anim {
+  animation: cameraFlash 0.35s ease-out forwards;
+}
+
+@keyframes cameraFlash {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.95;
+    background: white;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Subtle Film Grain */
+.grain-overlay {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 0);
+  background-size: 4px 4px;
+}
+
+/* Ken Burns Slideshow Effect for Ballroom Projector */
+@keyframes kenBurns {
+  0% {
+    transform: scale(1) translate(0, 0);
+  }
+  50% {
+    transform: scale(1.08) translate(-1%, -1%);
+  }
+  100% {
+    transform: scale(1.03) translate(1%, 0);
+  }
+}
+
+.ken-burns {
+  animation: kenBurns 7s ease-in-out infinite alternate;
+}
+
