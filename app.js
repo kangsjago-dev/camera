@@ -331,6 +331,14 @@ async function loadEventData() {
         STATE.activeEvent = res.event;
         STATE.activeCategories = res.categories || [];
 
+        // Sinkronkan seluruh event jika backend mengembalikan allEvents
+        if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
+          STATE.events = res.allEvents;
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+        } else {
+          syncEventsFromBackend(false);
+        }
+
         if (res.globalConfig) {
           if (res.globalConfig.app_title) STATE.appTitle = res.globalConfig.app_title;
           if (res.globalConfig.app_logo_url) STATE.appLogoUrl = res.globalConfig.app_logo_url;
@@ -409,6 +417,90 @@ function activateEvent(idEvent) {
         idEvent: idEvent
       })
     }).catch(err => console.warn("GAS setActiveEvent error:", err.message));
+  }
+}
+
+async function syncEventsFromBackend(showToastNotice = false) {
+  if (!STATE.gasApiUrl) {
+    if (showToastNotice) showToast("URL Google Apps Script belum dikonfigurasi di Pengaturan Global.", "warning");
+    return;
+  }
+
+  const btnText = document.getElementById('btnSyncEventsText');
+  const badge = document.getElementById('admSyncStatusBadge');
+  if (btnText) btnText.textContent = "⏳ Mengunduh...";
+  if (badge) {
+    badge.textContent = "Sinkronisasi...";
+    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 animate-pulse";
+  }
+
+  try {
+    // 1. Coba panggil action=getAllEvents terlebih dahulu
+    let resp = await fetch(`${STATE.gasApiUrl}?action=getAllEvents`);
+    let res = null;
+    try {
+      res = await resp.json();
+    } catch (parseErr) { }
+
+    // 2. Fallback jika backend user belum di-redeploy (gunakan getInitialData)
+    if (!res || res.status !== 'success' || !Array.isArray(res.events)) {
+      resp = await fetch(`${STATE.gasApiUrl}?action=getInitialData`);
+      try {
+        res = await resp.json();
+      } catch (parseErr) { }
+    }
+
+    if (res && res.status === 'success' && Array.isArray(res.events) && res.events.length > 0) {
+      STATE.events = res.events;
+      localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+
+      // Sinkronkan event aktif
+      const matchedActive = STATE.events.find(e => e.idEvent === STATE.activeEventId);
+      if (matchedActive) {
+        STATE.activeEvent = matchedActive;
+      } else {
+        const activeFromGas = STATE.events.find(e => e.statusEvent === 'AKTIF');
+        if (activeFromGas) {
+          STATE.activeEventId = activeFromGas.idEvent;
+          STATE.activeEvent = activeFromGas;
+          localStorage.setItem('snapevent_active_event_id', activeFromGas.idEvent);
+        }
+      }
+
+      if (res.globalConfig) {
+        if (res.globalConfig.app_title) STATE.appTitle = res.globalConfig.app_title;
+        if (res.globalConfig.app_logo_url) STATE.appLogoUrl = res.globalConfig.app_logo_url;
+        applyGlobalConfigToUI();
+      }
+
+      applyEventToUI();
+      renderAdminDashboard();
+
+      if (badge) {
+        badge.textContent = "Tersinkron (" + STATE.events.length + " Event)";
+        badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
+      }
+      if (showToastNotice) {
+        showToast(`Sinkronisasi sukses! ${STATE.events.length} event ditemukan dari Google Sheets.`, "success");
+      }
+    } else {
+      if (badge) {
+        badge.textContent = "Tersambung (0 Event)";
+        badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-zinc-500/20 text-zinc-400 font-semibold border border-white/10";
+      }
+      if (showToastNotice) showToast("Tersambung ke GAS, namun data sheet Event belum ditemukan.", "info");
+    }
+  } catch (err) {
+    console.warn("Gagal sinkronisasi data event dari GAS:", err.message);
+    if (badge) {
+      badge.textContent = "Gagal Sync";
+      badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-semibold border border-rose-500/30";
+    }
+    if (showToastNotice) {
+      showToast("Gagal sinkronisasi dari GAS: " + err.message, "error");
+    }
+  } finally {
+    if (btnText) btnText.textContent = "🔄 Sinkronkan Data GAS";
   }
 }
 
@@ -1408,6 +1500,7 @@ function openAdminPanel() {
   if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
     showView('viewAdmin');
     renderAdminDashboard();
+    syncEventsFromBackend(false);
     return;
   }
   const modal = document.getElementById('modalAdminPin');
@@ -1439,6 +1532,7 @@ async function verifyAdminLogin() {
         document.getElementById('modalAdminPin').classList.add('hidden');
         showView('viewAdmin');
         renderAdminDashboard();
+        syncEventsFromBackend(false);
         showToast("Selamat datang, Admin!", "success");
         return;
       } else {
@@ -1459,6 +1553,7 @@ async function verifyAdminLogin() {
     document.getElementById('modalAdminPin').classList.add('hidden');
     showView('viewAdmin');
     renderAdminDashboard();
+    syncEventsFromBackend(false);
     showToast(`Selamat datang, ${matchedOperator ? 'Operator/Kru' : 'Administrator'}!`, "success");
   } else {
     showToast("Username atau Password login salah!", "error");
@@ -2296,6 +2391,11 @@ function bindEvents() {
   // Tombol Gerbang Acara Inaktif -> Buka Acara yang Sedang Berlangsung
   document.getElementById('btnGoActiveEvent')?.addEventListener('click', () => {
     window.location.href = window.location.pathname;
+  });
+
+  // Tombol Sinkronisasi Data Events dari Backend Google Apps Script
+  document.getElementById('btnSyncEventsBackend')?.addEventListener('click', () => {
+    syncEventsFromBackend(true);
   });
 
   // Admin Tab Switchers (+ Buat Event Baru Handler)
