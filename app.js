@@ -86,11 +86,12 @@ function loadEventPhotos(eventId) {
     } else {
       // Migrasi atau fallback ke mock data sample jika event default demo
       const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      if (id === MOCK_DATA.event.idEvent || id === 'EVT-202611-001') {
+      const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
+      if (id === 'EVT-202611-001' || id === defaultMockId) {
         if (legacy.length > 0) {
           STATE.photos = legacy;
         } else {
-          STATE.photos = [...MOCK_DATA.samplePhotos];
+          STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
         }
         localStorage.setItem(key, JSON.stringify(STATE.photos));
       } else {
@@ -98,7 +99,7 @@ function loadEventPhotos(eventId) {
       }
     }
   } catch (e) {
-    STATE.photos = [];
+    STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
   }
 }
 
@@ -445,6 +446,7 @@ const MOCK_DATA = {
     }
   ]
 };
+MOCK_DATA.event = MOCK_DATA.events[0];
 
 // --- 2. INITIALIZATION ON DOM READY ---
 window.addEventListener('DOMContentLoaded', () => {
@@ -478,33 +480,40 @@ async function initApp() {
     localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
   }
 
-  // Tentukan event aktif saat ini
-  const savedActiveId = localStorage.getItem('snapevent_active_event_id');
-  if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
-    STATE.activeEventId = savedActiveId;
-  } else {
-    STATE.activeEventId = STATE.events[0].idEvent;
-    localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
+  // Tentukan event aktif saat ini (Dukungan URL QR Code & Event Switching)
+  const requestedEvent = urlParams.get('event');
+  if (requestedEvent) {
+    const matched = (STATE.events || []).find(e => 
+      e.idEvent === requestedEvent || 
+      (e.slugEvent && e.slugEvent.toLowerCase() === requestedEvent.toLowerCase())
+    );
+    if (matched) {
+      STATE.activeEventId = matched.idEvent;
+      STATE.activeEvent = matched;
+      localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
+    }
   }
 
-  STATE.activeEvent = STATE.events.find(e => e.idEvent === STATE.activeEventId) || STATE.events[0];
+  if (!STATE.activeEvent) {
+    const savedActiveId = localStorage.getItem('snapevent_active_event_id');
+    if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
+      STATE.activeEventId = savedActiveId;
+    } else {
+      STATE.activeEventId = (STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-001';
+      localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
+    }
+    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
+  }
 
-  // Periksa parameter URL (e.g. ?event=sarah-kevin&view=slideshow)
-  const requestedEvent = urlParams.get('event');
-
-  // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan event tersebut TIDAK aktif
-  if (requestedEvent) {
-    const isMatchActive = (requestedEvent === STATE.activeEvent.idEvent) || 
-                          (STATE.activeEvent.slugEvent && requestedEvent.toLowerCase() === STATE.activeEvent.slugEvent.toLowerCase());
-    
-    if (!isMatchActive) {
-      // Jika sesi admin sedang aktif, admin tetap boleh masuk
+  // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan status event tersebut INAKTIF
+  if (requestedEvent && STATE.activeEvent) {
+    if (STATE.activeEvent.statusEvent && STATE.activeEvent.statusEvent !== 'AKTIF') {
       if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
         const closedTitle = document.getElementById('closedEventTitle');
         if (closedTitle) closedTitle.textContent = "Acara Ini Sedang Tidak Aktif";
         const closedDesc = document.getElementById('closedEventDesc');
         if (closedDesc) {
-          closedDesc.textContent = `Tautan acara "${requestedEvent}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh publik.`;
+          closedDesc.textContent = `Tautan acara "${STATE.activeEvent.namaEvent || requestedEvent}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh publik.`;
         }
         showView('viewEventClosed');
         return;
@@ -913,10 +922,24 @@ async function syncEventsFromBackend(showToastNotice = false) {
 
 async function loadGallery() {
   if (!STATE.gasApiUrl) return;
+  const grid = document.getElementById('galleryPhotoGrid');
+  const countBadge = document.getElementById('galleryPhotoCountBadge');
+
+  // Indikator visual loading non-intrusif jika galeri masih kosong
+  if ((!STATE.photos || STATE.photos.length === 0) && grid && !grid.innerHTML.trim()) {
+    grid.innerHTML = `
+      <div class="col-span-2 sm:col-span-3 md:col-span-4 py-12 text-center">
+        <div class="w-8 h-8 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+        <p class="text-xs text-zinc-400 font-medium">Menyinkronkan foto rol acara...</p>
+      </div>
+    `;
+  }
+
   try {
     const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
     const res = await resp.json();
     if (res && res.status === 'success') {
+      document.getElementById('galleryLockedNotice')?.classList.add('hidden');
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
@@ -934,17 +957,18 @@ async function loadGallery() {
       saveEventPhotos(STATE.activeEventId);
       renderGallery();
 
-      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Ilham / Tamu langsung tersinkronkan
+      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
       if (pendingLocalPhotos.length > 0) {
         autoUploadPendingPhotos(pendingLocalPhotos);
       }
     } else if (res && res.status === 'locked') {
       document.getElementById('galleryLockedNotice')?.classList.remove('hidden');
-      const grid = document.getElementById('galleryPhotoGrid');
       if (grid) grid.innerHTML = '';
+      if (countBadge) countBadge.textContent = '0 Foto (Terkunci)';
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
+    renderGallery();
   }
 }
 
@@ -1158,6 +1182,7 @@ function showView(viewId) {
       document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
       document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
       renderGallery();
+      loadGallery();
     } else if (viewId === 'viewWelcome') {
       document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
       document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
@@ -3136,6 +3161,7 @@ function bindEvents() {
   });
   document.getElementById('navBtnGallery').addEventListener('click', () => {
     showView('viewGallery');
+    loadGallery();
   });
   document.getElementById('navBtnEventInfo').addEventListener('click', () => {
     showView('viewWelcome');
@@ -3144,6 +3170,7 @@ function bindEvents() {
   // Akses Cepat Galeri & Voting dari Halaman Tulis Nama (viewWelcome)
   document.getElementById('btnWelcomeGoGallery')?.addEventListener('click', () => {
     showView('viewGallery');
+    loadGallery();
   });
 
   // Shutter Action
