@@ -175,32 +175,47 @@ function getAvailableFrames() {
     });
   }
 
-  if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && !STATE.customFrames.some(f => f.dataUrl === STATE.activeEvent.customFrameUrl)) {
+  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
+  if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
     allFrames.push({
-      id: 'frame_legacy_event',
-      name: '🖼️ Bingkai Khusus Acara',
+      id: 'CUSTOM_EVENT',
+      name: STATE.activeEvent?.customFrameName ? `🖼️ ${STATE.activeEvent.customFrameName}` : '🖼️ Bingkai Kustom Acara',
       type: 'custom',
       scope: 'event',
-      dataUrl: STATE.activeEvent.customFrameUrl
+      dataUrl: activeCustomData
     });
   }
 
   // KEBIJAKAN BINGKAI ACARA (FRAME POLICY)
   const ev = STATE.activeEvent;
   if (ev) {
-    // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci
+    // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (termasuk custom frame)
     if (ev.frameLockMode === 'single') {
       const lockedId = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
-      const single = allFrames.find(f => f.id === lockedId);
+      const single = allFrames.find(f => f.id === lockedId || (f.type === 'custom' && (lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM' || lockedId === 'frame_legacy_event')));
       return [single || allFrames[0]];
     }
 
-    // Mode Multi-Frame: Saring hanya bingkai yang diizinkan admin
+    // Mode Multi-Frame: Saring dan urutkan PERSIS sesuai urutan yang disusun admin (Drag & Drop)
     if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
-      const filtered = allFrames.filter(f => {
-        return ev.activeFrames.includes(f.id) || (f.type === 'custom' && (f.eventId === ev.idEvent || f.scope === 'event'));
+      const ordered = [];
+      ev.activeFrames.forEach(frameId => {
+        const match = allFrames.find(f => f.id === frameId || (f.type === 'custom' && (frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM' || frameId === 'frame_legacy_event')));
+        if (match && !ordered.some(o => o.id === match.id)) {
+          ordered.push(match);
+        }
       });
-      if (filtered.length > 0) return filtered;
+      // Sertakan bingkai kustom yang mungkin belum terdaftar di array
+      allFrames.forEach(f => {
+        if (!ordered.some(o => o.id === f.id)) {
+          if (f.type === 'custom' && (f.eventId === ev.idEvent || f.scope === 'event' || f.scope === 'global')) {
+            if (ev.activeFrames.includes(f.id) || ev.activeFrames.includes('CUSTOM_EVENT') || ev.activeFrames.includes('CUSTOM')) {
+              ordered.push(f);
+            }
+          }
+        }
+      });
+      if (ordered.length > 0) return ordered;
     }
   }
 
@@ -1395,10 +1410,13 @@ function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     ctx.textAlign = 'center';
     ctx.fillText(`${evName}  |  ${hashtag}`, w / 2, h - 45);
 
-  } else if (frameStyle === 'CUSTOM' || frameStyle.startsWith('frame_')) {
-    // Custom PNG Overlay (Global / Event / Multi-Frame)
+  } else if (frameStyle !== 'NONE') {
+    // Custom PNG Overlay (Global / Event / Multi-Frame / Single Lock)
     const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameStyle) : null;
-    const dataUrl = customObj ? customObj.dataUrl : (STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData?.dataUrl);
+    let dataUrl = customObj ? customObj.dataUrl : null;
+    if (!dataUrl) {
+      dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+    }
 
     if (dataUrl) {
       const frameImg = new Image();
@@ -2070,6 +2088,185 @@ function renderCustomFramesList() {
   });
 }
 
+function getAllAdminCandidateFrames(eventObj) {
+  const frames = [
+    { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin', icon: '✨' },
+    { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin', icon: '📷' },
+    { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin', icon: '▪️' },
+    { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin', icon: '🚫' }
+  ];
+
+  // Custom frame yang baru diunggah di form atau tersimpan di event ini
+  const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
+  if (eventCustomData) {
+    frames.push({
+      id: 'CUSTOM_EVENT',
+      name: eventObj?.customFrameName ? `🖼️ ${eventObj.customFrameName}` : '🖼️ Bingkai Kustom Acara (Custom PNG)',
+      type: 'custom',
+      scope: 'event',
+      dataUrl: eventCustomData,
+      icon: '🖼️'
+    });
+  }
+
+  // Custom frames tersimpan di koleksi (global atau spesifik event)
+  if (Array.isArray(STATE.customFrames)) {
+    STATE.customFrames.forEach(cf => {
+      if (!frames.some(f => f.id === cf.id || (cf.dataUrl && f.dataUrl === cf.dataUrl))) {
+        frames.push({
+          id: cf.id,
+          name: `🖼️ ${cf.name || 'Bingkai Kustom'} (${cf.scope === 'global' ? 'Global' : 'Acara'})`,
+          type: 'custom',
+          scope: cf.scope,
+          dataUrl: cf.dataUrl,
+          icon: '🖼️'
+        });
+      }
+    });
+  }
+
+  return frames;
+}
+
+function renderAdminFrameSettings(eventObj) {
+  const container = document.getElementById('adminFrameSortableList');
+  const singleSelect = document.getElementById('formEventSingleFrameSelect');
+  if (!container && !singleSelect) return;
+
+  const candidateFrames = getAllAdminCandidateFrames(eventObj);
+
+  // Tentukan urutan aktif awal
+  let activeOrder = [];
+  if (eventObj && Array.isArray(eventObj.activeFrames) && eventObj.activeFrames.length > 0) {
+    activeOrder = [...eventObj.activeFrames];
+  } else {
+    activeOrder = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+    if (candidateFrames.some(f => f.id === 'CUSTOM_EVENT')) {
+      activeOrder.unshift('CUSTOM_EVENT');
+    }
+  }
+
+  // Urutkan candidateFrames: yang ada di activeOrder disusun terlebih dahulu sesuai indexnya
+  const sortedFrames = [];
+  activeOrder.forEach(id => {
+    const found = candidateFrames.find(f => f.id === id || (f.type === 'custom' && (id === 'CUSTOM_EVENT' || id === 'CUSTOM')));
+    if (found && !sortedFrames.some(s => s.id === found.id)) {
+      sortedFrames.push(found);
+    }
+  });
+  candidateFrames.forEach(f => {
+    if (!sortedFrames.some(s => s.id === f.id)) {
+      sortedFrames.push(f);
+    }
+  });
+
+  // 1. Render Dropdown Single Frame Lock (Termasuk Custom Frame PNG)
+  if (singleSelect) {
+    const currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
+    singleSelect.innerHTML = sortedFrames.map(f => `
+      <option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>
+        ${f.name}
+      </option>
+    `).join('');
+  }
+
+  // 2. Render Drag & Drop Sortable List
+  if (container) {
+    container.innerHTML = '';
+    sortedFrames.forEach((frame) => {
+      const isChecked = activeOrder.includes(frame.id) || (frame.id === 'CUSTOM_EVENT' && !eventObj) || (frame.id !== 'NONE' && !eventObj);
+      const row = document.createElement('div');
+      row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
+      row.setAttribute('draggable', 'true');
+      row.setAttribute('data-frame-id', frame.id);
+
+      const previewHtml = frame.dataUrl 
+        ? `<img src="${frame.dataUrl}" class="w-7 h-9 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
+        : `<span class="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm shrink-0">${frame.icon || '🖼️'}</span>`;
+
+      row.innerHTML = `
+        <div class="flex items-center gap-2.5 overflow-hidden flex-1">
+          <span class="drag-handle text-zinc-500 group-hover:text-brand-gold text-lg cursor-grab active:cursor-grabbing px-1 shrink-0" title="Geser untuk atur urutan">⠿</span>
+          <input type="checkbox" value="${frame.id}" class="adm-frame-check text-brand-gold rounded cursor-pointer w-4 h-4 shrink-0" ${isChecked ? 'checked' : ''} />
+          ${previewHtml}
+          <div class="truncate">
+            <span class="text-xs font-semibold text-zinc-200 block truncate">${frame.name}</span>
+            <span class="text-[9px] text-zinc-400 font-mono">${frame.type === 'custom' ? 'Bingkai Kustom PNG' : 'Bingkai Bawaan'}</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <button type="button" class="btn-frame-up p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-brand-gold text-xs font-bold transition" title="Naikkan urutan">▲</button>
+          <button type="button" class="btn-frame-down p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-brand-gold text-xs font-bold transition" title="Turunkan urutan">▼</button>
+        </div>
+      `;
+
+      // Tombol panah naik / turun (Sangat ramah sentuhan layar HP)
+      row.querySelector('.btn-frame-up').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const prev = row.previousElementSibling;
+        if (prev) {
+          container.insertBefore(row, prev);
+          syncFrameSettingsFromDOM();
+        }
+      });
+
+      row.querySelector('.btn-frame-down').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const next = row.nextElementSibling;
+        if (next) {
+          container.insertBefore(next, row);
+          syncFrameSettingsFromDOM();
+        }
+      });
+
+      // Drag & Drop HTML5 Events
+      row.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', frame.id);
+        row.classList.add('opacity-40', 'border-brand-gold', 'scale-[0.98]');
+        window._draggedFrameItem = row;
+      });
+
+      row.addEventListener('dragend', () => {
+        row.classList.remove('opacity-40', 'border-brand-gold', 'scale-[0.98]');
+        window._draggedFrameItem = null;
+        document.querySelectorAll('.frame-sortable-item').forEach(el => el.classList.remove('border-brand-gold', 'bg-white/5'));
+        syncFrameSettingsFromDOM();
+      });
+
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const dragged = window._draggedFrameItem;
+        if (!dragged || dragged === row) return;
+
+        const rect = row.getBoundingClientRect();
+        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+        container.insertBefore(dragged, next ? row.nextSibling : row);
+      });
+
+      container.appendChild(row);
+    });
+  }
+}
+
+function syncFrameSettingsFromDOM() {
+  const items = document.querySelectorAll('#adminFrameSortableList .frame-sortable-item');
+  const singleSelect = document.getElementById('formEventSingleFrameSelect');
+  if (singleSelect) {
+    const currentVal = singleSelect.value;
+    const options = [];
+    items.forEach(it => {
+      const id = it.getAttribute('data-frame-id');
+      const name = it.querySelector('.text-zinc-200')?.textContent || id;
+      options.push(`<option value="${id}" ${id === currentVal ? 'selected' : ''}>${name}</option>`);
+    });
+    if (options.length > 0) {
+      singleSelect.innerHTML = options.join('');
+    }
+  }
+}
+
 function resetCreateEventForm() {
   const d = new Date();
   const yearMonth = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -2096,11 +2293,7 @@ function resetCreateEventForm() {
   if (radMulti) radMulti.checked = true;
   document.getElementById('containerSingleFrameLock')?.classList.add('hidden');
   document.getElementById('containerMultiFrameSelection')?.classList.remove('hidden');
-  const selSingle = document.getElementById('formEventSingleFrameSelect');
-  if (selSingle) selSingle.value = 'GOLD_DECO';
-  document.querySelectorAll('.adm-frame-check').forEach(chk => {
-    chk.checked = (chk.value !== 'NONE');
-  });
+  renderAdminFrameSettings(null);
 
   renderCategoryInputRows([
     { namaKategori: "Busana Terbaik" },
@@ -2369,14 +2562,7 @@ function populateEditEventForm(ev) {
   if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
 
   const singleSelect = document.getElementById('formEventSingleFrameSelect');
-  if (singleSelect) {
-    singleSelect.value = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
-  }
-
-  const activeFramesList = Array.isArray(ev.activeFrames) ? ev.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
-  document.querySelectorAll('.adm-frame-check').forEach(chk => {
-    chk.checked = activeFramesList.includes(chk.value);
-  });
+  renderAdminFrameSettings(ev);
 
   renderCategoryInputRows(STATE.activeCategories);
 }
@@ -2457,9 +2643,15 @@ function saveAdminEventForm() {
   if (frameLockMode === 'single') {
     activeFrames = [singleLockedFrame];
   } else {
-    document.querySelectorAll('.adm-frame-check').forEach(chk => {
-      if (chk.checked) activeFrames.push(chk.value);
+    document.querySelectorAll('#adminFrameSortableList .frame-sortable-item').forEach(item => {
+      const chk = item.querySelector('.adm-frame-check');
+      if (chk && chk.checked) activeFrames.push(chk.value);
     });
+    if (activeFrames.length === 0) {
+      document.querySelectorAll('.adm-frame-check').forEach(chk => {
+        if (chk.checked) activeFrames.push(chk.value);
+      });
+    }
     if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
   }
 
@@ -2989,7 +3181,12 @@ function bindEvents() {
       document.getElementById('customFramePreviewImg').src = dataUrl;
       document.getElementById('customFramePreviewBox').classList.remove('hidden');
       document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
-      showToast("Bingkai kustom PNG berhasil diunggah!", "info");
+
+      const targetEventId = document.getElementById('formEventId')?.value;
+      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+      renderAdminFrameSettings(currentEv);
+
+      showToast("Bingkai kustom PNG berhasil diunggah dan masuk ke daftar pilihan!", "info");
     };
     reader.readAsDataURL(file);
   });
@@ -3003,6 +3200,9 @@ function bindEvents() {
       STATE.activeEvent.customFrameData = null;
       STATE.activeEvent.customFrameUrl = '';
     }
+    const targetEventId = document.getElementById('formEventId')?.value;
+    const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+    renderAdminFrameSettings(currentEv);
     showToast("Bingkai kustom dihapus.", "info");
   });
 

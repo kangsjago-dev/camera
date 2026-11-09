@@ -561,26 +561,14 @@
                 <p class="text-[10px] text-zinc-400 mt-1.5">Semua foto tamu akan otomatis dicetak dengan bingkai ini tanpa perlu memilih lagi di layar review.</p>
               </div>
 
-              <!-- Opsi 2: Checklist Bingkai yang Diizinkan (Muncul saat mode 'multi') -->
+              <!-- Opsi 2: Daftar Bingkai yang Diizinkan (Drag & Drop Reordering, Muncul saat mode 'multi') -->
               <div id="containerMultiFrameSelection" class="space-y-2">
-                <label class="block text-[11px] font-semibold text-zinc-300">Pilih Bingkai yang Diizinkan Digunakan Tamu:</label>
-                <div class="grid grid-cols-2 gap-2 text-xs" id="adminFrameCheckboxes">
-                  <label class="flex items-center gap-2 p-2 rounded-lg bg-[#111116] border border-white/10 text-zinc-200 cursor-pointer hover:border-brand-gold/40 transition">
-                    <input type="checkbox" value="GOLD_DECO" class="adm-frame-check text-brand-gold rounded" checked />
-                    <span>✨ Gold Deco</span>
-                  </label>
-                  <label class="flex items-center gap-2 p-2 rounded-lg bg-[#111116] border border-white/10 text-zinc-200 cursor-pointer hover:border-brand-gold/40 transition">
-                    <input type="checkbox" value="POLAROID" class="adm-frame-check text-brand-gold rounded" checked />
-                    <span>📷 Polaroid</span>
-                  </label>
-                  <label class="flex items-center gap-2 p-2 rounded-lg bg-[#111116] border border-white/10 text-zinc-200 cursor-pointer hover:border-brand-gold/40 transition">
-                    <input type="checkbox" value="MINIMAL" class="adm-frame-check text-brand-gold rounded" checked />
-                    <span>▪️ Minimalist</span>
-                  </label>
-                  <label class="flex items-center gap-2 p-2 rounded-lg bg-[#111116] border border-white/10 text-zinc-200 cursor-pointer hover:border-brand-gold/40 transition">
-                    <input type="checkbox" value="NONE" class="adm-frame-check text-brand-gold rounded" />
-                    <span>Tanpa Bingkai</span>
-                  </label>
+                <div class="flex items-center justify-between">
+                  <label class="block text-[11px] font-semibold text-zinc-300">Pilih & Atur Urutan Bingkai:</label>
+                  <span class="text-[10px] text-brand-gold font-mono">💡 Geser ⠿ atau klik ▲ / ▼</span>
+                </div>
+                <div class="space-y-1.5" id="adminFrameSortableList">
+                  <!-- Diisi dinamis oleh renderAdminFrameSettings() -->
                 </div>
               </div>
             </div>
