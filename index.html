@@ -549,16 +549,31 @@
                 </label>
               </div>
 
-              <!-- Opsi 1: Dropdown Pilihan 1 Bingkai Terkunci (Muncul saat mode 'single') -->
-              <div id="containerSingleFrameLock" class="hidden bg-[#111116] border border-brand-gold/40 rounded-xl p-3">
-                <label class="block text-[11px] font-semibold text-amber-300 mb-1">Pilih 1 Bingkai Wajib Acara:</label>
-                <select id="formEventSingleFrameSelect" class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-xs text-white focus:border-brand-gold outline-none">
-                  <option value="GOLD_DECO">✨ Gold Art Deco (Mewah & Elegan)</option>
-                  <option value="POLAROID">📷 Classic Polaroid (Vintage Putih)</option>
-                  <option value="MINIMAL">▪️ Minimalist Clean (Garis Halus Modern)</option>
-                  <option value="NONE">Tanpa Bingkai (Foto Asli Polos)</option>
-                </select>
-                <p class="text-[10px] text-zinc-400 mt-1.5">Semua foto tamu akan otomatis dicetak dengan bingkai ini tanpa perlu memilih lagi di layar review.</p>
+              <!-- Opsi 1: Pilihan 1 Bingkai Terkunci (Muncul saat mode 'single') -->
+              <div id="containerSingleFrameLock" class="hidden bg-[#111116] border border-brand-gold/40 rounded-xl p-3 space-y-3">
+                <div>
+                  <label class="block text-[11px] font-semibold text-amber-300 mb-1">Pilih 1 Bingkai Wajib Acara (Dropdown):</label>
+                  <select id="formEventSingleFrameSelect" class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-xs text-white focus:border-brand-gold outline-none">
+                    <option value="GOLD_DECO">✨ Gold Art Deco (Mewah & Elegan)</option>
+                    <option value="POLAROID">📷 Classic Polaroid (Vintage Putih)</option>
+                    <option value="MINIMAL">▪️ Minimalist Clean (Garis Halus Modern)</option>
+                    <option value="NONE">Tanpa Bingkai (Foto Asli Polos)</option>
+                  </select>
+                  <p class="text-[10px] text-zinc-400 mt-1">Semua foto tamu akan otomatis dicetak dengan bingkai ini tanpa perlu memilih lagi di layar review.</p>
+                </div>
+
+                <!-- Daftar Visual Pilihan Bingkai Kustom & Standar -->
+                <div class="pt-2 border-t border-white/10">
+                  <div class="flex items-center justify-between mb-2">
+                    <label class="text-[11px] font-semibold text-amber-300 flex items-center gap-1.5">
+                      <span>🖼️</span> Daftar Pilihan Bingkai (Klik untuk Mengunci):
+                    </label>
+                    <span class="text-[10px] text-zinc-400 font-mono">Pilih dari Koleksi Kustom</span>
+                  </div>
+                  <div id="singleLockCustomFrameList" class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    <!-- Diisi dinamis oleh renderSingleLockCustomFrameList() -->
+                  </div>
+                </div>
               </div>
 
               <!-- Opsi 2: Daftar Bingkai yang Diizinkan (Drag & Drop Reordering, Muncul saat mode 'multi') -->

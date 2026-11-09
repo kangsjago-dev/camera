@@ -516,35 +516,67 @@ async function initApp() {
     }
   }
 
-  // Muat data foto & voting terisolasi untuk event aktif
+  // 1. Muat data foto & voting terisolasi untuk event aktif (Instan dari localStorage < 2ms)
   loadEventPhotos(STATE.activeEventId);
   loadEventVotes(STATE.activeEventId);
 
-  // Muat data awal event dari API Google Apps Script atau Mock Data
-  await loadEventData();
-
-  // Cek Persistensi Sesi Admin (Anti-Keluar saat refresh F5!)
-  if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-    showView('viewAdmin');
-    renderAdminDashboard();
-    syncEventsFromBackend(false);
-    return;
+  // Pastikan koleksi bingkai kustom terisi template preset jika belum ada
+  if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
+    STATE.customFrames = getDefaultPresetCustomFrames();
+    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
   }
 
-  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
-  if (!STATE.guestNama || !STATE.guestNama.trim()) {
+  // 2. INSTANT FIRST-PAINT: Terapkan konfigurasi & identitas acara ke UI seketika (< 10ms)
+  applyGlobalConfigToUI();
+  applyEventToUI();
+
+  // 3. SEGERA TAMPILKAN HALAMAN AKTIF TANPA MENUNGGU JARINGAN INTERNET (< 20ms)
+  if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+    showView('viewAdmin');
+    renderAdminDashboard(); // Kartu 5 Event, 13 Foto, 8 Suara langsung tampil tanpa skeleton delay!
+  } else if (!STATE.guestNama || !STATE.guestNama.trim()) {
     showView('viewWelcome');
   } else {
     const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
     showView(savedView);
+    if (savedView === 'viewGallery') {
+      renderGallery(); // Langsung render foto cache lokal seketika!
+    }
   }
+
   updateRemainingQuotaDisplay();
   updateGuestIdentityUI();
-  syncEventsFromBackend(false);
 
   // Cek Persistensi Slideshow atau Parameter URL
   if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
     openSlideshow();
+  }
+
+  // 4. ASYNCHRONOUS NON-BLOCKING SINKRONISASI (Stale-While-Revalidate Engine)
+  revalidateFromBackend();
+}
+
+async function revalidateFromBackend() {
+  if (!STATE.gasApiUrl) return;
+
+  try {
+    await Promise.allSettled([
+      loadEventData(),
+      loadGallery()
+    ]);
+
+    // Update UI secara halus (silent reactive update) setelah data GAS tiba
+    applyEventToUI();
+    if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+      renderAdminDashboard();
+    }
+    const currentView = sessionStorage.getItem('snapevent_current_view');
+    if (currentView === 'viewGallery') {
+      renderGallery();
+    }
+    updateRemainingQuotaDisplay();
+  } catch (err) {
+    console.warn("Background revalidation note:", err);
   }
 }
 
@@ -576,8 +608,6 @@ async function loadEventData() {
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
           STATE.events = res.allEvents;
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-        } else {
-          syncEventsFromBackend(false);
         }
 
         if (res.globalConfig) {
@@ -625,8 +655,10 @@ async function loadEventData() {
 
         applyGlobalConfigToUI();
         applyEventToUI();
-        await loadGallery();
-        return;
+        if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+          renderAdminDashboard();
+        }
+        return res;
       } else if (res.status === 'inactive') {
         if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
           showView('viewEventClosed');
@@ -2049,43 +2081,110 @@ function openShareQrModal(eventObj) {
   modal.classList.remove('hidden');
 }
 
+function getDefaultPresetCustomFrames() {
+  const weddingSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='28' y='28' width='1024' height='1294' fill='none' stroke='%23D4AF37' stroke-width='14' rx='28'/><rect x='52' y='52' width='976' height='1246' fill='none' stroke='%23F3E5AB' stroke-width='3' rx='18'/><circle cx='52' cy='52' r='18' fill='%23D4AF37'/><circle cx='1028' cy='52' r='18' fill='%23D4AF37'/><circle cx='52' cy='1298' r='18' fill='%23D4AF37'/><circle cx='1028' cy='1298' r='18' fill='%23D4AF37'/><rect x='140' y='1190' width='800' height='95' fill='rgba(15,15,20,0.88)' stroke='%23D4AF37' stroke-width='2' rx='16'/><text x='540' y='1250' fill='%23F3E5AB' font-family='serif' font-size='32' font-weight='bold' text-anchor='middle'>THE WEDDING CELEBRATION</text></svg>";
+
+  const neonSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='32' y='32' width='1016' height='1286' fill='none' stroke='%23E11D48' stroke-width='10' rx='24'/><rect x='48' y='48' width='984' height='1254' fill='none' stroke='%23FB7185' stroke-width='2' rx='16'/><rect x='180' y='1205' width='720' height='85' fill='rgba(10,10,14,0.92)' stroke='%23E11D48' stroke-width='2' rx='14'/><text x='540' y='1258' fill='%23FFFFFF' font-family='sans-serif' font-size='28' font-weight='900' letter-spacing='4' text-anchor='middle'>EXCLUSIVE EVENT PARTY</text></svg>";
+
+  return [
+    {
+      id: 'FRAME_PRESET_WEDDING',
+      name: 'Wedding Gold Arch PNG',
+      scope: 'global',
+      type: 'custom',
+      dataUrl: weddingSvg
+    },
+    {
+      id: 'FRAME_PRESET_NEON',
+      name: 'Neon Party Glow PNG',
+      scope: 'global',
+      type: 'custom',
+      dataUrl: neonSvg
+    }
+  ];
+}
+
 function renderCustomFramesList() {
   const container = document.getElementById('customFramesListContainer');
   if (!container) return;
   container.innerHTML = '';
 
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
-    container.innerHTML = '<p class="text-[10px] text-zinc-500 italic py-1">Belum ada bingkai kustom tersimpan.</p>';
-    return;
+    STATE.customFrames = getDefaultPresetCustomFrames();
+    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
   }
 
   STATE.customFrames.forEach((cf, idx) => {
     const row = document.createElement('div');
-    row.className = "flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5 text-xs";
+    row.className = "flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/5 hover:border-brand-gold/30 transition text-xs";
     const scopeLabel = cf.scope === 'global' ? 'Semua Acara (Global)' : 'Khusus Acara Ini';
     const scopeColor = cf.scope === 'global' ? 'text-amber-300 border-amber-500/30 bg-amber-500/10' : 'text-blue-300 border-blue-500/30 bg-blue-500/10';
 
     row.innerHTML = `
-      <div class="flex items-center gap-2 overflow-hidden">
+      <div class="flex items-center gap-2.5 overflow-hidden flex-1 mr-2">
         <img src="${cf.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />
         <div class="truncate">
           <div class="font-bold text-white truncate text-[11px]">${cf.name || 'Bingkai ' + (idx + 1)}</div>
           <span class="text-[9px] px-1.5 py-0.5 rounded border ${scopeColor}">${scopeLabel}</span>
         </div>
       </div>
-      <button type="button" class="btn-del-frame text-red-400 hover:text-red-300 p-1 text-xs shrink-0" data-idx="${idx}" title="Hapus Bingkai">✕</button>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button type="button" class="btn-lock-custom-frame flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/40 text-[10px] font-bold transition active:scale-95" title="Kunci bingkai ini sebagai bingkai wajib tamu">
+          <span>🔒</span> Kunci Bingkai Ini
+        </button>
+        <button type="button" class="btn-del-frame text-red-400 hover:text-red-300 p-1 text-xs shrink-0" data-idx="${idx}" title="Hapus Bingkai">✕</button>
+      </div>
     `;
+
+    // Tombol Kunci Bingkai Ini: Otomatis aktifkan Single Lock & pilih frame ini
+    row.querySelector('.btn-lock-custom-frame').onclick = (e) => {
+      e.stopPropagation();
+      setAndLockSingleFrame(cf.id, cf.name);
+    };
 
     row.querySelector('.btn-del-frame').onclick = () => {
       STATE.customFrames.splice(idx, 1);
       localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
       renderCustomFramesList();
-      applyActiveFrame(STATE.activeFrame);
+      const targetEventId = document.getElementById('formEventId')?.value;
+      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+      renderAdminFrameSettings(currentEv);
       showToast("Bingkai kustom dihapus.", "info");
     };
 
     container.appendChild(row);
   });
+}
+
+function setAndLockSingleFrame(frameId, frameName) {
+  // 1. Pilih radio Single Lock
+  const radSingle = document.querySelector('input[name="frameLockModeRadio"][value="single"]');
+  if (radSingle) radSingle.checked = true;
+
+  // 2. Tampilkan kontainer Single Lock dan sembunyikan Multi-Frame
+  document.getElementById('containerSingleFrameLock')?.classList.remove('hidden');
+  document.getElementById('containerMultiFrameSelection')?.classList.add('hidden');
+
+  // 3. Set dropdown single frame select
+  const singleSelect = document.getElementById('formEventSingleFrameSelect');
+  if (singleSelect) {
+    singleSelect.value = frameId;
+  }
+
+  // 4. Update data event yang sedang diedit
+  const targetEventId = document.getElementById('formEventId')?.value;
+  const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+  if (currentEv) {
+    currentEv.frameLockMode = 'single';
+    currentEv.singleLockedFrame = frameId;
+  }
+
+  // 5. Re-render frame settings agar kartu single lock ter-highlight
+  renderAdminFrameSettings(currentEv);
+
+  // 6. Scroll halus ke bagian Single Lock agar admin melihat perubahan
+  document.getElementById('containerSingleFrameLock')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showToast(`🔒 Bingkai "${frameName || frameId}" berhasil dikunci sebagai 1 bingkai seragam wajib acara!`, "success");
 }
 
 function getAllAdminCandidateFrames(eventObj) {
@@ -2128,6 +2227,59 @@ function getAllAdminCandidateFrames(eventObj) {
   return frames;
 }
 
+function renderSingleLockCustomFrameList(candidateFrames, currentLockedId) {
+  const container = document.getElementById('singleLockCustomFrameList');
+  if (!container) return;
+  container.innerHTML = '';
+
+  candidateFrames.forEach(f => {
+    const isLocked = (f.id === currentLockedId);
+    const card = document.createElement('div');
+    card.className = `single-lock-card flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition select-none ${
+      isLocked 
+        ? 'bg-brand-gold/15 border-brand-gold shadow-md shadow-brand-gold/10' 
+        : 'bg-[#0D0D12] border-white/10 hover:border-brand-gold/50 hover:bg-white/[0.03]'
+    }`;
+    card.setAttribute('data-frame-id', f.id);
+
+    const thumbHtml = f.dataUrl 
+      ? `<img src="${f.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
+      : `<span class="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-base shrink-0">${f.icon || '🖼️'}</span>`;
+
+    const statusBadge = isLocked 
+      ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-gold text-black font-bold shrink-0">✓ TERKUNCI</span>`
+      : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 group-hover:text-white shrink-0">Pilih</span>`;
+
+    card.innerHTML = `
+      <div class="flex items-center gap-2.5 overflow-hidden flex-1 mr-2">
+        <input type="radio" name="singleLockRadioSelect" value="${f.id}" class="text-brand-gold w-4 h-4 shrink-0 cursor-pointer" ${isLocked ? 'checked' : ''} />
+        ${thumbHtml}
+        <div class="truncate">
+          <div class="text-xs font-semibold ${isLocked ? 'text-brand-gold' : 'text-zinc-200'} truncate">${f.name}</div>
+          <span class="text-[9px] text-zinc-400 font-mono">${f.type === 'custom' ? (f.scope === 'global' ? 'Kustom (Global)' : 'Kustom (Acara)') : 'Bawaan Standar'}</span>
+        </div>
+      </div>
+      <div>${statusBadge}</div>
+    `;
+
+    card.addEventListener('click', () => {
+      const singleSelect = document.getElementById('formEventSingleFrameSelect');
+      if (singleSelect) {
+        singleSelect.value = f.id;
+      }
+      const targetEventId = document.getElementById('formEventId')?.value;
+      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+      if (currentEv) {
+        currentEv.singleLockedFrame = f.id;
+      }
+      renderSingleLockCustomFrameList(candidateFrames, f.id);
+      showToast(`🔒 Bingkai "${f.name}" dipilih sebagai bingkai wajib terkunci.`, "info");
+    });
+
+    container.appendChild(card);
+  });
+}
+
 function renderAdminFrameSettings(eventObj) {
   const container = document.getElementById('adminFrameSortableList');
   const singleSelect = document.getElementById('formEventSingleFrameSelect');
@@ -2160,17 +2312,28 @@ function renderAdminFrameSettings(eventObj) {
     }
   });
 
-  // 1. Render Dropdown Single Frame Lock (Termasuk Custom Frame PNG)
+  const currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
+
+  // 1. Render Dropdown Single Frame Lock dengan Optgroup Standar & Kustom
   if (singleSelect) {
-    const currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
-    singleSelect.innerHTML = sortedFrames.map(f => `
-      <option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>
-        ${f.name}
-      </option>
-    `).join('');
+    const builtInOptions = sortedFrames.filter(f => f.type !== 'custom').map(f => 
+      `<option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>${f.name}</option>`
+    ).join('');
+    const customOptions = sortedFrames.filter(f => f.type === 'custom').map(f => 
+      `<option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>${f.name}</option>`
+    ).join('');
+
+    let finalHtml = '';
+    if (builtInOptions) finalHtml += `<optgroup label="🌟 Bingkai Standar">${builtInOptions}</optgroup>`;
+    if (customOptions) finalHtml += `<optgroup label="🖼️ Koleksi Bingkai Kustom">${customOptions}</optgroup>`;
+    singleSelect.innerHTML = finalHtml || sortedFrames.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+    singleSelect.value = currentLocked;
   }
 
-  // 2. Render Drag & Drop Sortable List
+  // 2. Render Daftar Visual Pilihan Bingkai di Menu Single Lock
+  renderSingleLockCustomFrameList(sortedFrames, currentLocked);
+
+  // 3. Render Drag & Drop Sortable List untuk Mode Bebas Pilih (Multi-Frame)
   if (container) {
     container.innerHTML = '';
     sortedFrames.forEach((frame) => {
@@ -2265,6 +2428,13 @@ function syncFrameSettingsFromDOM() {
       singleSelect.innerHTML = options.join('');
     }
   }
+
+  // Sinkronkan daftar visual single lock
+  const targetEventId = document.getElementById('formEventId')?.value;
+  const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+  const candidateFrames = getAllAdminCandidateFrames(currentEv);
+  const currentLocked = singleSelect?.value || 'GOLD_DECO';
+  renderSingleLockCustomFrameList(candidateFrames, currentLocked);
 }
 
 function resetCreateEventForm() {
@@ -2841,6 +3011,14 @@ function bindEvents() {
       if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
       if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
     });
+  });
+
+  // Listener Perubahan Dropdown Pilihan Single Frame Lock (Sinkron ke Kartu Visual)
+  document.getElementById('formEventSingleFrameSelect')?.addEventListener('change', (e) => {
+    const targetEventId = document.getElementById('formEventId')?.value;
+    const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+    const candidateFrames = getAllAdminCandidateFrames(currentEv);
+    renderSingleLockCustomFrameList(candidateFrames, e.target.value);
   });
 
   // Hapus tanda error ketika tamu mulai mengetik namanya
