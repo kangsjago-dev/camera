@@ -192,7 +192,10 @@ function getAvailableFrames() {
     // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (termasuk custom frame)
     if (ev.frameLockMode === 'single') {
       const lockedId = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
-      const single = allFrames.find(f => f.id === lockedId || (f.type === 'custom' && (lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM' || lockedId === 'frame_legacy_event')));
+      const single = allFrames.find(f => 
+        f.id === lockedId || 
+        ((lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (f.dataUrl && f.dataUrl === activeCustomData)))
+      );
       return [single || allFrames[0]];
     }
 
@@ -200,19 +203,12 @@ function getAvailableFrames() {
     if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
       const ordered = [];
       ev.activeFrames.forEach(frameId => {
-        const match = allFrames.find(f => f.id === frameId || (f.type === 'custom' && (frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM' || frameId === 'frame_legacy_event')));
+        const match = allFrames.find(f => 
+          f.id === frameId || 
+          ((frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (f.dataUrl && f.dataUrl === activeCustomData)))
+        );
         if (match && !ordered.some(o => o.id === match.id)) {
           ordered.push(match);
-        }
-      });
-      // Sertakan bingkai kustom yang mungkin belum terdaftar di array
-      allFrames.forEach(f => {
-        if (!ordered.some(o => o.id === f.id)) {
-          if (f.type === 'custom' && (f.eventId === ev.idEvent || f.scope === 'event' || f.scope === 'global')) {
-            if (ev.activeFrames.includes(f.id) || ev.activeFrames.includes('CUSTOM_EVENT') || ev.activeFrames.includes('CUSTOM')) {
-              ordered.push(f);
-            }
-          }
         }
       });
       if (ordered.length > 0) return ordered;
@@ -596,7 +592,18 @@ async function loadEventData() {
       const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
       const res = await resp.json();
       if (res.status === 'success') {
-        STATE.activeEvent = res.event;
+        const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
+        STATE.activeEvent = {
+          ...localActive,
+          ...res.event,
+          frameLockMode: res.event.frameLockMode || localActive?.frameLockMode || 'multi',
+          singleLockedFrame: res.event.singleLockedFrame || localActive?.singleLockedFrame || 'GOLD_DECO',
+          activeFrames: (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length > 0)
+            ? res.event.activeFrames
+            : (localActive?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
+          customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
+          customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
+        };
         STATE.activeCategories = res.categories || [];
 
         if (res.metrics) {
@@ -604,9 +611,22 @@ async function loadEventData() {
           localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
         }
 
-        // Sinkronkan seluruh event jika backend mengembalikan allEvents
+        // Sinkronkan seluruh event secara defensif (Pertahankan frame settings lokal jika server belum update)
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
-          STATE.events = res.allEvents;
+          STATE.events = res.allEvents.map(serverEv => {
+            const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
+            return {
+              ...localEv,
+              ...serverEv,
+              frameLockMode: serverEv.frameLockMode || localEv?.frameLockMode || 'multi',
+              singleLockedFrame: serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO',
+              activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
+                ? serverEv.activeFrames
+                : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
+              customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
+              customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
+            };
+          });
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
         }
 
@@ -775,7 +795,20 @@ async function syncEventsFromBackend(showToastNotice = false) {
     }
 
     if (res && res.status === 'success' && Array.isArray(res.events) && res.events.length > 0) {
-      STATE.events = res.events;
+      STATE.events = res.events.map(serverEv => {
+        const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
+        return {
+          ...localEv,
+          ...serverEv,
+          frameLockMode: serverEv.frameLockMode || localEv?.frameLockMode || 'multi',
+          singleLockedFrame: serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO',
+          activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
+            ? serverEv.activeFrames
+            : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
+          customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
+          customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
+        };
+      });
       localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
 
       // Simpan metrik riil Google Sheets (Total Event, Foto, dan Suara)
@@ -1015,19 +1048,14 @@ function applyEventToUI() {
     STATE.customFrameImgObj = null;
   }
 
-  // Render Pilihan Frame di Viewfinder
+  // Render Pilihan Frame di Viewfinder (Dinamis sesuai izin Admin)
   const frameContainer = document.getElementById('frameListContainer');
-  let customFrameHtml = '';
-  if (frameData) {
-    customFrameHtml = `<button data-frame="CUSTOM" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'CUSTOM' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Frame Kustom Acara</button>`;
+  const availFrames = getAvailableFrames();
+  if (frameContainer) {
+    frameContainer.innerHTML = availFrames.map(f => `
+      <button data-frame="${f.id}" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">${f.name}</button>
+    `).join('');
   }
-  frameContainer.innerHTML = `
-    <button data-frame="GOLD_DECO" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'GOLD_DECO' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Gold Deco</button>
-    ${customFrameHtml}
-    <button data-frame="POLAROID" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'POLAROID' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">📷 Polaroid</button>
-    <button data-frame="MINIMAL" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'MINIMAL' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">▪️ Minimalist</button>
-    <button data-frame="NONE" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'NONE' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">Tanpa Bingkai</button>
-  `;
 
   // Render Kategori Voting di Galeri
   const catContainer = document.getElementById('galleryCategoryTabs');
@@ -1046,10 +1074,16 @@ function applyEventToUI() {
 
   // Set bingkai aktif sesuai kebijakan frame acara
   if (ev.frameLockMode === 'single') {
-    const lockedFrame = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
+    const lockedFrame = ev.singleLockedFrame || (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
     applyActiveFrame(lockedFrame);
-  } else if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0 && !ev.activeFrames.includes(STATE.activeFrame)) {
-    applyActiveFrame(ev.activeFrames[0]);
+  } else if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
+    if (!availFrames.some(f => f.id === STATE.activeFrame)) {
+      applyActiveFrame(availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
+    } else {
+      applyActiveFrame(STATE.activeFrame);
+    }
+  } else {
+    applyActiveFrame(availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
   }
 
   updateGuestIdentityUI();
@@ -2299,9 +2333,13 @@ function renderAdminFrameSettings(eventObj) {
   }
 
   // Urutkan candidateFrames: yang ada di activeOrder disusun terlebih dahulu sesuai indexnya
+  const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
   const sortedFrames = [];
   activeOrder.forEach(id => {
-    const found = candidateFrames.find(f => f.id === id || (f.type === 'custom' && (id === 'CUSTOM_EVENT' || id === 'CUSTOM')));
+    const found = candidateFrames.find(f => 
+      f.id === id || 
+      ((id === 'CUSTOM_EVENT' || id === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (eventCustomData && f.dataUrl === eventCustomData)))
+    );
     if (found && !sortedFrames.some(s => s.id === found.id)) {
       sortedFrames.push(found);
     }
@@ -2778,7 +2816,15 @@ function switchAdminTab(tabName) {
   if (tabName === 'settings') document.getElementById('adminTabSettings').classList.remove('hidden');
 }
 
-function saveAdminEventForm() {
+async function saveAdminEventForm() {
+  const submitBtn = document.querySelector('#formSaveEvent button[type="submit"]');
+  let originalBtnHtml = '';
+  if (submitBtn) {
+    originalBtnHtml = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span>⏳</span> Menyimpan Acara & Bingkai ke Cloud...';
+  }
+
   const nama = document.getElementById('formEventNama').value.trim();
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const tanggal = document.getElementById('formEventTanggal').value;
@@ -2801,7 +2847,10 @@ function saveAdminEventForm() {
     if (val) cats.push({ idKategori: `KAT-${idx + 1}`, namaKategori: val, urutan: idx + 1 });
   });
 
-  const customFrameData = STATE.tempCustomFrameData || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
+  const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
+  const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
+
+  const customFrameData = STATE.tempCustomFrameData || (existingEv ? (existingEv.customFrameData || existingEv.customFrameUrl) : null) || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
 
   let frameLockMode = 'multi';
   document.getElementsByName('frameLockModeRadio').forEach(r => {
@@ -2824,9 +2873,6 @@ function saveAdminEventForm() {
     }
     if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
   }
-
-  const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
-  const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
 
   const savedEvent = Object.assign({}, existingEv, {
     idEvent: targetEventId,
@@ -2884,36 +2930,45 @@ function saveAdminEventForm() {
     applyEventToUI();
   }
 
-  // Sinkronisasi ke Backend GAS jika ada
+  // Sinkronisasi ke Backend GAS dengan AWAIT (Pastikan Google Sheets selesai menulis sebelum F5)
   if (STATE.gasApiUrl) {
-    fetch(STATE.gasApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'adminSaveEvent',
-        idEvent: savedEvent.idEvent,
-        namaEvent: nama,
-        slugEvent: savedEvent.slugEvent,
-        tanggalEvent: tanggal,
-        hashtagEvent: hashtag,
-        maxFotoPerGuest: maxFoto,
-        maxVotePerGuest: maxVote,
-        revealMode: revealMode,
-        isRevealed: savedEvent.isRevealed,
-        likeEnabled: likeEnabled,
-        publicVisible: publicVisible,
-        gdriveFolderId: driveFolder,
-        frameLockMode: frameLockMode,
-        singleLockedFrame: singleLockedFrame,
-        activeFrames: activeFrames,
-        customFrameUrl: customFrameData || '',
-        categories: cats
-      })
-    }).catch(err => console.warn("Sinkronisasi GAS warn:", err.message));
+    try {
+      await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminSaveEvent',
+          idEvent: savedEvent.idEvent,
+          namaEvent: nama,
+          slugEvent: savedEvent.slugEvent,
+          tanggalEvent: tanggal,
+          hashtagEvent: hashtag,
+          maxFotoPerGuest: maxFoto,
+          maxVotePerGuest: maxVote,
+          revealMode: revealMode,
+          isRevealed: savedEvent.isRevealed,
+          likeEnabled: likeEnabled,
+          publicVisible: publicVisible,
+          gdriveFolderId: driveFolder,
+          frameLockMode: frameLockMode,
+          singleLockedFrame: singleLockedFrame,
+          activeFrames: activeFrames,
+          customFrameUrl: customFrameData || '',
+          categories: cats
+        })
+      });
+    } catch (err) {
+      console.warn("Sinkronisasi GAS warn:", err.message);
+    }
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = originalBtnHtml || 'Simpan Pengaturan Acara';
   }
 
   applyEventToUI();
-  showToast("Acara & Bingkai berhasil disimpan!", "success");
+  showToast("✅ Acara & Pengaturan Bingkai Berhasil Disimpan Permanen!", "success");
   switchAdminTab('events');
   renderAdminDashboard();
 }
@@ -3010,6 +3065,15 @@ function bindEvents() {
       const containerMulti = document.getElementById('containerMultiFrameSelection');
       if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
       if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
+
+      if (isSingle) {
+        const targetEventId = document.getElementById('formEventId')?.value;
+        const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+        const singleSelect = document.getElementById('formEventSingleFrameSelect');
+        const lockedId = singleSelect?.value || currentEv?.singleLockedFrame || 'GOLD_DECO';
+        const candidateFrames = getAllAdminCandidateFrames(currentEv);
+        renderSingleLockCustomFrameList(candidateFrames, lockedId);
+      }
     });
   });
 
