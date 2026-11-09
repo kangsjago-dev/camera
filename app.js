@@ -33,6 +33,7 @@ const STATE = {
   tempCustomFrameData: null,
   customFrames: JSON.parse(localStorage.getItem('snapevent_custom_frames') || '[]'),
   events: JSON.parse(localStorage.getItem('snapevent_events') || '[]'),
+  metrics: JSON.parse(localStorage.getItem('snapevent_metrics') || '{"totalEvents":5,"totalPhotos":13,"totalVotes":8}'),
 
   // Guest Profile
   guestId: getOrCreateGuestId(),
@@ -511,6 +512,7 @@ async function initApp() {
   if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
     showView('viewAdmin');
     renderAdminDashboard();
+    syncEventsFromBackend(false);
     return;
   }
 
@@ -523,6 +525,7 @@ async function initApp() {
   }
   updateRemainingQuotaDisplay();
   updateGuestIdentityUI();
+  syncEventsFromBackend(false);
 
   // Cek Persistensi Slideshow atau Parameter URL
   if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
@@ -548,6 +551,11 @@ async function loadEventData() {
       if (res.status === 'success') {
         STATE.activeEvent = res.event;
         STATE.activeCategories = res.categories || [];
+
+        if (res.metrics) {
+          STATE.metrics = res.metrics;
+          localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
+        }
 
         // Sinkronkan seluruh event jika backend mengembalikan allEvents
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
@@ -723,6 +731,18 @@ async function syncEventsFromBackend(showToastNotice = false) {
       STATE.events = res.events;
       localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
 
+      // Simpan metrik riil Google Sheets (Total Event, Foto, dan Suara)
+      if (res.metrics) {
+        STATE.metrics = res.metrics;
+      } else {
+        STATE.metrics = {
+          totalEvents: res.totalEvents || res.events.length,
+          totalPhotos: res.totalPhotos || (STATE.metrics ? STATE.metrics.totalPhotos : 0),
+          totalVotes: res.totalVotes || (STATE.metrics ? STATE.metrics.totalVotes : 0)
+        };
+      }
+      localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
+
       // Sinkronkan event aktif
       const matchedActive = STATE.events.find(e => e.idEvent === STATE.activeEventId);
       if (matchedActive) {
@@ -774,15 +794,21 @@ async function syncEventsFromBackend(showToastNotice = false) {
         applyGlobalConfigToUI();
       }
 
+      // Muat foto galeri aktif dari Google Sheets agar foto & voting selalu sinkron di seluruh perangkat
+      await loadGallery();
+
       applyEventToUI();
       renderAdminDashboard();
 
+      const pCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') ? STATE.metrics.totalPhotos : STATE.photos.length;
+      const vCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') ? STATE.metrics.totalVotes : 0;
+
       if (badge) {
-        badge.textContent = "Tersinkron (" + STATE.events.length + " Event)";
+        badge.textContent = `Tersinkron (${STATE.events.length} Event, ${pCount} Foto, ${vCount} Suara)`;
         badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
       }
       if (showToastNotice) {
-        showToast(`Sinkronisasi sukses! ${STATE.events.length} event ditemukan dari Google Sheets.`, "success");
+        showToast(`Sinkronisasi sukses! ${STATE.events.length} event & ${pCount} foto tersinkron dari Google Sheets.`, "success");
       }
     } else {
       if (badge) {
@@ -810,16 +836,68 @@ async function loadGallery() {
   try {
     const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
     const res = await resp.json();
-    if (res.status === 'success') {
-      STATE.photos = res.photos || [];
+    if (res && res.status === 'success') {
+      const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
+      const serverIds = new Set(serverPhotos.map(p => p.idFoto));
+
+      // Pertahankan foto lokal pending yang belum sempat terunggah ke Drive (Zero Data Loss)
+      const pendingLocalPhotos = (STATE.photos || []).filter(p => 
+        p && p.gdriveViewUrl && (
+          p.gdriveViewUrl.startsWith('data:') || 
+          (p.idFoto && p.idFoto.startsWith('FTO-') && !serverIds.has(p.idFoto))
+        )
+      );
+
+      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
+      STATE.photos = [...pendingLocalPhotos, ...serverPhotos];
       STATE.votedPhotoIds = res.votedPhotoIds || [];
+      saveEventPhotos(STATE.activeEventId);
       renderGallery();
-    } else if (res.status === 'locked') {
-      document.getElementById('galleryLockedNotice').classList.remove('hidden');
-      document.getElementById('galleryPhotoGrid').innerHTML = '';
+
+      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Ilham / Tamu langsung tersinkronkan
+      if (pendingLocalPhotos.length > 0) {
+        autoUploadPendingPhotos(pendingLocalPhotos);
+      }
+    } else if (res && res.status === 'locked') {
+      document.getElementById('galleryLockedNotice')?.classList.remove('hidden');
+      const grid = document.getElementById('galleryPhotoGrid');
+      if (grid) grid.innerHTML = '';
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
+  }
+}
+
+async function autoUploadPendingPhotos(pendingList) {
+  if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
+  for (const photo of pendingList) {
+    if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
+    try {
+      const payload = {
+        action: "uploadPhoto",
+        eventId: photo.eventId || STATE.activeEventId,
+        guestId: photo.guestId || STATE.guestId,
+        guestNama: photo.guestNama || "Tamu",
+        caption: photo.caption || "Momen seru!",
+        cameraStyle: photo.cameraStyle || "RAW",
+        frameStyle: photo.frameStyle || "POLAROID",
+        imageBase64: photo.gdriveViewUrl
+      };
+      const resp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      const res = await resp.json();
+      if (res && res.status === 'success') {
+        if (res.idFoto) photo.idFoto = res.idFoto;
+        if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
+        saveEventPhotos(STATE.activeEventId);
+        renderGallery();
+      }
+    } catch (err) {
+      console.warn("Auto-sync background upload error untuk foto:", photo.idFoto, err.message);
+    }
   }
 }
 
@@ -2038,12 +2116,35 @@ function resetCreateEventForm() {
 }
 
 function renderAdminDashboard() {
-  const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) ? STATE.events : (STATE.activeEvent ? [STATE.activeEvent] : [MOCK_DATA.event]);
-  document.getElementById('admMetricEvents').textContent = allEvents.length;
-  document.getElementById('admMetricPhotos').textContent = STATE.photos.length;
+  const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
+    ? STATE.events 
+    : ((Array.isArray(MOCK_DATA.events) && MOCK_DATA.events.length > 0) ? MOCK_DATA.events : [MOCK_DATA.event]);
 
-  const totalVotes = STATE.photos.reduce((acc, p) => acc + (p.totalLikes || 0), 0);
-  document.getElementById('admMetricVotes').textContent = totalVotes;
+  const totalEvtCount = (STATE.metrics && typeof STATE.metrics.totalEvents === 'number') 
+    ? STATE.metrics.totalEvents 
+    : allEvents.length;
+    
+  const totalPhotoCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') 
+    ? STATE.metrics.totalPhotos 
+    : (STATE.photos ? STATE.photos.length : 0);
+    
+  const calcLikes = (STATE.photos || []).reduce((acc, p) => acc + (p.totalLikes || 0), 0);
+  const totalVoteCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') 
+    ? STATE.metrics.totalVotes 
+    : calcLikes;
+
+  const metricEvtEl = document.getElementById('admMetricEvents');
+  const metricPhotoEl = document.getElementById('admMetricPhotos');
+  const metricVoteEl = document.getElementById('admMetricVotes');
+  if (metricEvtEl) metricEvtEl.textContent = totalEvtCount;
+  if (metricPhotoEl) metricPhotoEl.textContent = totalPhotoCount;
+  if (metricVoteEl) metricVoteEl.textContent = totalVoteCount;
+
+  const badge = document.getElementById('admSyncStatusBadge');
+  if (badge && !badge.textContent.includes('Mengunduh')) {
+    badge.textContent = `Tersinkron (${totalEvtCount} Event, ${totalPhotoCount} Foto)`;
+    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
+  }
 
   const listContainer = document.getElementById('adminEventListContainer');
   listContainer.innerHTML = '';
