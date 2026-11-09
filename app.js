@@ -2757,7 +2757,8 @@ function bindEvents() {
     localStorage.removeItem('snapevent_gas_url');
     localStorage.removeItem('snapevent_admin_user');
     localStorage.removeItem('snapevent_admin_pass');
-    STATE.gasApiUrl = '';
+    STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
+    localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
     STATE.adminUser = 'admin';
     STATE.adminPass = 'admin123';
     STATE.photos = [...MOCK_DATA.samplePhotos];
