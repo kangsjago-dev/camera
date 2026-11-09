@@ -194,7 +194,7 @@ function getAvailableFrames() {
       const lockedId = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
       const single = allFrames.find(f => 
         f.id === lockedId || 
-        ((lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (f.dataUrl && f.dataUrl === activeCustomData)))
+        ((lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM' || String(lockedId).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (f.dataUrl && f.dataUrl === activeCustomData)))
       );
       return [single || allFrames[0]];
     }
@@ -205,7 +205,7 @@ function getAvailableFrames() {
       ev.activeFrames.forEach(frameId => {
         const match = allFrames.find(f => 
           f.id === frameId || 
-          ((frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (f.dataUrl && f.dataUrl === activeCustomData)))
+          ((frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM' || String(frameId).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (f.dataUrl && f.dataUrl === activeCustomData)))
         );
         if (match && !ordered.some(o => o.id === match.id)) {
           ordered.push(match);
@@ -2338,7 +2338,7 @@ function renderAdminFrameSettings(eventObj) {
   activeOrder.forEach(id => {
     const found = candidateFrames.find(f => 
       f.id === id || 
-      ((id === 'CUSTOM_EVENT' || id === 'CUSTOM') && (f.id === 'CUSTOM_EVENT' || (eventCustomData && f.dataUrl === eventCustomData)))
+      ((id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (eventCustomData && f.dataUrl === eventCustomData)))
     );
     if (found && !sortedFrames.some(s => s.id === found.id)) {
       sortedFrames.push(found);
@@ -2375,7 +2375,8 @@ function renderAdminFrameSettings(eventObj) {
   if (container) {
     container.innerHTML = '';
     sortedFrames.forEach((frame) => {
-      const isChecked = activeOrder.includes(frame.id) || (frame.id === 'CUSTOM_EVENT' && !eventObj) || (frame.id !== 'NONE' && !eventObj);
+      const isCustomMatch = (frame.id === 'CUSTOM_EVENT' || frame.type === 'custom') && activeOrder.some(a => a === 'CUSTOM_EVENT' || a === 'CUSTOM' || String(a).indexOf('frame_') === 0);
+      const isChecked = activeOrder.includes(frame.id) || isCustomMatch || (frame.id === 'CUSTOM_EVENT' && !eventObj) || (frame.id !== 'NONE' && !eventObj);
       const row = document.createElement('div');
       row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
       row.setAttribute('draggable', 'true');
@@ -2857,18 +2858,30 @@ async function saveAdminEventForm() {
     if (r.checked) frameLockMode = r.value;
   });
 
-  const singleLockedFrame = document.getElementById('formEventSingleFrameSelect')?.value || 'GOLD_DECO';
+  let singleLockedFrame = document.getElementById('formEventSingleFrameSelect')?.value || 'GOLD_DECO';
+  if (singleLockedFrame.indexOf('frame_') === 0) {
+    singleLockedFrame = 'CUSTOM_EVENT';
+  }
+
   let activeFrames = [];
   if (frameLockMode === 'single') {
     activeFrames = [singleLockedFrame];
   } else {
     document.querySelectorAll('#adminFrameSortableList .frame-sortable-item').forEach(item => {
       const chk = item.querySelector('.adm-frame-check');
-      if (chk && chk.checked) activeFrames.push(chk.value);
+      if (chk && chk.checked) {
+        let val = chk.value;
+        if (val.indexOf('frame_') === 0) val = 'CUSTOM_EVENT';
+        if (!activeFrames.includes(val)) activeFrames.push(val);
+      }
     });
     if (activeFrames.length === 0) {
       document.querySelectorAll('.adm-frame-check').forEach(chk => {
-        if (chk.checked) activeFrames.push(chk.value);
+        if (chk.checked) {
+          let val = chk.value;
+          if (val.indexOf('frame_') === 0) val = 'CUSTOM_EVENT';
+          if (!activeFrames.includes(val)) activeFrames.push(val);
+        }
       });
     }
     if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
@@ -2933,7 +2946,7 @@ async function saveAdminEventForm() {
   // Sinkronisasi ke Backend GAS dengan AWAIT (Pastikan Google Sheets selesai menulis sebelum F5)
   if (STATE.gasApiUrl) {
     try {
-      await fetch(STATE.gasApiUrl, {
+      const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
@@ -2957,6 +2970,20 @@ async function saveAdminEventForm() {
           categories: cats
         })
       });
+
+      let res = null;
+      try { res = await resp.json(); } catch (jsonErr) {}
+      if (res && res.status === 'success') {
+        if (res.customFrameUrl) {
+          savedEvent.customFrameUrl = res.customFrameUrl;
+          if (STATE.activeEvent && STATE.activeEvent.idEvent === savedEvent.idEvent) {
+            STATE.activeEvent.customFrameUrl = res.customFrameUrl;
+          }
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+        }
+      } else if (res && res.status === 'error') {
+        console.warn("GAS simpan peringatan:", res.message);
+      }
     } catch (err) {
       console.warn("Sinkronisasi GAS warn:", err.message);
     }
