@@ -64,16 +64,30 @@ const STATE = {
 };
 
 // --- DATA ISOLATION HELPERS PER EVENT ---
+function getResolvedEventId(idOrSlug) {
+  const target = String(idOrSlug || STATE.activeEventId || '').trim();
+  if (!target) return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+  if (/^EVT-\d+/i.test(target)) return target;
+  const ev = (STATE.events || []).find(e => 
+    e.idEvent === target || 
+    (e.slugEvent && e.slugEvent.toLowerCase() === target.toLowerCase()) ||
+    (e.namaEvent && e.namaEvent.toLowerCase() === target.toLowerCase())
+  );
+  if (ev && ev.idEvent) return ev.idEvent;
+  if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
+  return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+}
+
 function getEventPhotosKey(eventId) {
-  return 'snapevent_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+  return 'snapevent_photos_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
 function getEventVotedPhotosKey(eventId) {
-  return 'snapevent_voted_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+  return 'snapevent_voted_photos_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
 function getEventVotedCategoriesKey(eventId) {
-  return 'snapevent_voted_categories_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
+  return 'snapevent_voted_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
 function loadEventPhotos(eventId) {
@@ -598,15 +612,21 @@ function getOrCreateGuestId() {
 async function loadEventData() {
   if (STATE.gasApiUrl) {
     try {
-      const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
+      const targetId = getResolvedEventId(STATE.activeEventId);
+      const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${targetId}&guestId=${STATE.guestId}`);
       const res = await resp.json();
       if (res.status === 'success') {
         const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
+        const inferredMode = res.event.frameLockMode 
+          || (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length === 1 && res.event.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localActive?.frameLockMode || 'multi'));
+        const inferredLocked = res.event.singleLockedFrame 
+          || (inferredMode === 'single' && Array.isArray(res.event.activeFrames) ? res.event.activeFrames[0] : (localActive?.singleLockedFrame || 'GOLD_DECO'));
+
         STATE.activeEvent = {
           ...localActive,
           ...res.event,
-          frameLockMode: res.event.frameLockMode || localActive?.frameLockMode || 'multi',
-          singleLockedFrame: res.event.singleLockedFrame || localActive?.singleLockedFrame || 'GOLD_DECO',
+          frameLockMode: inferredMode,
+          singleLockedFrame: inferredLocked,
           activeFrames: (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length > 0)
             ? res.event.activeFrames
             : (localActive?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
@@ -624,11 +644,16 @@ async function loadEventData() {
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
           STATE.events = res.allEvents.map(serverEv => {
             const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
+            const evInferredMode = serverEv.frameLockMode 
+              || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
+            const evInferredLocked = serverEv.singleLockedFrame 
+              || (evInferredMode === 'single' && Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames[0] : (localEv?.singleLockedFrame || 'GOLD_DECO'));
+
             return {
               ...localEv,
               ...serverEv,
-              frameLockMode: serverEv.frameLockMode || localEv?.frameLockMode || 'multi',
-              singleLockedFrame: serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO',
+              frameLockMode: evInferredMode,
+              singleLockedFrame: evInferredLocked,
               activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
                 ? serverEv.activeFrames
                 : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
@@ -806,11 +831,16 @@ async function syncEventsFromBackend(showToastNotice = false) {
     if (res && res.status === 'success' && Array.isArray(res.events) && res.events.length > 0) {
       STATE.events = res.events.map(serverEv => {
         const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
+        const inferredMode = serverEv.frameLockMode 
+          || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
+        const inferredLocked = serverEv.singleLockedFrame 
+          || (inferredMode === 'single' && Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames[0] : (localEv?.singleLockedFrame || 'GOLD_DECO'));
+
         return {
           ...localEv,
           ...serverEv,
-          frameLockMode: serverEv.frameLockMode || localEv?.frameLockMode || 'multi',
-          singleLockedFrame: serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO',
+          frameLockMode: inferredMode,
+          singleLockedFrame: inferredLocked,
           activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
             ? serverEv.activeFrames
             : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
@@ -883,13 +913,14 @@ async function syncEventsFromBackend(showToastNotice = false) {
         applyGlobalConfigToUI();
       }
 
-      // Muat foto galeri aktif dari Google Sheets agar foto & voting selalu sinkron di seluruh perangkat
-      await loadGallery();
-
+      // SEGERA UPDATE TAMPILAN ADMIN SECARA INSTAN TANPA MENUNGGU FETCH GALERI SELESAI
       applyEventToUI();
       renderAdminDashboard();
 
-      const pCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') ? STATE.metrics.totalPhotos : STATE.photos.length;
+      // Muat foto galeri aktif dari Google Sheets di background
+      loadGallery().catch(err => console.warn("Background gallery sync note:", err));
+
+      const pCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') ? STATE.metrics.totalPhotos : (STATE.photos ? STATE.photos.length : 0);
       const vCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') ? STATE.metrics.totalVotes : 0;
 
       if (badge) {
@@ -924,6 +955,8 @@ async function loadGallery() {
   if (!STATE.gasApiUrl) return;
   const grid = document.getElementById('galleryPhotoGrid');
   const countBadge = document.getElementById('galleryPhotoCountBadge');
+  const empty = document.getElementById('galleryEmptyNotice');
+  const targetId = getResolvedEventId(STATE.activeEventId);
 
   // Indikator visual loading non-intrusif jika galeri masih kosong
   if ((!STATE.photos || STATE.photos.length === 0) && grid && !grid.innerHTML.trim()) {
@@ -936,7 +969,7 @@ async function loadGallery() {
   }
 
   try {
-    const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
+    const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${targetId}&guestId=${STATE.guestId}`);
     const res = await resp.json();
     if (res && res.status === 'success') {
       document.getElementById('galleryLockedNotice')?.classList.add('hidden');
@@ -954,7 +987,7 @@ async function loadGallery() {
       // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
       STATE.photos = [...pendingLocalPhotos, ...serverPhotos];
       STATE.votedPhotoIds = res.votedPhotoIds || [];
-      saveEventPhotos(STATE.activeEventId);
+      saveEventPhotos(targetId);
       renderGallery();
 
       // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
@@ -964,7 +997,10 @@ async function loadGallery() {
     } else if (res && res.status === 'locked') {
       document.getElementById('galleryLockedNotice')?.classList.remove('hidden');
       if (grid) grid.innerHTML = '';
+      if (empty) empty.classList.add('hidden');
       if (countBadge) countBadge.textContent = '0 Foto (Terkunci)';
+    } else {
+      renderGallery();
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
@@ -979,7 +1015,7 @@ async function autoUploadPendingPhotos(pendingList) {
     try {
       const payload = {
         action: "uploadPhoto",
-        eventId: photo.eventId || STATE.activeEventId,
+        eventId: getResolvedEventId(photo.eventId || STATE.activeEventId),
         guestId: photo.guestId || STATE.guestId,
         guestNama: photo.guestNama || "Tamu",
         caption: photo.caption || "Momen seru!",
@@ -1657,7 +1693,7 @@ async function handleSavePhotoToDrive() {
     if (STATE.gasApiUrl) {
       const payload = {
         action: "uploadPhoto",
-        eventId: STATE.activeEventId,
+        eventId: getResolvedEventId(STATE.activeEventId),
         guestId: STATE.guestId,
         guestNama: STATE.guestNama || "Tamu",
         caption: caption,
@@ -1726,7 +1762,7 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     if (STATE.gasApiUrl) {
       const payload = {
         action: "submitVote",
-        eventId: STATE.activeEventId,
+        eventId: getResolvedEventId(STATE.activeEventId),
         idFoto: idFoto,
         idKategori: targetCat,
         guestId: STATE.guestId,
@@ -2543,147 +2579,153 @@ function resetCreateEventForm() {
 }
 
 function renderAdminDashboard() {
-  const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
-    ? STATE.events 
-    : ((Array.isArray(MOCK_DATA.events) && MOCK_DATA.events.length > 0) ? MOCK_DATA.events : [MOCK_DATA.event]);
+  try {
+    const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
+      ? STATE.events 
+      : ((Array.isArray(MOCK_DATA.events) && MOCK_DATA.events.length > 0) ? MOCK_DATA.events : [MOCK_DATA.event]);
 
-  const totalEvtCount = (STATE.metrics && typeof STATE.metrics.totalEvents === 'number') 
-    ? STATE.metrics.totalEvents 
-    : allEvents.length;
-    
-  const totalPhotoCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') 
-    ? STATE.metrics.totalPhotos 
-    : (STATE.photos ? STATE.photos.length : 0);
-    
-  const calcLikes = (STATE.photos || []).reduce((acc, p) => acc + (p.totalLikes || 0), 0);
-  const totalVoteCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') 
-    ? STATE.metrics.totalVotes 
-    : calcLikes;
-
-  const metricEvtEl = document.getElementById('admMetricEvents');
-  const metricPhotoEl = document.getElementById('admMetricPhotos');
-  const metricVoteEl = document.getElementById('admMetricVotes');
-  if (metricEvtEl) metricEvtEl.textContent = totalEvtCount;
-  if (metricPhotoEl) metricPhotoEl.textContent = totalPhotoCount;
-  if (metricVoteEl) metricVoteEl.textContent = totalVoteCount;
-
-  const badge = document.getElementById('admSyncStatusBadge');
-  if (badge && !badge.textContent.includes('Mengunduh')) {
-    badge.textContent = `Tersinkron (${totalEvtCount} Event, ${totalPhotoCount} Foto)`;
-    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
-  }
-
-  const listContainer = document.getElementById('adminEventListContainer');
-  listContainer.innerHTML = '';
-
-  allEvents.forEach(ev => {
-    const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
-    const hasCustom = !!(ev.customFrameData || ev.customFrameUrl || (Array.isArray(STATE.customFrames) && STATE.customFrames.some(f => f.eventId === ev.idEvent || f.scope === 'global')));
-    const frameText = hasCustom ? '✨ Multi-Frame Aktif' : 'Default Frames';
-    const isActive = ev.idEvent === STATE.activeEventId;
-
-    const card = document.createElement('div');
-    card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60 ring-1 ring-brand-gold/30' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
-    card.innerHTML = `
-      <div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
-          ${isActive 
-            ? '<span class="text-[9px] bg-brand-gold text-black font-extrabold px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">🌟 Sedang Berlangsung (Aktif)</span>' 
-            : `<button class="btn-activate-event text-[9px] bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black font-bold px-2.5 py-0.5 rounded-full border border-brand-gold/50 transition flex items-center gap-1">⭐ Aktifkan Event Ini</button>`
-          }
-        </div>
-        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
-          ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
-        </span>
-      </div>
-      <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
-      <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent || '#SnapEvent'} • Kuota: ${ev.maxFotoPerGuest || 10} Foto / Tamu</p>
-      <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3 flex-wrap">
-        <span class="px-2 py-0.5 rounded bg-white/5 border border-white/10">${driveFolderText}</span>
-        <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
-      </div>
+    const totalEvtCount = (STATE.metrics && typeof STATE.metrics.totalEvents === 'number') 
+      ? STATE.metrics.totalEvents 
+      : allEvents.length;
       
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
-        <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
-          ✏️ Edit Acara
-        </button>
-        <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
-          ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
-        </button>
-        <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
-          📺 Proyektor
-        </button>
-        <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
-          📲 Link & QR
-        </button>
-      </div>
-    `;
+    const totalPhotoCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') 
+      ? STATE.metrics.totalPhotos 
+      : (STATE.photos ? STATE.photos.length : 0);
+      
+    const calcLikes = (STATE.photos || []).reduce((acc, p) => acc + (p.totalLikes || 0), 0);
+    const totalVoteCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') 
+      ? STATE.metrics.totalVotes 
+      : calcLikes;
 
-    const btnActivate = card.querySelector('.btn-activate-event');
-    if (btnActivate) {
-      btnActivate.addEventListener('click', () => {
-        activateEvent(ev.idEvent);
+    const metricEvtEl = document.getElementById('admMetricEvents');
+    const metricPhotoEl = document.getElementById('admMetricPhotos');
+    const metricVoteEl = document.getElementById('admMetricVotes');
+    if (metricEvtEl) metricEvtEl.textContent = totalEvtCount;
+    if (metricPhotoEl) metricPhotoEl.textContent = totalPhotoCount;
+    if (metricVoteEl) metricVoteEl.textContent = totalVoteCount;
+
+    const badge = document.getElementById('admSyncStatusBadge');
+    if (badge && !badge.textContent.includes('Mengunduh')) {
+      badge.textContent = `Tersinkron (${totalEvtCount} Event, ${totalPhotoCount} Foto)`;
+      badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
+    }
+
+    const listContainer = document.getElementById('adminEventListContainer');
+    if (listContainer) {
+      listContainer.innerHTML = '';
+
+      allEvents.forEach(ev => {
+        const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
+        const hasCustom = !!(ev.customFrameData || ev.customFrameUrl || (Array.isArray(STATE.customFrames) && STATE.customFrames.some(f => f.eventId === ev.idEvent || f.scope === 'global')));
+        const frameText = hasCustom ? '✨ Multi-Frame Aktif' : 'Default Frames';
+        const isActive = ev.idEvent === STATE.activeEventId;
+
+        const card = document.createElement('div');
+        card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60 ring-1 ring-brand-gold/30' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
+        card.innerHTML = `
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
+              ${isActive 
+                ? '<span class="text-[9px] bg-brand-gold text-black font-extrabold px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">🌟 Sedang Berlangsung (Aktif)</span>' 
+                : `<button class="btn-activate-event text-[9px] bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black font-bold px-2.5 py-0.5 rounded-full border border-brand-gold/50 transition flex items-center gap-1">⭐ Aktifkan Event Ini</button>`
+              }
+            </div>
+            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
+              ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
+            </span>
+          </div>
+          <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
+          <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent || '#SnapEvent'} • Kuota: ${ev.maxFotoPerGuest || 10} Foto / Tamu</p>
+          <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3 flex-wrap">
+            <span class="px-2 py-0.5 rounded bg-white/5 border border-white/10">${driveFolderText}</span>
+            <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
+          </div>
+          
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
+            <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+              ✏️ Edit Acara
+            </button>
+            <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
+              ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
+            </button>
+            <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+              📺 Proyektor
+            </button>
+            <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
+              📲 Link & QR
+            </button>
+          </div>
+        `;
+
+        const btnActivate = card.querySelector('.btn-activate-event');
+        if (btnActivate) {
+          btnActivate.addEventListener('click', () => {
+            activateEvent(ev.idEvent);
+          });
+        }
+
+        card.querySelector('.btn-edit-event').addEventListener('click', () => {
+          populateEditEventForm(ev);
+          switchAdminTab('create');
+        });
+
+        card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
+          ev.isRevealed = !ev.isRevealed;
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+          showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
+          renderAdminDashboard();
+
+          if (STATE.gasApiUrl) {
+            try {
+              await fetch(STATE.gasApiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                  action: 'adminToggleReveal',
+                  idEvent: ev.idEvent,
+                  isRevealed: ev.isRevealed
+                })
+              });
+            } catch (err) {
+              console.warn("GAS reveal sync warn:", err.message);
+            }
+          }
+        });
+
+        card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
+          STATE.activeEventId = ev.idEvent;
+          STATE.activeEvent = ev;
+          openSlideshow();
+        });
+
+        card.querySelector('.btn-share-qr').addEventListener('click', () => {
+          openShareQrModal(ev);
+        });
+
+        listContainer.appendChild(card);
       });
     }
 
-    card.querySelector('.btn-edit-event').addEventListener('click', () => {
-      populateEditEventForm(ev);
-      switchAdminTab('create');
-    });
+    // Config Form Values
+    if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
+    if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
+    if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
+    if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
+    if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
+    if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
+    if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
+    if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
 
-    card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
-      ev.isRevealed = !ev.isRevealed;
-      localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-      showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
-      renderAdminDashboard();
+    // Render User Accounts List & Frames List
+    renderUserAccountsList();
+    renderCustomFramesList();
 
-      if (STATE.gasApiUrl) {
-        try {
-          await fetch(STATE.gasApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: 'adminToggleReveal',
-              idEvent: ev.idEvent,
-              isRevealed: ev.isRevealed
-            })
-          });
-        } catch (err) {
-          console.warn("GAS reveal sync warn:", err.message);
-        }
-      }
-    });
-
-    card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
-      STATE.activeEventId = ev.idEvent;
-      STATE.activeEvent = ev;
-      openSlideshow();
-    });
-
-    card.querySelector('.btn-share-qr').addEventListener('click', () => {
-      openShareQrModal(ev);
-    });
-
-    listContainer.appendChild(card);
-  });
-
-  // Config Form Values
-  if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
-  if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
-  if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
-  if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
-  if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
-  if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
-  if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
-  if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
-
-  // Render User Accounts List & Frames List
-  renderUserAccountsList();
-  renderCustomFramesList();
-
-  // Render Leaderboard
-  renderLeaderboard();
+    // Render Leaderboard
+    renderLeaderboard();
+  } catch (err) {
+    console.error("Gagal merender Admin Dashboard:", err);
+  }
 }
 
 function renderUserAccountsList() {
@@ -3118,13 +3160,16 @@ function bindEvents() {
       if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
       if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
 
+      const targetEventId = document.getElementById('formEventId')?.value;
+      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+
       if (isSingle) {
-        const targetEventId = document.getElementById('formEventId')?.value;
-        const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
         const singleSelect = document.getElementById('formEventSingleFrameSelect');
         const lockedId = singleSelect?.value || currentEv?.singleLockedFrame || 'GOLD_DECO';
         const candidateFrames = getAllAdminCandidateFrames(currentEv);
         renderSingleLockCustomFrameList(candidateFrames, lockedId);
+      } else {
+        renderAdminFrameSettings(currentEv);
       }
     });
   });
