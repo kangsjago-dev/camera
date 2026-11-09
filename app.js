@@ -9,13 +9,15 @@
 const GLOBAL_CONFIG = {
   // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
   DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
-  DEFAULT_APP_TITLE: 'SnapEvent Studio',
-  DEFAULT_GAS_URL: '' // Dapat diisi URL default deployment jika diinginkan
+  DEFAULT_APP_TITLE: 'SnapEvent Enterprise Studio',
+  DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };
 
 const STATE = {
   // Configuration & Custom Branding (Cloud Persistent)
-  gasApiUrl: localStorage.getItem('snapevent_gas_url') || GLOBAL_CONFIG.DEFAULT_GAS_URL,
+  gasApiUrl: (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) 
+    ? localStorage.getItem('snapevent_gas_url').trim() 
+    : GLOBAL_CONFIG.DEFAULT_GAS_URL,
   appTitle: localStorage.getItem('snapevent_app_title') || GLOBAL_CONFIG.DEFAULT_APP_TITLE,
   appLogoUrl: localStorage.getItem('snapevent_app_logo_url') || '',
   appPhone: localStorage.getItem('snapevent_app_phone') || '0812-3456-7890',
@@ -346,11 +348,14 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initApp() {
-  // 0. Deteksi Parameter URL Cloud Bridge (?gas=... & ?event=...)
+  // 0. Deteksi Parameter URL Cloud Bridge (?gas=... & ?event=...) atau Gunakan Default Cloud Deployment
   const urlParams = new URLSearchParams(window.location.search);
   const gasFromUrl = urlParams.get('gas');
   if (gasFromUrl && gasFromUrl.trim().startsWith('http')) {
     STATE.gasApiUrl = decodeURIComponent(gasFromUrl.trim());
+    localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
+  } else if (!localStorage.getItem('snapevent_gas_url') || !localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) {
+    STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
   }
 
@@ -1329,23 +1334,26 @@ async function handleSavePhotoToDrive() {
         const res = await resp.json();
 
         if (res.status === 'success') {
+          if (res.idFoto) newPhoto.idFoto = res.idFoto;
+          if (res.viewUrl) newPhoto.gdriveViewUrl = res.viewUrl;
           if (res.photo?.idFoto) newPhoto.idFoto = res.photo.idFoto;
-          if (res.photo?.gdriveViewUrl || res.viewUrl) {
-            newPhoto.gdriveViewUrl = res.photo?.gdriveViewUrl || res.viewUrl;
-          }
-          showToast("Foto berhasil disimpan ke Galeri & Google Drive!", "success");
+          if (res.photo?.gdriveViewUrl) newPhoto.gdriveViewUrl = res.photo.gdriveViewUrl;
+          saveEventPhotos(STATE.activeEventId);
+          showToast("✅ Foto berhasil disimpan ke Galeri & Google Drive!", "success");
           renderGallery();
+          // Muat ulang galeri cloud agar foto langsung tersinkronkan ke seluruh perangkat
+          loadGallery();
         } else if (res.status === 'limit_reached') {
           showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
         } else {
-          showToast("Foto tersimpan di Galeri Acara (Sinkronisasi Drive tertunda)", "info");
+          showToast("⚠️ Foto tersimpan di HP: " + (res.message || "Sinkronisasi Drive tertunda"), "warning");
         }
       } catch (uploadErr) {
         console.warn("Upload Google Drive background error:", uploadErr);
-        showToast("Foto berhasil disimpan ke Galeri Acara!", "success");
+        showToast("⚠️ Foto tersimpan di HP, gagal upload ke Drive: " + uploadErr.message, "error");
       }
     } else {
-      showToast("Foto berhasil disimpan ke Galeri Acara!", "success");
+      showToast("Foto tersimpan di HP! (URL GAS belum terpasang untuk Drive)", "info");
     }
   } catch (err) {
     showToast("Terjadi kesalahan: " + err.message, "error");
