@@ -35,12 +35,13 @@
 
 /* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit) */
 .camera-page-container {
-  height: calc(100dvh - 4.5rem);
-  max-height: calc(100dvh - 4.5rem);
+  height: calc(100dvh - 7.5rem);
+  max-height: calc(100dvh - 7.5rem);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* Live Camera Filters (CSS Real-time Video Stream Preview) */

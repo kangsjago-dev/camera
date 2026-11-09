@@ -421,9 +421,13 @@ async function initApp() {
     return;
   }
 
-  // Pulihkan Halaman Terakhir saat Refresh (F5) atau Mulai Langsung di Kamera (Camera-First Entry Flow)
-  const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
-  showView(savedView);
+  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
+  if (!STATE.guestNama || !STATE.guestNama.trim()) {
+    showView('viewWelcome');
+  } else {
+    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
+    showView(savedView);
+  }
   updateRemainingQuotaDisplay();
 
   // Cek Persistensi Slideshow atau Parameter URL
@@ -824,6 +828,22 @@ function applyEventToUI() {
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
+  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
+  if (viewId === 'viewCamera') {
+    if (!STATE.guestNama || !STATE.guestNama.trim()) {
+      showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
+      showView('viewWelcome');
+      const inputEl = document.getElementById('inputGuestName');
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
+      }
+      const warnEl = document.getElementById('guestNameWarning');
+      if (warnEl) warnEl.classList.remove('hidden');
+      return;
+    }
+  }
+
   // Hide all views first
   ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
@@ -863,21 +883,26 @@ function showView(viewId) {
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
     applyActiveFrame(STATE.activeFrame);
-    // Disposable Camera Otomatis Terbuka saat layar kamera aktif
-    if (!STATE.mediaStream) {
+    // Fitur live camera HANYA aktif jika nama tamu sudah terisi
+    if (STATE.guestNama && !STATE.mediaStream) {
       startCameraStream();
     }
-  } else if (viewId === 'viewGallery') {
-    document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
-    document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
-    renderGallery();
-  } else if (viewId === 'viewWelcome') {
-    document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
-    document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
-    // Sinkronkan input nama dengan profil tamu yang sudah tersimpan
-    const inputGuest = document.getElementById('inputGuestName');
-    if (inputGuest && STATE.guestNama) {
-      inputGuest.value = STATE.guestNama;
+  } else {
+    // Matikan stream kamera saat di luar layar kamera untuk hemat baterai
+    stopCameraStream();
+
+    if (viewId === 'viewGallery') {
+      document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
+      document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
+      renderGallery();
+    } else if (viewId === 'viewWelcome') {
+      document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
+      document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
+      // Sinkronkan input nama dengan profil tamu yang sudah tersimpan
+      const inputGuest = document.getElementById('inputGuestName');
+      if (inputGuest && STATE.guestNama) {
+        inputGuest.value = STATE.guestNama;
+      }
     }
   }
 }
@@ -2318,6 +2343,18 @@ function bindEvents() {
 
   // Navigation Bar Buttons (Kamera, Galeri, dan Profil Tamu / Tulis Nama)
   document.getElementById('navBtnCamera').addEventListener('click', () => {
+    if (!STATE.guestNama || !STATE.guestNama.trim()) {
+      showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
+      showView('viewWelcome');
+      const inputEl = document.getElementById('inputGuestName');
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
+      }
+      const warnEl = document.getElementById('guestNameWarning');
+      if (warnEl) warnEl.classList.remove('hidden');
+      return;
+    }
     showView('viewCamera');
   });
   document.getElementById('navBtnGallery').addEventListener('click', () => {
