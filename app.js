@@ -153,7 +153,7 @@ function getQrImageUrl(text, size = 300) {
 }
 
 function getAvailableFrames() {
-  const frames = [
+  const allFrames = [
     { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin' },
     { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin' },
     { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin' },
@@ -163,7 +163,7 @@ function getAvailableFrames() {
   if (Array.isArray(STATE.customFrames)) {
     STATE.customFrames.forEach(cf => {
       if (cf.scope === 'global' || cf.eventId === STATE.activeEventId) {
-        frames.push({
+        allFrames.push({
           id: cf.id,
           name: `🖼️ ${cf.name || 'Custom'}`,
           type: 'custom',
@@ -175,7 +175,7 @@ function getAvailableFrames() {
   }
 
   if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && !STATE.customFrames.some(f => f.dataUrl === STATE.activeEvent.customFrameUrl)) {
-    frames.push({
+    allFrames.push({
       id: 'frame_legacy_event',
       name: '🖼️ Bingkai Khusus Acara',
       type: 'custom',
@@ -184,7 +184,88 @@ function getAvailableFrames() {
     });
   }
 
-  return frames;
+  // KEBIJAKAN BINGKAI ACARA (FRAME POLICY)
+  const ev = STATE.activeEvent;
+  if (ev) {
+    // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci
+    if (ev.frameLockMode === 'single') {
+      const lockedId = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
+      const single = allFrames.find(f => f.id === lockedId);
+      return [single || allFrames[0]];
+    }
+
+    // Mode Multi-Frame: Saring hanya bingkai yang diizinkan admin
+    if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
+      const filtered = allFrames.filter(f => {
+        return ev.activeFrames.includes(f.id) || (f.type === 'custom' && (f.eventId === ev.idEvent || f.scope === 'event'));
+      });
+      if (filtered.length > 0) return filtered;
+    }
+  }
+
+  return allFrames;
+}
+
+// --- GUEST IDENTITY & SESSION RESET HELPERS ---
+function updateGuestIdentityUI() {
+  const hasName = Boolean(STATE.guestNama && STATE.guestNama.trim());
+  const guestName = hasName ? STATE.guestNama.trim() : '';
+
+  // Box Info Identitas di Halaman Profil / Tulis Nama (viewWelcome)
+  const infoBox = document.getElementById('activeGuestInfoBox');
+  const nameText = document.getElementById('activeGuestNameText');
+  const inputGuest = document.getElementById('inputGuestName');
+  const btnStart = document.getElementById('btnStartCamera');
+
+  if (infoBox) {
+    if (hasName) {
+      infoBox.classList.remove('hidden');
+      if (nameText) nameText.textContent = guestName;
+    } else {
+      infoBox.classList.add('hidden');
+    }
+  }
+
+  if (inputGuest && hasName && (!inputGuest.value || !inputGuest.value.trim())) {
+    inputGuest.value = guestName;
+  }
+
+  if (btnStart) {
+    const textSpan = btnStart.querySelector('span');
+    if (textSpan) {
+      textSpan.textContent = hasName ? 'Buka Kamera Acara' : 'Simpan & Buka Kamera Acara';
+    }
+  }
+
+  // Badge Tamu di Layar Kamera (Header View Camera)
+  const camBadge = document.getElementById('camGuestNameDisplay');
+  if (camBadge) {
+    camBadge.textContent = hasName ? guestName : 'Tamu';
+  }
+}
+
+function resetGuestNameSession() {
+  STATE.guestNama = '';
+  localStorage.removeItem('snapevent_guest_nama');
+  sessionStorage.removeItem('snapevent_current_view');
+
+  const inputGuest = document.getElementById('inputGuestName');
+  if (inputGuest) {
+    inputGuest.value = '';
+    inputGuest.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500/30');
+  }
+  const warnEl = document.getElementById('guestNameWarning');
+  if (warnEl) warnEl.classList.add('hidden');
+
+  stopCameraStream();
+  updateGuestIdentityUI();
+  updateRemainingQuotaDisplay();
+  updateGuestIdentityUI();
+  showView('viewWelcome');
+  showToast('Sesi nama berhasil direset! Silakan masukkan nama baru.', 'info');
+  setTimeout(() => {
+    if (inputGuest) inputGuest.focus();
+  }, 250);
 }
 
 // Default Seed / Mock Data for Instant Browser & Offline Preview (5 Complete Events)
@@ -203,6 +284,8 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+      frameLockMode: "multi",
+      singleLockedFrame: "GOLD_DECO",
       activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
       gdriveFolderId: "",
       statusEvent: "AKTIF",
@@ -221,7 +304,9 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
+      frameLockMode: "single",
+      singleLockedFrame: "POLAROID",
+      activeFrames: ["POLAROID"],
       gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
       statusEvent: "INAKTIF",
       customFrameUrl: ""
@@ -239,6 +324,8 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "BW"],
+      frameLockMode: "multi",
+      singleLockedFrame: "MINIMAL",
       activeFrames: ["MINIMAL", "POLAROID"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -257,6 +344,8 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM"],
+      frameLockMode: "multi",
+      singleLockedFrame: "GOLD_DECO",
       activeFrames: ["GOLD_DECO", "POLAROID"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -275,6 +364,8 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+      frameLockMode: "multi",
+      singleLockedFrame: "GOLD_DECO",
       activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL", "NONE"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -294,6 +385,8 @@ const MOCK_DATA = {
     likeEnabled: true,
     publicVisible: true,
     activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
+    frameLockMode: "multi",
+    singleLockedFrame: "GOLD_DECO",
     activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
     gdriveFolderId: "",
     statusEvent: "AKTIF",
@@ -429,6 +522,7 @@ async function initApp() {
     showView(savedView);
   }
   updateRemainingQuotaDisplay();
+  updateGuestIdentityUI();
 
   // Cek Persistensi Slideshow atau Parameter URL
   if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
@@ -824,6 +918,16 @@ function applyEventToUI() {
     btn.textContent = `👑 ${cat.namaKategori}`;
     catContainer.appendChild(btn);
   });
+
+  // Set bingkai aktif sesuai kebijakan frame acara
+  if (ev.frameLockMode === 'single') {
+    const lockedFrame = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
+    applyActiveFrame(lockedFrame);
+  } else if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0 && !ev.activeFrames.includes(STATE.activeFrame)) {
+    applyActiveFrame(ev.activeFrames[0]);
+  }
+
+  updateGuestIdentityUI();
 }
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
@@ -905,6 +1009,8 @@ function showView(viewId) {
       }
     }
   }
+
+  updateGuestIdentityUI();
 }
 
 function applyActiveFrame(frameId) {
@@ -1048,7 +1154,10 @@ function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
   // 3. Render Selected Custom Frame & Hashtag
-  const frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
+  }
   STATE.activeFrame = frameToUse;
   renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
@@ -1069,9 +1178,30 @@ function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
 
 function renderReviewFramePills(activeFrame) {
   const container = document.getElementById('reviewFrameListContainer');
-  if (!container) return;
+  const selectorWrap = document.getElementById('reviewFrameSelectorContainer');
+  const singleNotice = document.getElementById('reviewSingleFrameNotice');
+  const singleBadge = document.getElementById('reviewSingleFrameBadge');
 
   const frames = getAvailableFrames();
+  const isSingleLocked = Boolean(STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single');
+
+  if (isSingleLocked) {
+    if (selectorWrap) selectorWrap.classList.add('hidden');
+    if (singleNotice) {
+      singleNotice.classList.remove('hidden');
+      if (singleBadge) {
+        const lockedObj = frames[0];
+        singleBadge.textContent = lockedObj ? lockedObj.name : 'Bingkai Resmi Acara';
+      }
+    }
+    return;
+  } else {
+    if (selectorWrap) selectorWrap.classList.remove('hidden');
+    if (singleNotice) singleNotice.classList.add('hidden');
+  }
+
+  if (!container) return;
+
   container.innerHTML = frames.map(f => `
     <button data-frame="${f.id}" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">
       ${f.name}
@@ -1334,6 +1464,7 @@ async function handleSavePhotoToDrive() {
     renderGallery();
     showView('viewGallery');
     updateRemainingQuotaDisplay();
+  updateGuestIdentityUI();
 
     // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
     if (STATE.gasApiUrl) {
@@ -1882,6 +2013,17 @@ function resetCreateEventForm() {
   document.getElementById('formCheckLike').checked = true;
   document.getElementById('formCheckVisibility').checked = true;
 
+  // Reset Frame Policy Controls
+  const radMulti = document.querySelector('input[name="frameLockModeRadio"][value="multi"]');
+  if (radMulti) radMulti.checked = true;
+  document.getElementById('containerSingleFrameLock')?.classList.add('hidden');
+  document.getElementById('containerMultiFrameSelection')?.classList.remove('hidden');
+  const selSingle = document.getElementById('formEventSingleFrameSelect');
+  if (selSingle) selSingle.value = 'GOLD_DECO';
+  document.querySelectorAll('.adm-frame-check').forEach(chk => {
+    chk.checked = (chk.value !== 'NONE');
+  });
+
   renderCategoryInputRows([
     { namaKategori: "Busana Terbaik" },
     { namaKategori: "Momen Romantis" },
@@ -2113,6 +2255,28 @@ function populateEditEventForm(ev) {
   document.getElementById('formCheckLike').checked = ev.likeEnabled !== false;
   document.getElementById('formCheckVisibility').checked = ev.publicVisible !== false;
 
+  // Populate Frame Policy Controls
+  const isSingle = (ev.frameLockMode === 'single');
+  const radSingle = document.querySelector('input[name="frameLockModeRadio"][value="single"]');
+  const radMulti = document.querySelector('input[name="frameLockModeRadio"][value="multi"]');
+  if (isSingle && radSingle) radSingle.checked = true;
+  else if (radMulti) radMulti.checked = true;
+
+  const containerSingle = document.getElementById('containerSingleFrameLock');
+  const containerMulti = document.getElementById('containerMultiFrameSelection');
+  if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
+  if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
+
+  const singleSelect = document.getElementById('formEventSingleFrameSelect');
+  if (singleSelect) {
+    singleSelect.value = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
+  }
+
+  const activeFramesList = Array.isArray(ev.activeFrames) ? ev.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+  document.querySelectorAll('.adm-frame-check').forEach(chk => {
+    chk.checked = activeFramesList.includes(chk.value);
+  });
+
   renderCategoryInputRows(STATE.activeCategories);
 }
 
@@ -2182,6 +2346,22 @@ function saveAdminEventForm() {
 
   const customFrameData = STATE.tempCustomFrameData || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
 
+  let frameLockMode = 'multi';
+  document.getElementsByName('frameLockModeRadio').forEach(r => {
+    if (r.checked) frameLockMode = r.value;
+  });
+
+  const singleLockedFrame = document.getElementById('formEventSingleFrameSelect')?.value || 'GOLD_DECO';
+  let activeFrames = [];
+  if (frameLockMode === 'single') {
+    activeFrames = [singleLockedFrame];
+  } else {
+    document.querySelectorAll('.adm-frame-check').forEach(chk => {
+      if (chk.checked) activeFrames.push(chk.value);
+    });
+    if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+  }
+
   const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
 
@@ -2198,6 +2378,9 @@ function saveAdminEventForm() {
     likeEnabled: likeEnabled,
     publicVisible: publicVisible,
     gdriveFolderId: driveFolder,
+    frameLockMode: frameLockMode,
+    singleLockedFrame: singleLockedFrame,
+    activeFrames: activeFrames,
     customFrameData: customFrameData,
     customFrameUrl: customFrameData || '',
     categories: cats
@@ -2257,6 +2440,9 @@ function saveAdminEventForm() {
         likeEnabled: likeEnabled,
         publicVisible: publicVisible,
         gdriveFolderId: driveFolder,
+        frameLockMode: frameLockMode,
+        singleLockedFrame: singleLockedFrame,
+        activeFrames: activeFrames,
         customFrameUrl: customFrameData || '',
         categories: cats
       })
@@ -2330,9 +2516,38 @@ function bindEvents() {
     if (warnEl) warnEl.classList.add('hidden');
     STATE.guestNama = name;
     localStorage.setItem('snapevent_guest_nama', name);
+    updateGuestIdentityUI();
     showView('viewCamera');
     startCameraStream();
     showToast(`Halo ${name}, selamat memotret!`, "success");
+  });
+
+  // Tombol Reset / Ganti Nama Tamu di viewWelcome
+  document.getElementById('btnResetGuestName')?.addEventListener('click', () => {
+    if (confirm("Reset identitas nama Anda? Anda dapat mengetik nama baru setelah ini.")) {
+      resetGuestNameSession();
+    }
+  });
+
+  // Tombol Badge Nama di Status Bar Kamera untuk Ganti Nama
+  document.getElementById('btnCamChangeGuest')?.addEventListener('click', () => {
+    showView('viewWelcome');
+    showToast("Silakan ganti nama Anda atau klik tombol Reset Nama Tamu.", "info");
+    const inputGuest = document.getElementById('inputGuestName');
+    if (inputGuest) {
+      setTimeout(() => inputGuest.focus(), 250);
+    }
+  });
+
+  // Switcher Radio Mode Kebijakan Bingkai (Multi-Frame vs Single Lock) di Panel Admin
+  document.querySelectorAll('input[name="frameLockModeRadio"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const isSingle = (e.target.value === 'single');
+      const containerSingle = document.getElementById('containerSingleFrameLock');
+      const containerMulti = document.getElementById('containerMultiFrameSelection');
+      if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
+      if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
+    });
   });
 
   // Hapus tanda error ketika tamu mulai mengetik namanya
