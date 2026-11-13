@@ -33,7 +33,6 @@ const STATE = {
   tempCustomFrameData: null,
   customFrames: JSON.parse(localStorage.getItem('snapevent_custom_frames') || '[]'),
   events: JSON.parse(localStorage.getItem('snapevent_events') || '[]'),
-  metrics: JSON.parse(localStorage.getItem('snapevent_metrics') || '{"totalEvents":5,"totalPhotos":13,"totalVotes":8}'),
 
   // Guest Profile
   guestId: getOrCreateGuestId(),
@@ -64,50 +63,21 @@ const STATE = {
 };
 
 // --- DATA ISOLATION HELPERS PER EVENT ---
-function getResolvedEventId(idOrSlug) {
-  const target = String(idOrSlug || STATE.activeEventId || '').trim();
-  if (!target) return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
-  if (/^EVT-\d+/i.test(target)) return target;
-
-  const lower = target.toLowerCase();
-  // Alias langsung untuk event default Sarah & Kevin agar kebal terhadap variasi slug/parameter
-  if (
-    lower === 'the-wedding-of-sarah-and-kevin' ||
-    lower === 'the-wedding-of-sarah-&-kevin' ||
-    lower === 'sarah-kevin' ||
-    lower === 'sarahkevineverafter' ||
-    (lower.includes('sarah') && lower.includes('kevin'))
-  ) {
-    return 'EVT-202611-001';
-  }
-
-  const allKnown = [...(STATE.events || []), ...(MOCK_DATA.events || [])];
-  const ev = allKnown.find(e => 
-    e.idEvent === target || 
-    (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
-    (e.namaEvent && e.namaEvent.toLowerCase() === lower)
-  );
-  if (ev && ev.idEvent) return ev.idEvent;
-  if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
-  return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
-}
-
 function getEventPhotosKey(eventId) {
-  return 'snapevent_photos_' + getResolvedEventId(eventId || STATE.activeEventId);
+  return 'snapevent_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
 }
 
 function getEventVotedPhotosKey(eventId) {
-  return 'snapevent_voted_photos_' + getResolvedEventId(eventId || STATE.activeEventId);
+  return 'snapevent_voted_photos_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
 }
 
 function getEventVotedCategoriesKey(eventId) {
-  return 'snapevent_voted_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
+  return 'snapevent_voted_categories_' + (eventId || STATE.activeEventId || 'EVT-202611-001');
 }
 
 function loadEventPhotos(eventId) {
   const id = eventId || STATE.activeEventId || 'EVT-202611-001';
-  const resolvedId = getResolvedEventId(id);
-  const key = getEventPhotosKey(resolvedId);
+  const key = getEventPhotosKey(id);
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
@@ -115,12 +85,11 @@ function loadEventPhotos(eventId) {
     } else {
       // Migrasi atau fallback ke mock data sample jika event default demo
       const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
-      if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
+      if (id === MOCK_DATA.event.idEvent || id === 'EVT-202611-001') {
         if (legacy.length > 0) {
           STATE.photos = legacy;
         } else {
-          STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
+          STATE.photos = [...MOCK_DATA.samplePhotos];
         }
         localStorage.setItem(key, JSON.stringify(STATE.photos));
       } else {
@@ -128,14 +97,14 @@ function loadEventPhotos(eventId) {
       }
     }
   } catch (e) {
-    STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
+    STATE.photos = [];
   }
 }
 
 function saveEventPhotos(eventId) {
-  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
+  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
   try {
-    localStorage.setItem(getEventPhotosKey(id), JSON.stringify((STATE.photos || []).slice(0, 100)));
+    localStorage.setItem(getEventPhotosKey(id), JSON.stringify(STATE.photos.slice(0, 100)));
   } catch (e) {
     console.warn("Penyimpanan foto penuh / error:", e);
   }
@@ -184,7 +153,7 @@ function getQrImageUrl(text, size = 300) {
 }
 
 function getAvailableFrames() {
-  const allFrames = [
+  const frames = [
     { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin' },
     { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin' },
     { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin' },
@@ -194,7 +163,7 @@ function getAvailableFrames() {
   if (Array.isArray(STATE.customFrames)) {
     STATE.customFrames.forEach(cf => {
       if (cf.scope === 'global' || cf.eventId === STATE.activeEventId) {
-        allFrames.push({
+        frames.push({
           id: cf.id,
           name: `🖼️ ${cf.name || 'Custom'}`,
           type: 'custom',
@@ -205,109 +174,17 @@ function getAvailableFrames() {
     });
   }
 
-  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
-  if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
-    allFrames.push({
-      id: 'CUSTOM_EVENT',
-      name: STATE.activeEvent?.customFrameName ? `🖼️ ${STATE.activeEvent.customFrameName}` : '🖼️ Bingkai Kustom Acara',
+  if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && !STATE.customFrames.some(f => f.dataUrl === STATE.activeEvent.customFrameUrl)) {
+    frames.push({
+      id: 'frame_legacy_event',
+      name: '🖼️ Bingkai Khusus Acara',
       type: 'custom',
       scope: 'event',
-      dataUrl: activeCustomData
+      dataUrl: STATE.activeEvent.customFrameUrl
     });
   }
 
-  // KEBIJAKAN BINGKAI ACARA (FRAME POLICY)
-  const ev = STATE.activeEvent;
-  if (ev) {
-    // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (termasuk custom frame)
-    if (ev.frameLockMode === 'single') {
-      const lockedId = ev.singleLockedFrame || (Array.isArray(ev.activeFrames) && ev.activeFrames[0]) || 'GOLD_DECO';
-      const single = allFrames.find(f => 
-        f.id === lockedId || 
-        ((lockedId === 'CUSTOM_EVENT' || lockedId === 'CUSTOM' || String(lockedId).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (f.dataUrl && f.dataUrl === activeCustomData)))
-      );
-      return [single || allFrames[0]];
-    }
-
-    // Mode Multi-Frame: Saring dan urutkan PERSIS sesuai urutan yang disusun admin (Drag & Drop)
-    if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
-      const ordered = [];
-      ev.activeFrames.forEach(frameId => {
-        const match = allFrames.find(f => 
-          f.id === frameId || 
-          ((frameId === 'CUSTOM_EVENT' || frameId === 'CUSTOM' || String(frameId).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (f.dataUrl && f.dataUrl === activeCustomData)))
-        );
-        if (match && !ordered.some(o => o.id === match.id)) {
-          ordered.push(match);
-        }
-      });
-      if (ordered.length > 0) return ordered;
-    }
-  }
-
-  return allFrames;
-}
-
-// --- GUEST IDENTITY & SESSION RESET HELPERS ---
-function updateGuestIdentityUI() {
-  const hasName = Boolean(STATE.guestNama && STATE.guestNama.trim());
-  const guestName = hasName ? STATE.guestNama.trim() : '';
-
-  // Box Info Identitas di Halaman Profil / Tulis Nama (viewWelcome)
-  const infoBox = document.getElementById('activeGuestInfoBox');
-  const nameText = document.getElementById('activeGuestNameText');
-  const inputGuest = document.getElementById('inputGuestName');
-  const btnStart = document.getElementById('btnStartCamera');
-
-  if (infoBox) {
-    if (hasName) {
-      infoBox.classList.remove('hidden');
-      if (nameText) nameText.textContent = guestName;
-    } else {
-      infoBox.classList.add('hidden');
-    }
-  }
-
-  if (inputGuest && hasName && (!inputGuest.value || !inputGuest.value.trim())) {
-    inputGuest.value = guestName;
-  }
-
-  if (btnStart) {
-    const textSpan = btnStart.querySelector('span');
-    if (textSpan) {
-      textSpan.textContent = hasName ? 'Buka Kamera Acara' : 'Simpan & Buka Kamera Acara';
-    }
-  }
-
-  // Badge Tamu di Layar Kamera (Header View Camera)
-  const camBadge = document.getElementById('camGuestNameDisplay');
-  if (camBadge) {
-    camBadge.textContent = hasName ? guestName : 'Tamu';
-  }
-}
-
-function resetGuestNameSession() {
-  STATE.guestNama = '';
-  localStorage.removeItem('snapevent_guest_nama');
-  sessionStorage.removeItem('snapevent_current_view');
-
-  const inputGuest = document.getElementById('inputGuestName');
-  if (inputGuest) {
-    inputGuest.value = '';
-    inputGuest.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500/30');
-  }
-  const warnEl = document.getElementById('guestNameWarning');
-  if (warnEl) warnEl.classList.add('hidden');
-
-  stopCameraStream();
-  updateGuestIdentityUI();
-  updateRemainingQuotaDisplay();
-  updateGuestIdentityUI();
-  showView('viewWelcome');
-  showToast('Sesi nama berhasil direset! Silakan masukkan nama baru.', 'info');
-  setTimeout(() => {
-    if (inputGuest) inputGuest.focus();
-  }, 250);
+  return frames;
 }
 
 // Default Seed / Mock Data for Instant Browser & Offline Preview (5 Complete Events)
@@ -315,8 +192,8 @@ const MOCK_DATA = {
   events: [
     {
       idEvent: "EVT-202611-001",
-      namaEvent: "The Wedding of Sarah and Kevin",
-      slugEvent: "the-wedding-of-sarah-and-kevin",
+      namaEvent: "The Wedding of Sarah & Kevin",
+      slugEvent: "sarah-kevin",
       tanggalEvent: "2026-11-20",
       hashtagEvent: "#SarahKevinEverAfter",
       maxFotoPerGuest: 10,
@@ -326,9 +203,7 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO"],
+      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
       gdriveFolderId: "",
       statusEvent: "AKTIF",
       customFrameUrl: ""
@@ -346,9 +221,7 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "POLAROID",
-      activeFrames: ["POLAROID"],
+      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
       gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
       statusEvent: "INAKTIF",
       customFrameUrl: ""
@@ -366,8 +239,6 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "MINIMAL",
       activeFrames: ["MINIMAL", "POLAROID"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -386,8 +257,6 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
       activeFrames: ["GOLD_DECO", "POLAROID"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -406,8 +275,6 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
       activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL", "NONE"],
       gdriveFolderId: "",
       statusEvent: "INAKTIF",
@@ -427,8 +294,6 @@ const MOCK_DATA = {
     likeEnabled: true,
     publicVisible: true,
     activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-    frameLockMode: "multi",
-    singleLockedFrame: "GOLD_DECO",
     activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
     gdriveFolderId: "",
     statusEvent: "AKTIF",
@@ -475,7 +340,6 @@ const MOCK_DATA = {
     }
   ]
 };
-MOCK_DATA.event = MOCK_DATA.events[0];
 
 // --- 2. INITIALIZATION ON DOM READY ---
 window.addEventListener('DOMContentLoaded', () => {
@@ -509,38 +373,33 @@ async function initApp() {
     localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
   }
 
-  // Tentukan event aktif saat ini (Dukungan URL QR Code & Event Switching)
-  const requestedEvent = urlParams.get('event');
-  if (requestedEvent) {
-    const resolvedReqId = getResolvedEventId(requestedEvent);
-    STATE.activeEventId = resolvedReqId;
-    const matched = (STATE.events || []).find(e => e.idEvent === resolvedReqId);
-    if (matched) {
-      STATE.activeEvent = matched;
-    }
+  // Tentukan event aktif saat ini
+  const savedActiveId = localStorage.getItem('snapevent_active_event_id');
+  if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
+    STATE.activeEventId = savedActiveId;
+  } else {
+    STATE.activeEventId = STATE.events[0].idEvent;
     localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
   }
 
-  if (!STATE.activeEvent) {
-    const savedActiveId = localStorage.getItem('snapevent_active_event_id');
-    if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
-      STATE.activeEventId = savedActiveId;
-    } else {
-      STATE.activeEventId = (STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-001';
-      localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
-    }
-    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
-  }
+  STATE.activeEvent = STATE.events.find(e => e.idEvent === STATE.activeEventId) || STATE.events[0];
 
-  // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan status event tersebut INAKTIF
-  if (requestedEvent && STATE.activeEvent) {
-    if (STATE.activeEvent.statusEvent && STATE.activeEvent.statusEvent !== 'AKTIF') {
+  // Periksa parameter URL (e.g. ?event=sarah-kevin&view=slideshow)
+  const requestedEvent = urlParams.get('event');
+
+  // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan event tersebut TIDAK aktif
+  if (requestedEvent) {
+    const isMatchActive = (requestedEvent === STATE.activeEvent.idEvent) || 
+                          (STATE.activeEvent.slugEvent && requestedEvent.toLowerCase() === STATE.activeEvent.slugEvent.toLowerCase());
+    
+    if (!isMatchActive) {
+      // Jika sesi admin sedang aktif, admin tetap boleh masuk
       if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
         const closedTitle = document.getElementById('closedEventTitle');
         if (closedTitle) closedTitle.textContent = "Acara Ini Sedang Tidak Aktif";
         const closedDesc = document.getElementById('closedEventDesc');
         if (closedDesc) {
-          closedDesc.textContent = `Tautan acara "${STATE.activeEvent.namaEvent || requestedEvent}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh publik.`;
+          closedDesc.textContent = `Tautan acara "${requestedEvent}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh publik.`;
         }
         showView('viewEventClosed');
         return;
@@ -548,74 +407,28 @@ async function initApp() {
     }
   }
 
-  // 1. Muat data foto & voting terisolasi untuk event aktif (Instan dari localStorage < 2ms)
+  // Muat data foto & voting terisolasi untuk event aktif
   loadEventPhotos(STATE.activeEventId);
   loadEventVotes(STATE.activeEventId);
 
-  // Pastikan koleksi bingkai kustom terisi template preset jika belum ada
-  if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
-    STATE.customFrames = getDefaultPresetCustomFrames();
-    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
-  }
+  // Muat data awal event dari API Google Apps Script atau Mock Data
+  await loadEventData();
 
-  // 2. INSTANT FIRST-PAINT: Terapkan konfigurasi & identitas acara ke UI seketika (< 10ms)
-  applyGlobalConfigToUI();
-  applyEventToUI();
-
-  // 3. SEGERA TAMPILKAN HALAMAN AKTIF TANPA MENUNGGU JARINGAN INTERNET (< 20ms)
+  // Cek Persistensi Sesi Admin (Anti-Keluar saat refresh F5!)
   if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
     showView('viewAdmin');
-    renderAdminDashboard(); // Kartu 5 Event, 13 Foto, 8 Suara langsung tampil tanpa skeleton delay!
-  } else if (!STATE.guestNama || !STATE.guestNama.trim()) {
-    showView('viewWelcome');
-  } else {
-    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
-    showView(savedView);
-    if (savedView === 'viewGallery') {
-      renderGallery(); // Langsung render foto cache lokal seketika!
-    }
+    renderAdminDashboard();
+    return;
   }
 
+  // Pulihkan Halaman Terakhir saat Refresh (F5) atau Mulai Langsung di Kamera (Camera-First Entry Flow)
+  const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
+  showView(savedView);
   updateRemainingQuotaDisplay();
-  updateGuestIdentityUI();
 
   // Cek Persistensi Slideshow atau Parameter URL
   if (urlParams.get('view') === 'slideshow' || sessionStorage.getItem('snapevent_slideshow_active') === 'true') {
     openSlideshow();
-  }
-
-  // 4. ASYNCHRONOUS NON-BLOCKING SINKRONISASI (Stale-While-Revalidate Engine)
-  revalidateFromBackend();
-}
-
-let isRevalidating = false;
-
-async function revalidateFromBackend() {
-  if (!STATE.gasApiUrl || isRevalidating) return;
-  isRevalidating = true;
-
-  try {
-    await Promise.allSettled([
-      loadEventData(),
-      loadGallery()
-    ]);
-
-    // Update UI secara halus (silent reactive update) setelah data GAS tiba
-    applyGlobalConfigToUI();
-    applyEventToUI();
-    if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-      renderAdminDashboard();
-    }
-    const currentView = sessionStorage.getItem('snapevent_current_view');
-    const isGalleryActive = currentView === 'viewGallery' || (!document.getElementById('viewGallery')?.classList.contains('hidden'));
-    if (isGalleryActive) {
-      renderGallery();
-    }
-    updateRemainingQuotaDisplay();
-  } catch (err) {
-    console.warn("Background revalidation note:", err);
-  } finally {
-    isRevalidating = false;
   }
 }
 
@@ -632,56 +445,18 @@ function getOrCreateGuestId() {
 async function loadEventData() {
   if (STATE.gasApiUrl) {
     try {
-      const targetId = getResolvedEventId(STATE.activeEventId);
-      const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${targetId}&guestId=${STATE.guestId}`);
+      const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
       const res = await resp.json();
       if (res.status === 'success') {
-        const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
-        const inferredMode = res.event.frameLockMode 
-          || (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length === 1 && res.event.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localActive?.frameLockMode || 'multi'));
-        const inferredLocked = res.event.singleLockedFrame 
-          || (inferredMode === 'single' && Array.isArray(res.event.activeFrames) ? res.event.activeFrames[0] : (localActive?.singleLockedFrame || 'GOLD_DECO'));
-
-        STATE.activeEvent = {
-          ...localActive,
-          ...res.event,
-          frameLockMode: inferredMode,
-          singleLockedFrame: inferredLocked,
-          activeFrames: (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length > 0)
-            ? res.event.activeFrames
-            : (localActive?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
-          customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
-          customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
-        };
+        STATE.activeEvent = res.event;
         STATE.activeCategories = res.categories || [];
 
-        if (res.metrics) {
-          STATE.metrics = res.metrics;
-          localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
-        }
-
-        // Sinkronkan seluruh event secara defensif (Pertahankan frame settings lokal jika server belum update)
+        // Sinkronkan seluruh event jika backend mengembalikan allEvents
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
-          STATE.events = res.allEvents.map(serverEv => {
-            const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
-            const evInferredMode = serverEv.frameLockMode 
-              || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
-            const evInferredLocked = serverEv.singleLockedFrame 
-              || (evInferredMode === 'single' && Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames[0] : (localEv?.singleLockedFrame || 'GOLD_DECO'));
-
-            return {
-              ...localEv,
-              ...serverEv,
-              frameLockMode: evInferredMode,
-              singleLockedFrame: evInferredLocked,
-              activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
-                ? serverEv.activeFrames
-                : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
-              customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
-              customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
-            };
-          });
+          STATE.events = res.allEvents;
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+        } else {
+          syncEventsFromBackend(false);
         }
 
         if (res.globalConfig) {
@@ -729,10 +504,8 @@ async function loadEventData() {
 
         applyGlobalConfigToUI();
         applyEventToUI();
-        if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-          renderAdminDashboard();
-        }
-        return res;
+        await loadGallery();
+        return;
       } else if (res.status === 'inactive') {
         if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
           showView('viewEventClosed');
@@ -849,38 +622,8 @@ async function syncEventsFromBackend(showToastNotice = false) {
     }
 
     if (res && res.status === 'success' && Array.isArray(res.events) && res.events.length > 0) {
-      STATE.events = res.events.map(serverEv => {
-        const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
-        const inferredMode = serverEv.frameLockMode 
-          || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
-        const inferredLocked = serverEv.singleLockedFrame 
-          || (inferredMode === 'single' && Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames[0] : (localEv?.singleLockedFrame || 'GOLD_DECO'));
-
-        return {
-          ...localEv,
-          ...serverEv,
-          frameLockMode: inferredMode,
-          singleLockedFrame: inferredLocked,
-          activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
-            ? serverEv.activeFrames
-            : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
-          customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
-          customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
-        };
-      });
+      STATE.events = res.events;
       localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-
-      // Simpan metrik riil Google Sheets (Total Event, Foto, dan Suara)
-      if (res.metrics) {
-        STATE.metrics = res.metrics;
-      } else {
-        STATE.metrics = {
-          totalEvents: res.totalEvents || res.events.length,
-          totalPhotos: res.totalPhotos || (STATE.metrics ? STATE.metrics.totalPhotos : 0),
-          totalVotes: res.totalVotes || (STATE.metrics ? STATE.metrics.totalVotes : 0)
-        };
-      }
-      localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
 
       // Sinkronkan event aktif
       const matchedActive = STATE.events.find(e => e.idEvent === STATE.activeEventId);
@@ -933,22 +676,15 @@ async function syncEventsFromBackend(showToastNotice = false) {
         applyGlobalConfigToUI();
       }
 
-      // SEGERA UPDATE TAMPILAN ADMIN SECARA INSTAN TANPA MENUNGGU FETCH GALERI SELESAI
       applyEventToUI();
       renderAdminDashboard();
 
-      // Muat foto galeri aktif dari Google Sheets di background
-      loadGallery().catch(err => console.warn("Background gallery sync note:", err));
-
-      const pCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') ? STATE.metrics.totalPhotos : (STATE.photos ? STATE.photos.length : 0);
-      const vCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') ? STATE.metrics.totalVotes : 0;
-
       if (badge) {
-        badge.textContent = `Tersinkron (${STATE.events.length} Event, ${pCount} Foto, ${vCount} Suara)`;
+        badge.textContent = "Tersinkron (" + STATE.events.length + " Event)";
         badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
       }
       if (showToastNotice) {
-        showToast(`Sinkronisasi sukses! ${STATE.events.length} event & ${pCount} foto tersinkron dari Google Sheets.`, "success");
+        showToast(`Sinkronisasi sukses! ${STATE.events.length} event ditemukan dari Google Sheets.`, "success");
       }
     } else {
       if (badge) {
@@ -972,99 +708,20 @@ async function syncEventsFromBackend(showToastNotice = false) {
 }
 
 async function loadGallery() {
-  if (!STATE.gasApiUrl) {
-    renderGallery();
-    return;
-  }
-  const grid = document.getElementById('galleryPhotoGrid');
-  const countBadge = document.getElementById('galleryPhotoCountBadge');
-  const empty = document.getElementById('galleryEmptyNotice');
-  const targetId = getResolvedEventId(STATE.activeEventId);
-
-  // Indikator visual loading non-intrusif jika galeri masih kosong
-  if ((!STATE.photos || STATE.photos.length === 0) && grid && !grid.innerHTML.trim()) {
-    grid.innerHTML = `
-      <div class="col-span-2 sm:col-span-3 md:col-span-4 py-12 text-center">
-        <div class="w-8 h-8 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-        <p class="text-xs text-zinc-400 font-medium">Menyinkronkan foto rol acara...</p>
-      </div>
-    `;
-  }
-
+  if (!STATE.gasApiUrl) return;
   try {
-    const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${targetId}&guestId=${STATE.guestId}`);
+    const resp = await fetch(`${STATE.gasApiUrl}?action=getGallery&eventId=${STATE.activeEventId}&guestId=${STATE.guestId}`);
     const res = await resp.json();
-    if (res && res.status === 'success') {
-      document.getElementById('galleryLockedNotice')?.classList.add('hidden');
-      const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
-      const serverIds = new Set(serverPhotos.map(p => p.idFoto));
-
-      // Pertahankan foto lokal pending yang belum sempat terunggah ke Drive (Zero Data Loss)
-      const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !String(p.idFoto).startsWith('FTO-DEMO-')
-      );
-
-      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
-      let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
-
-      // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
-      if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
-        finalPhotos = [...MOCK_DATA.samplePhotos];
-      }
-
-      STATE.photos = finalPhotos;
+    if (res.status === 'success') {
+      STATE.photos = res.photos || [];
       STATE.votedPhotoIds = res.votedPhotoIds || [];
-      saveEventPhotos(targetId);
       renderGallery();
-
-      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
-      if (pendingLocalPhotos.length > 0) {
-        autoUploadPendingPhotos(pendingLocalPhotos);
-      }
-    } else if (res && res.status === 'locked') {
-      document.getElementById('galleryLockedNotice')?.classList.remove('hidden');
-      if (grid) grid.innerHTML = '';
-      if (empty) empty.classList.add('hidden');
-      if (countBadge) countBadge.textContent = '0 Foto (Terkunci)';
-    } else {
-      renderGallery();
+    } else if (res.status === 'locked') {
+      document.getElementById('galleryLockedNotice').classList.remove('hidden');
+      document.getElementById('galleryPhotoGrid').innerHTML = '';
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
-    renderGallery();
-  }
-}
-
-async function autoUploadPendingPhotos(pendingList) {
-  if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
-  for (const photo of pendingList) {
-    if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
-    try {
-      const payload = {
-        action: "uploadPhoto",
-        eventId: getResolvedEventId(photo.eventId || STATE.activeEventId),
-        guestId: photo.guestId || STATE.guestId,
-        guestNama: photo.guestNama || "Tamu",
-        caption: photo.caption || "Momen seru!",
-        cameraStyle: photo.cameraStyle || "RAW",
-        frameStyle: photo.frameStyle || "POLAROID",
-        imageBase64: photo.gdriveViewUrl
-      };
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      const res = await resp.json();
-      if (res && res.status === 'success') {
-        if (res.idFoto) photo.idFoto = res.idFoto;
-        if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
-        saveEventPhotos(STATE.activeEventId);
-        renderGallery();
-      }
-    } catch (err) {
-      console.warn("Auto-sync background upload error untuk foto:", photo.idFoto, err.message);
-    }
   }
 }
 
@@ -1135,14 +792,19 @@ function applyEventToUI() {
     STATE.customFrameImgObj = null;
   }
 
-  // Render Pilihan Frame di Viewfinder (Dinamis sesuai izin Admin)
+  // Render Pilihan Frame di Viewfinder
   const frameContainer = document.getElementById('frameListContainer');
-  const availFrames = getAvailableFrames();
-  if (frameContainer) {
-    frameContainer.innerHTML = availFrames.map(f => `
-      <button data-frame="${f.id}" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">${f.name}</button>
-    `).join('');
+  let customFrameHtml = '';
+  if (frameData) {
+    customFrameHtml = `<button data-frame="CUSTOM" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'CUSTOM' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Frame Kustom Acara</button>`;
   }
+  frameContainer.innerHTML = `
+    <button data-frame="GOLD_DECO" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'GOLD_DECO' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">✨ Gold Deco</button>
+    ${customFrameHtml}
+    <button data-frame="POLAROID" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'POLAROID' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">📷 Polaroid</button>
+    <button data-frame="MINIMAL" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'MINIMAL' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">▪️ Minimalist</button>
+    <button data-frame="NONE" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === 'NONE' ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">Tanpa Bingkai</button>
+  `;
 
   // Render Kategori Voting di Galeri
   const catContainer = document.getElementById('galleryCategoryTabs');
@@ -1158,42 +820,10 @@ function applyEventToUI() {
     btn.textContent = `👑 ${cat.namaKategori}`;
     catContainer.appendChild(btn);
   });
-
-  // Set bingkai aktif sesuai kebijakan frame acara
-  if (ev.frameLockMode === 'single') {
-    const lockedFrame = ev.singleLockedFrame || (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
-    applyActiveFrame(lockedFrame);
-  } else if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
-    if (!availFrames.some(f => f.id === STATE.activeFrame)) {
-      applyActiveFrame(availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
-    } else {
-      applyActiveFrame(STATE.activeFrame);
-    }
-  } else {
-    applyActiveFrame(availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
-  }
-
-  updateGuestIdentityUI();
 }
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
-  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
-  if (viewId === 'viewCamera') {
-    if (!STATE.guestNama || !STATE.guestNama.trim()) {
-      showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
-      showView('viewWelcome');
-      const inputEl = document.getElementById('inputGuestName');
-      if (inputEl) {
-        inputEl.focus();
-        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
-      }
-      const warnEl = document.getElementById('guestNameWarning');
-      if (warnEl) warnEl.classList.remove('hidden');
-      return;
-    }
-  }
-
   // Hide all views first
   ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
@@ -1233,31 +863,23 @@ function showView(viewId) {
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
     applyActiveFrame(STATE.activeFrame);
-    // Fitur live camera HANYA aktif jika nama tamu sudah terisi
-    if (STATE.guestNama && !STATE.mediaStream) {
+    // Disposable Camera Otomatis Terbuka saat layar kamera aktif
+    if (!STATE.mediaStream) {
       startCameraStream();
     }
-  } else {
-    // Matikan stream kamera saat di luar layar kamera untuk hemat baterai
-    stopCameraStream();
-
-    if (viewId === 'viewGallery') {
-      document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
-      document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
-      renderGallery();
-      loadGallery();
-    } else if (viewId === 'viewWelcome') {
-      document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
-      document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
-      // Sinkronkan input nama dengan profil tamu yang sudah tersimpan
-      const inputGuest = document.getElementById('inputGuestName');
-      if (inputGuest && STATE.guestNama) {
-        inputGuest.value = STATE.guestNama;
-      }
+  } else if (viewId === 'viewGallery') {
+    document.getElementById('navBtnGallery')?.classList.add('text-brand-gold');
+    document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
+    renderGallery();
+  } else if (viewId === 'viewWelcome') {
+    document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
+    document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
+    // Sinkronkan input nama dengan profil tamu yang sudah tersimpan
+    const inputGuest = document.getElementById('inputGuestName');
+    if (inputGuest && STATE.guestNama) {
+      inputGuest.value = STATE.guestNama;
     }
   }
-
-  updateGuestIdentityUI();
 }
 
 function applyActiveFrame(frameId) {
@@ -1360,25 +982,6 @@ async function startCameraStream() {
   }
 }
 
-function stopCameraStream() {
-  if (STATE.mediaStream) {
-    try {
-      STATE.mediaStream.getTracks().forEach(track => {
-        try { track.stop(); } catch(e) {}
-      });
-    } catch (err) {
-      console.warn("stopCameraStream error:", err);
-    }
-    STATE.mediaStream = null;
-  }
-  const video = document.getElementById('cameraVideo');
-  if (video) {
-    try {
-      video.srcObject = null;
-    } catch(e) {}
-  }
-}
-
 function triggerNativeCamera() {
   const input = document.getElementById('nativeCameraInput');
   input.click();
@@ -1420,10 +1023,7 @@ function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
   // 3. Render Selected Custom Frame & Hashtag
-  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
-  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
-    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
-  }
+  const frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
   STATE.activeFrame = frameToUse;
   renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
@@ -1444,30 +1044,9 @@ function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
 
 function renderReviewFramePills(activeFrame) {
   const container = document.getElementById('reviewFrameListContainer');
-  const selectorWrap = document.getElementById('reviewFrameSelectorContainer');
-  const singleNotice = document.getElementById('reviewSingleFrameNotice');
-  const singleBadge = document.getElementById('reviewSingleFrameBadge');
-
-  const frames = getAvailableFrames();
-  const isSingleLocked = Boolean(STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single');
-
-  if (isSingleLocked) {
-    if (selectorWrap) selectorWrap.classList.add('hidden');
-    if (singleNotice) {
-      singleNotice.classList.remove('hidden');
-      if (singleBadge) {
-        const lockedObj = frames[0];
-        singleBadge.textContent = lockedObj ? lockedObj.name : 'Bingkai Resmi Acara';
-      }
-    }
-    return;
-  } else {
-    if (selectorWrap) selectorWrap.classList.remove('hidden');
-    if (singleNotice) singleNotice.classList.add('hidden');
-  }
-
   if (!container) return;
 
+  const frames = getAvailableFrames();
   container.innerHTML = frames.map(f => `
     <button data-frame="${f.id}" class="rev-frame-pill shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold ${activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">
       ${f.name}
@@ -1583,13 +1162,10 @@ function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     ctx.textAlign = 'center';
     ctx.fillText(`${evName}  |  ${hashtag}`, w / 2, h - 45);
 
-  } else if (frameStyle !== 'NONE') {
-    // Custom PNG Overlay (Global / Event / Multi-Frame / Single Lock)
+  } else if (frameStyle === 'CUSTOM' || frameStyle.startsWith('frame_')) {
+    // Custom PNG Overlay (Global / Event / Multi-Frame)
     const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameStyle) : null;
-    let dataUrl = customObj ? customObj.dataUrl : null;
-    if (!dataUrl) {
-      dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
-    }
+    const dataUrl = customObj ? customObj.dataUrl : (STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData?.dataUrl);
 
     if (dataUrl) {
       const frameImg = new Image();
@@ -1681,7 +1257,7 @@ function generateSimulatedPartySnapshot() {
   return offCanvas;
 }
 
-// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG LIVE KE GOOGLE DRIVE & GALERI) ---
+// --- 6. UPLOAD PHOTO (SIMPAN KE GALERI & GOOGLE DRIVE) ---
 async function handleSavePhotoToDrive() {
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
@@ -1703,101 +1279,84 @@ async function handleSavePhotoToDrive() {
   }
 
   btn.disabled = true;
-  btnText.textContent = "Mengunggah ke Drive...";
+  btnText.textContent = "Menyimpan...";
 
   try {
-    const targetEventId = getResolvedEventId(STATE.activeEventId);
-
-    // 1. JIKA API GAS TERSEDIA: UPLOAD LANGSUNG LIVE KE DRIVE & SHEETS
-    if (STATE.gasApiUrl) {
-      const payload = {
-        action: "uploadPhoto",
-        eventId: targetEventId,
-        guestId: STATE.guestId,
-        guestNama: STATE.guestNama || "Tamu",
-        caption: caption || "Momen seru!",
-        cameraStyle: STATE.activeFilter || "RAW",
-        frameStyle: STATE.activeFrame || "POLAROID",
-        imageBase64: STATE.currentCapturedDataUrl
-      };
-
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
-      const res = await resp.json();
-
-      if (res && res.status === 'success') {
-        const cloudPhoto = {
-          idFoto: res.idFoto || ("FTO-" + Date.now()),
-          eventId: targetEventId,
-          guestId: STATE.guestId,
-          guestNama: STATE.guestNama || "Tamu",
-          caption: caption || "Momen seru!",
-          cameraStyle: STATE.activeFilter || "RAW",
-          frameStyle: STATE.activeFrame || "POLAROID",
-          gdriveViewUrl: res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : STATE.currentCapturedDataUrl),
-          totalLikes: 0,
-          isFeatured: false,
-          createdAt: "Baru Saja"
-        };
-
-        // Masukkan foto cloud ke daftar foto terdepan
-        STATE.photos = [cloudPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== cloudPhoto.idFoto)];
-        saveEventPhotos(targetEventId);
-
-        // Tutup modal review foto dan alihkan ke galeri
-        document.getElementById('modalReviewPhoto').classList.add('hidden');
-        showView('viewGallery');
-        renderGallery();
-        updateRemainingQuotaDisplay();
-        updateGuestIdentityUI();
-
-        showToast("✅ Foto berhasil diunggah langsung ke Rol Google Drive!", "success");
-
-        // Sinkronkan galeri dengan cloud database
-        loadGallery();
-        return;
-      } else if (res && res.status === 'limit_reached') {
-        showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
-        return;
-      } else {
-        throw new Error((res && res.message) || "Gagal mengunggah foto ke Google Drive.");
-      }
-    }
-
-    // 2. FALLBACK OFFLINE (Hanya jika belum ada GAS API)
+    // 1. Buat object foto seketika agar langsung tampil di Galeri Acara tanpa delay
     const localPhotoId = "FTO-" + Date.now();
     const newPhoto = {
       idFoto: localPhotoId,
-      eventId: targetEventId,
+      eventId: STATE.activeEventId,
       guestId: STATE.guestId,
       guestNama: STATE.guestNama || "Tamu",
       caption: caption || "Momen seru!",
-      cameraStyle: STATE.activeFilter || "RAW",
-      frameStyle: STATE.activeFrame || "POLAROID",
+      cameraStyle: STATE.activeFilter,
+      frameStyle: STATE.activeFrame,
       gdriveViewUrl: STATE.currentCapturedDataUrl,
       totalLikes: 0,
       isFeatured: false,
       createdAt: "Baru Saja"
     };
 
-    STATE.photos = [newPhoto, ...(STATE.photos || [])];
-    saveEventPhotos(targetEventId);
+    // Tambahkan foto ke urutan terdepan daftar foto
+    STATE.photos.unshift(newPhoto);
 
+    // Backup ke localStorage terisolasi per event agar foto tetap aman saat offline maupun refresh
+    saveEventPhotos(STATE.activeEventId);
+
+    // Segera tutup modal review dan tampilkan galeri dengan foto baru
     document.getElementById('modalReviewPhoto').classList.add('hidden');
-    showView('viewGallery');
     renderGallery();
+    showView('viewGallery');
     updateRemainingQuotaDisplay();
-    updateGuestIdentityUI();
-    showToast("Foto tersimpan di HP (Mode lokal offline)", "info");
 
+    // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
+    if (STATE.gasApiUrl) {
+      const payload = {
+        action: "uploadPhoto",
+        eventId: STATE.activeEventId,
+        guestId: STATE.guestId,
+        guestNama: STATE.guestNama || "Tamu",
+        caption: caption,
+        cameraStyle: STATE.activeFilter,
+        frameStyle: STATE.activeFrame,
+        imageBase64: STATE.currentCapturedDataUrl
+      };
+
+      try {
+        const resp = await fetch(STATE.gasApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+
+        if (res.status === 'success') {
+          if (res.idFoto) newPhoto.idFoto = res.idFoto;
+          if (res.viewUrl) newPhoto.gdriveViewUrl = res.viewUrl;
+          if (res.photo?.idFoto) newPhoto.idFoto = res.photo.idFoto;
+          if (res.photo?.gdriveViewUrl) newPhoto.gdriveViewUrl = res.photo.gdriveViewUrl;
+          saveEventPhotos(STATE.activeEventId);
+          showToast("✅ Foto berhasil disimpan ke Galeri & Google Drive!", "success");
+          renderGallery();
+          // Muat ulang galeri cloud agar foto langsung tersinkronkan ke seluruh perangkat
+          loadGallery();
+        } else if (res.status === 'limit_reached') {
+          showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+        } else {
+          showToast("⚠️ Foto tersimpan di HP: " + (res.message || "Sinkronisasi Drive tertunda"), "warning");
+        }
+      } catch (uploadErr) {
+        console.warn("Upload Google Drive background error:", uploadErr);
+        showToast("⚠️ Foto tersimpan di HP, gagal upload ke Drive: " + uploadErr.message, "error");
+      }
+    } else {
+      showToast("Foto tersimpan di HP! (URL GAS belum terpasang untuk Drive)", "info");
+    }
   } catch (err) {
-    console.error("Upload Google Drive error:", err);
-    showToast("⚠️ Gagal upload: " + err.message, "error");
+    showToast("Terjadi kesalahan: " + err.message, "error");
   } finally {
     btn.disabled = false;
     btnText.textContent = "Simpan ke Rol";
@@ -1824,7 +1383,7 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     if (STATE.gasApiUrl) {
       const payload = {
         action: "submitVote",
-        eventId: getResolvedEventId(STATE.activeEventId),
+        eventId: STATE.activeEventId,
         idFoto: idFoto,
         idKategori: targetCat,
         guestId: STATE.guestId,
@@ -1888,63 +1447,59 @@ function renderGallery() {
   if (winnersContainer) winnersContainer.classList.add('hidden');
   if (grid) grid.classList.remove('hidden');
 
-  let filtered = Array.isArray(STATE.photos) ? [...STATE.photos] : [];
+  let filtered = [...STATE.photos];
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   }
 
-  if (countBadge) {
-    countBadge.textContent = `${filtered.length} Foto`;
-  }
+  countBadge.textContent = `${filtered.length} Foto`;
 
   if (filtered.length === 0) {
-    if (grid) grid.innerHTML = '';
-    if (empty) empty.classList.remove('hidden');
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
     return;
   }
 
-  if (empty) empty.classList.add('hidden');
-  if (grid) {
-    grid.innerHTML = '';
+  empty.classList.add('hidden');
+  grid.innerHTML = '';
 
-    filtered.forEach(photo => {
-      const isVoted = Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(photo.idFoto);
-      const card = document.createElement('div');
-      card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
-      card.setAttribute('data-id', photo.idFoto);
+  filtered.forEach(photo => {
+    const isVoted = STATE.votedPhotoIds.includes(photo.idFoto);
+    const card = document.createElement('div');
+    card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
+    card.setAttribute('data-id', photo.idFoto);
 
-      card.innerHTML = `
-        <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
-          <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
-          <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
-            <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
-          </div>
+    card.innerHTML = `
+      <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
+        <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
+          <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama}</span>
         </div>
-        <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
-          <div class="truncate pr-1">
-            <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
-            <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
-          </div>
-          <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
-            <span>${isVoted ? '❤️' : '🤍'}</span>
-            <span>${photo.totalLikes || 0}</span>
-          </button>
+      </div>
+      <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
+        <div class="truncate pr-1">
+          <div class="text-[11px] font-bold text-white truncate">${photo.guestNama}</div>
+          <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
         </div>
-      `;
+        <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
+          <span>${isVoted ? '❤️' : '🤍'}</span>
+          <span>${photo.totalLikes || 0}</span>
+        </button>
+      </div>
+    `;
 
-      card.querySelector('.img-click-zone')?.addEventListener('click', () => {
-        openPhotoZoom(photo);
-      });
-
-      card.querySelector('.btn-like-photo')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleVotePhoto(photo.idFoto);
-      });
-
-      grid.appendChild(card);
+    card.querySelector('.img-click-zone').addEventListener('click', () => {
+      openPhotoZoom(photo);
     });
-  }
+
+    card.querySelector('.btn-like-photo').addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleVotePhoto(photo.idFoto);
+    });
+
+    grid.appendChild(card);
+  });
 }
 
 function renderVotingWinners() {
@@ -2242,365 +1797,43 @@ function openShareQrModal(eventObj) {
   modal.classList.remove('hidden');
 }
 
-function getDefaultPresetCustomFrames() {
-  const weddingSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='28' y='28' width='1024' height='1294' fill='none' stroke='%23D4AF37' stroke-width='14' rx='28'/><rect x='52' y='52' width='976' height='1246' fill='none' stroke='%23F3E5AB' stroke-width='3' rx='18'/><circle cx='52' cy='52' r='18' fill='%23D4AF37'/><circle cx='1028' cy='52' r='18' fill='%23D4AF37'/><circle cx='52' cy='1298' r='18' fill='%23D4AF37'/><circle cx='1028' cy='1298' r='18' fill='%23D4AF37'/><rect x='140' y='1190' width='800' height='95' fill='rgba(15,15,20,0.88)' stroke='%23D4AF37' stroke-width='2' rx='16'/><text x='540' y='1250' fill='%23F3E5AB' font-family='serif' font-size='32' font-weight='bold' text-anchor='middle'>THE WEDDING CELEBRATION</text></svg>";
-
-  const neonSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='32' y='32' width='1016' height='1286' fill='none' stroke='%23E11D48' stroke-width='10' rx='24'/><rect x='48' y='48' width='984' height='1254' fill='none' stroke='%23FB7185' stroke-width='2' rx='16'/><rect x='180' y='1205' width='720' height='85' fill='rgba(10,10,14,0.92)' stroke='%23E11D48' stroke-width='2' rx='14'/><text x='540' y='1258' fill='%23FFFFFF' font-family='sans-serif' font-size='28' font-weight='900' letter-spacing='4' text-anchor='middle'>EXCLUSIVE EVENT PARTY</text></svg>";
-
-  return [
-    {
-      id: 'FRAME_PRESET_WEDDING',
-      name: 'Wedding Gold Arch PNG',
-      scope: 'global',
-      type: 'custom',
-      dataUrl: weddingSvg
-    },
-    {
-      id: 'FRAME_PRESET_NEON',
-      name: 'Neon Party Glow PNG',
-      scope: 'global',
-      type: 'custom',
-      dataUrl: neonSvg
-    }
-  ];
-}
-
 function renderCustomFramesList() {
   const container = document.getElementById('customFramesListContainer');
   if (!container) return;
   container.innerHTML = '';
 
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
-    STATE.customFrames = getDefaultPresetCustomFrames();
-    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
+    container.innerHTML = '<p class="text-[10px] text-zinc-500 italic py-1">Belum ada bingkai kustom tersimpan.</p>';
+    return;
   }
 
   STATE.customFrames.forEach((cf, idx) => {
     const row = document.createElement('div');
-    row.className = "flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/5 hover:border-brand-gold/30 transition text-xs";
+    row.className = "flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5 text-xs";
     const scopeLabel = cf.scope === 'global' ? 'Semua Acara (Global)' : 'Khusus Acara Ini';
     const scopeColor = cf.scope === 'global' ? 'text-amber-300 border-amber-500/30 bg-amber-500/10' : 'text-blue-300 border-blue-500/30 bg-blue-500/10';
 
     row.innerHTML = `
-      <div class="flex items-center gap-2.5 overflow-hidden flex-1 mr-2">
+      <div class="flex items-center gap-2 overflow-hidden">
         <img src="${cf.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />
         <div class="truncate">
           <div class="font-bold text-white truncate text-[11px]">${cf.name || 'Bingkai ' + (idx + 1)}</div>
           <span class="text-[9px] px-1.5 py-0.5 rounded border ${scopeColor}">${scopeLabel}</span>
         </div>
       </div>
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button type="button" class="btn-lock-custom-frame flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/40 text-[10px] font-bold transition active:scale-95" title="Kunci bingkai ini sebagai bingkai wajib tamu">
-          <span>🔒</span> Kunci Bingkai Ini
-        </button>
-        <button type="button" class="btn-del-frame text-red-400 hover:text-red-300 p-1 text-xs shrink-0" data-idx="${idx}" title="Hapus Bingkai">✕</button>
-      </div>
+      <button type="button" class="btn-del-frame text-red-400 hover:text-red-300 p-1 text-xs shrink-0" data-idx="${idx}" title="Hapus Bingkai">✕</button>
     `;
-
-    // Tombol Kunci Bingkai Ini: Otomatis aktifkan Single Lock & pilih frame ini
-    row.querySelector('.btn-lock-custom-frame').onclick = (e) => {
-      e.stopPropagation();
-      setAndLockSingleFrame(cf.id, cf.name);
-    };
 
     row.querySelector('.btn-del-frame').onclick = () => {
       STATE.customFrames.splice(idx, 1);
       localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
       renderCustomFramesList();
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-      renderAdminFrameSettings(currentEv);
+      applyActiveFrame(STATE.activeFrame);
       showToast("Bingkai kustom dihapus.", "info");
     };
 
     container.appendChild(row);
   });
-}
-
-function setAndLockSingleFrame(frameId, frameName) {
-  // 1. Pilih radio Single Lock
-  const radSingle = document.querySelector('input[name="frameLockModeRadio"][value="single"]');
-  if (radSingle) radSingle.checked = true;
-
-  // 2. Tampilkan kontainer Single Lock dan sembunyikan Multi-Frame
-  document.getElementById('containerSingleFrameLock')?.classList.remove('hidden');
-  document.getElementById('containerMultiFrameSelection')?.classList.add('hidden');
-
-  // 3. Set dropdown single frame select
-  const singleSelect = document.getElementById('formEventSingleFrameSelect');
-  if (singleSelect) {
-    singleSelect.value = frameId;
-  }
-
-  // 4. Update data event yang sedang diedit
-  const targetEventId = document.getElementById('formEventId')?.value;
-  const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-  if (currentEv) {
-    currentEv.frameLockMode = 'single';
-    currentEv.singleLockedFrame = frameId;
-  }
-
-  // 5. Re-render frame settings agar kartu single lock ter-highlight
-  renderAdminFrameSettings(currentEv);
-
-  // 6. Scroll halus ke bagian Single Lock agar admin melihat perubahan
-  document.getElementById('containerSingleFrameLock')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  showToast(`🔒 Bingkai "${frameName || frameId}" berhasil dikunci sebagai 1 bingkai seragam wajib acara!`, "success");
-}
-
-function getAllAdminCandidateFrames(eventObj) {
-  const frames = [
-    { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin', icon: '✨' },
-    { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin', icon: '📷' },
-    { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin', icon: '▪️' },
-    { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin', icon: '🚫' }
-  ];
-
-  // Custom frame yang baru diunggah di form atau tersimpan di event ini
-  const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
-  if (eventCustomData) {
-    frames.push({
-      id: 'CUSTOM_EVENT',
-      name: eventObj?.customFrameName ? `🖼️ ${eventObj.customFrameName}` : '🖼️ Bingkai Kustom Acara (Custom PNG)',
-      type: 'custom',
-      scope: 'event',
-      dataUrl: eventCustomData,
-      icon: '🖼️'
-    });
-  }
-
-  // Custom frames tersimpan di koleksi (global atau spesifik event)
-  if (Array.isArray(STATE.customFrames)) {
-    STATE.customFrames.forEach(cf => {
-      if (!frames.some(f => f.id === cf.id || (cf.dataUrl && f.dataUrl === cf.dataUrl))) {
-        frames.push({
-          id: cf.id,
-          name: `🖼️ ${cf.name || 'Bingkai Kustom'} (${cf.scope === 'global' ? 'Global' : 'Acara'})`,
-          type: 'custom',
-          scope: cf.scope,
-          dataUrl: cf.dataUrl,
-          icon: '🖼️'
-        });
-      }
-    });
-  }
-
-  return frames;
-}
-
-function renderSingleLockCustomFrameList(candidateFrames, currentLockedId) {
-  const container = document.getElementById('singleLockCustomFrameList');
-  if (!container) return;
-  container.innerHTML = '';
-
-  candidateFrames.forEach(f => {
-    const isLocked = (f.id === currentLockedId);
-    const card = document.createElement('div');
-    card.className = `single-lock-card flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition select-none ${
-      isLocked 
-        ? 'bg-brand-gold/15 border-brand-gold shadow-md shadow-brand-gold/10' 
-        : 'bg-[#0D0D12] border-white/10 hover:border-brand-gold/50 hover:bg-white/[0.03]'
-    }`;
-    card.setAttribute('data-frame-id', f.id);
-
-    const thumbHtml = f.dataUrl 
-      ? `<img src="${f.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
-      : `<span class="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-base shrink-0">${f.icon || '🖼️'}</span>`;
-
-    const statusBadge = isLocked 
-      ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-gold text-black font-bold shrink-0">✓ TERKUNCI</span>`
-      : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 group-hover:text-white shrink-0">Pilih</span>`;
-
-    card.innerHTML = `
-      <div class="flex items-center gap-2.5 overflow-hidden flex-1 mr-2">
-        <input type="radio" name="singleLockRadioSelect" value="${f.id}" class="text-brand-gold w-4 h-4 shrink-0 cursor-pointer" ${isLocked ? 'checked' : ''} />
-        ${thumbHtml}
-        <div class="truncate">
-          <div class="text-xs font-semibold ${isLocked ? 'text-brand-gold' : 'text-zinc-200'} truncate">${f.name}</div>
-          <span class="text-[9px] text-zinc-400 font-mono">${f.type === 'custom' ? (f.scope === 'global' ? 'Kustom (Global)' : 'Kustom (Acara)') : 'Bawaan Standar'}</span>
-        </div>
-      </div>
-      <div>${statusBadge}</div>
-    `;
-
-    card.addEventListener('click', () => {
-      const singleSelect = document.getElementById('formEventSingleFrameSelect');
-      if (singleSelect) {
-        singleSelect.value = f.id;
-      }
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-      if (currentEv) {
-        currentEv.singleLockedFrame = f.id;
-      }
-      renderSingleLockCustomFrameList(candidateFrames, f.id);
-      showToast(`🔒 Bingkai "${f.name}" dipilih sebagai bingkai wajib terkunci.`, "info");
-    });
-
-    container.appendChild(card);
-  });
-}
-
-function renderAdminFrameSettings(eventObj) {
-  const container = document.getElementById('adminFrameSortableList');
-  const singleSelect = document.getElementById('formEventSingleFrameSelect');
-  if (!container && !singleSelect) return;
-
-  const candidateFrames = getAllAdminCandidateFrames(eventObj);
-
-  // Tentukan urutan aktif awal
-  let activeOrder = [];
-  if (eventObj && Array.isArray(eventObj.activeFrames) && eventObj.activeFrames.length > 0) {
-    activeOrder = [...eventObj.activeFrames];
-  } else {
-    activeOrder = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
-    if (candidateFrames.some(f => f.id === 'CUSTOM_EVENT')) {
-      activeOrder.unshift('CUSTOM_EVENT');
-    }
-  }
-
-  // Urutkan candidateFrames: yang ada di activeOrder disusun terlebih dahulu sesuai indexnya
-  const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
-  const sortedFrames = [];
-  activeOrder.forEach(id => {
-    const found = candidateFrames.find(f => 
-      f.id === id || 
-      ((id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).indexOf('frame_') === 0) && (f.id === 'CUSTOM_EVENT' || f.type === 'custom' || (eventCustomData && f.dataUrl === eventCustomData)))
-    );
-    if (found && !sortedFrames.some(s => s.id === found.id)) {
-      sortedFrames.push(found);
-    }
-  });
-  candidateFrames.forEach(f => {
-    if (!sortedFrames.some(s => s.id === f.id)) {
-      sortedFrames.push(f);
-    }
-  });
-
-  const currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
-
-  // 1. Render Dropdown Single Frame Lock dengan Optgroup Standar & Kustom
-  if (singleSelect) {
-    const builtInOptions = sortedFrames.filter(f => f.type !== 'custom').map(f => 
-      `<option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>${f.name}</option>`
-    ).join('');
-    const customOptions = sortedFrames.filter(f => f.type === 'custom').map(f => 
-      `<option value="${f.id}" ${f.id === currentLocked ? 'selected' : ''}>${f.name}</option>`
-    ).join('');
-
-    let finalHtml = '';
-    if (builtInOptions) finalHtml += `<optgroup label="🌟 Bingkai Standar">${builtInOptions}</optgroup>`;
-    if (customOptions) finalHtml += `<optgroup label="🖼️ Koleksi Bingkai Kustom">${customOptions}</optgroup>`;
-    singleSelect.innerHTML = finalHtml || sortedFrames.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-    singleSelect.value = currentLocked;
-  }
-
-  // 2. Render Daftar Visual Pilihan Bingkai di Menu Single Lock
-  renderSingleLockCustomFrameList(sortedFrames, currentLocked);
-
-  // 3. Render Drag & Drop Sortable List untuk Mode Bebas Pilih (Multi-Frame)
-  if (container) {
-    container.innerHTML = '';
-    sortedFrames.forEach((frame) => {
-      const isCustomMatch = (frame.id === 'CUSTOM_EVENT' || frame.type === 'custom') && activeOrder.some(a => a === 'CUSTOM_EVENT' || a === 'CUSTOM' || String(a).indexOf('frame_') === 0);
-      const isChecked = activeOrder.includes(frame.id) || isCustomMatch || (frame.id === 'CUSTOM_EVENT' && !eventObj) || (frame.id !== 'NONE' && !eventObj);
-      const row = document.createElement('div');
-      row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
-      row.setAttribute('draggable', 'true');
-      row.setAttribute('data-frame-id', frame.id);
-
-      const previewHtml = frame.dataUrl 
-        ? `<img src="${frame.dataUrl}" class="w-7 h-9 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
-        : `<span class="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm shrink-0">${frame.icon || '🖼️'}</span>`;
-
-      row.innerHTML = `
-        <div class="flex items-center gap-2.5 overflow-hidden flex-1">
-          <span class="drag-handle text-zinc-500 group-hover:text-brand-gold text-lg cursor-grab active:cursor-grabbing px-1 shrink-0" title="Geser untuk atur urutan">⠿</span>
-          <input type="checkbox" value="${frame.id}" class="adm-frame-check text-brand-gold rounded cursor-pointer w-4 h-4 shrink-0" ${isChecked ? 'checked' : ''} />
-          ${previewHtml}
-          <div class="truncate">
-            <span class="text-xs font-semibold text-zinc-200 block truncate">${frame.name}</span>
-            <span class="text-[9px] text-zinc-400 font-mono">${frame.type === 'custom' ? 'Bingkai Kustom PNG' : 'Bingkai Bawaan'}</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-1 shrink-0">
-          <button type="button" class="btn-frame-up p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-brand-gold text-xs font-bold transition" title="Naikkan urutan">▲</button>
-          <button type="button" class="btn-frame-down p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-brand-gold text-xs font-bold transition" title="Turunkan urutan">▼</button>
-        </div>
-      `;
-
-      // Tombol panah naik / turun (Sangat ramah sentuhan layar HP)
-      row.querySelector('.btn-frame-up').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const prev = row.previousElementSibling;
-        if (prev) {
-          container.insertBefore(row, prev);
-          syncFrameSettingsFromDOM();
-        }
-      });
-
-      row.querySelector('.btn-frame-down').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const next = row.nextElementSibling;
-        if (next) {
-          container.insertBefore(next, row);
-          syncFrameSettingsFromDOM();
-        }
-      });
-
-      // Drag & Drop HTML5 Events
-      row.addEventListener('dragstart', (e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', frame.id);
-        row.classList.add('opacity-40', 'border-brand-gold', 'scale-[0.98]');
-        window._draggedFrameItem = row;
-      });
-
-      row.addEventListener('dragend', () => {
-        row.classList.remove('opacity-40', 'border-brand-gold', 'scale-[0.98]');
-        window._draggedFrameItem = null;
-        document.querySelectorAll('.frame-sortable-item').forEach(el => el.classList.remove('border-brand-gold', 'bg-white/5'));
-        syncFrameSettingsFromDOM();
-      });
-
-      row.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        const dragged = window._draggedFrameItem;
-        if (!dragged || dragged === row) return;
-
-        const rect = row.getBoundingClientRect();
-        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-        container.insertBefore(dragged, next ? row.nextSibling : row);
-      });
-
-      container.appendChild(row);
-    });
-  }
-}
-
-function syncFrameSettingsFromDOM() {
-  const items = document.querySelectorAll('#adminFrameSortableList .frame-sortable-item');
-  const singleSelect = document.getElementById('formEventSingleFrameSelect');
-  if (singleSelect) {
-    const currentVal = singleSelect.value;
-    const options = [];
-    items.forEach(it => {
-      const id = it.getAttribute('data-frame-id');
-      const name = it.querySelector('.text-zinc-200')?.textContent || id;
-      options.push(`<option value="${id}" ${id === currentVal ? 'selected' : ''}>${name}</option>`);
-    });
-    if (options.length > 0) {
-      singleSelect.innerHTML = options.join('');
-    }
-  }
-
-  // Sinkronkan daftar visual single lock
-  const targetEventId = document.getElementById('formEventId')?.value;
-  const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-  const candidateFrames = getAllAdminCandidateFrames(currentEv);
-  const currentLocked = singleSelect?.value || 'GOLD_DECO';
-  renderSingleLockCustomFrameList(candidateFrames, currentLocked);
 }
 
 function resetCreateEventForm() {
@@ -2624,13 +1857,6 @@ function resetCreateEventForm() {
   document.getElementById('formCheckLike').checked = true;
   document.getElementById('formCheckVisibility').checked = true;
 
-  // Reset Frame Policy Controls
-  const radMulti = document.querySelector('input[name="frameLockModeRadio"][value="multi"]');
-  if (radMulti) radMulti.checked = true;
-  document.getElementById('containerSingleFrameLock')?.classList.add('hidden');
-  document.getElementById('containerMultiFrameSelection')?.classList.remove('hidden');
-  renderAdminFrameSettings(null);
-
   renderCategoryInputRows([
     { namaKategori: "Busana Terbaik" },
     { namaKategori: "Momen Romantis" },
@@ -2645,153 +1871,124 @@ function resetCreateEventForm() {
 }
 
 function renderAdminDashboard() {
-  try {
-    const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
-      ? STATE.events 
-      : ((Array.isArray(MOCK_DATA.events) && MOCK_DATA.events.length > 0) ? MOCK_DATA.events : [MOCK_DATA.event]);
+  const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) ? STATE.events : (STATE.activeEvent ? [STATE.activeEvent] : [MOCK_DATA.event]);
+  document.getElementById('admMetricEvents').textContent = allEvents.length;
+  document.getElementById('admMetricPhotos').textContent = STATE.photos.length;
 
-    const totalEvtCount = (STATE.metrics && typeof STATE.metrics.totalEvents === 'number') 
-      ? STATE.metrics.totalEvents 
-      : allEvents.length;
-      
-    const totalPhotoCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') 
-      ? STATE.metrics.totalPhotos 
-      : (STATE.photos ? STATE.photos.length : 0);
-      
-    const calcLikes = (STATE.photos || []).reduce((acc, p) => acc + (p.totalLikes || 0), 0);
-    const totalVoteCount = (STATE.metrics && typeof STATE.metrics.totalVotes === 'number') 
-      ? STATE.metrics.totalVotes 
-      : calcLikes;
+  const totalVotes = STATE.photos.reduce((acc, p) => acc + (p.totalLikes || 0), 0);
+  document.getElementById('admMetricVotes').textContent = totalVotes;
 
-    const metricEvtEl = document.getElementById('admMetricEvents');
-    const metricPhotoEl = document.getElementById('admMetricPhotos');
-    const metricVoteEl = document.getElementById('admMetricVotes');
-    if (metricEvtEl) metricEvtEl.textContent = totalEvtCount;
-    if (metricPhotoEl) metricPhotoEl.textContent = totalPhotoCount;
-    if (metricVoteEl) metricVoteEl.textContent = totalVoteCount;
+  const listContainer = document.getElementById('adminEventListContainer');
+  listContainer.innerHTML = '';
 
-    const badge = document.getElementById('admSyncStatusBadge');
-    if (badge && !badge.textContent.includes('Mengunduh')) {
-      badge.textContent = `Tersinkron (${totalEvtCount} Event, ${totalPhotoCount} Foto)`;
-      badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30";
-    }
+  allEvents.forEach(ev => {
+    const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
+    const hasCustom = !!(ev.customFrameData || ev.customFrameUrl || (Array.isArray(STATE.customFrames) && STATE.customFrames.some(f => f.eventId === ev.idEvent || f.scope === 'global')));
+    const frameText = hasCustom ? '✨ Multi-Frame Aktif' : 'Default Frames';
+    const isActive = ev.idEvent === STATE.activeEventId;
 
-    const listContainer = document.getElementById('adminEventListContainer');
-    if (listContainer) {
-      listContainer.innerHTML = '';
-
-      allEvents.forEach(ev => {
-        const driveFolderText = ev.gdriveFolderId ? `Drive: ${ev.gdriveFolderId}` : 'Drive: Otomatis';
-        const hasCustom = !!(ev.customFrameData || ev.customFrameUrl || (Array.isArray(STATE.customFrames) && STATE.customFrames.some(f => f.eventId === ev.idEvent || f.scope === 'global')));
-        const frameText = hasCustom ? '✨ Multi-Frame Aktif' : 'Default Frames';
-        const isActive = ev.idEvent === STATE.activeEventId;
-
-        const card = document.createElement('div');
-        card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60 ring-1 ring-brand-gold/30' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
-        card.innerHTML = `
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
-              ${isActive 
-                ? '<span class="text-[9px] bg-brand-gold text-black font-extrabold px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">🌟 Sedang Berlangsung (Aktif)</span>' 
-                : `<button class="btn-activate-event text-[9px] bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black font-bold px-2.5 py-0.5 rounded-full border border-brand-gold/50 transition flex items-center gap-1">⭐ Aktifkan Event Ini</button>`
-              }
-            </div>
-            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
-              ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
-            </span>
-          </div>
-          <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
-          <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent || '#SnapEvent'} • Kuota: ${ev.maxFotoPerGuest || 10} Foto / Tamu</p>
-          <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3 flex-wrap">
-            <span class="px-2 py-0.5 rounded bg-white/5 border border-white/10">${driveFolderText}</span>
-            <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
-          </div>
-          
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
-            <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
-              ✏️ Edit Acara
-            </button>
-            <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
-              ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
-            </button>
-            <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
-              📺 Proyektor
-            </button>
-            <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
-              📲 Link & QR
-            </button>
-          </div>
-        `;
-
-        const btnActivate = card.querySelector('.btn-activate-event');
-        if (btnActivate) {
-          btnActivate.addEventListener('click', () => {
-            activateEvent(ev.idEvent);
-          });
-        }
-
-        card.querySelector('.btn-edit-event').addEventListener('click', () => {
-          populateEditEventForm(ev);
-          switchAdminTab('create');
-        });
-
-        card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
-          ev.isRevealed = !ev.isRevealed;
-          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-          showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
-          renderAdminDashboard();
-
-          if (STATE.gasApiUrl) {
-            try {
-              await fetch(STATE.gasApiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                  action: 'adminToggleReveal',
-                  idEvent: ev.idEvent,
-                  isRevealed: ev.isRevealed
-                })
-              });
-            } catch (err) {
-              console.warn("GAS reveal sync warn:", err.message);
-            }
+    const card = document.createElement('div');
+    card.className = `bg-brand-surfaceLight border ${isActive ? 'border-brand-gold/60 ring-1 ring-brand-gold/30' : 'border-brand-surfaceBorder'} rounded-2xl p-4 transition shadow-md`;
+    card.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest">${ev.idEvent}</span>
+          ${isActive 
+            ? '<span class="text-[9px] bg-brand-gold text-black font-extrabold px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">🌟 Sedang Berlangsung (Aktif)</span>' 
+            : `<button class="btn-activate-event text-[9px] bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black font-bold px-2.5 py-0.5 rounded-full border border-brand-gold/50 transition flex items-center gap-1">⭐ Aktifkan Event Ini</button>`
           }
-        });
+        </div>
+        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full ${ev.isRevealed ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">
+          ${ev.isRevealed ? 'Galeri Terbuka' : 'Galeri Ditahan'}
+        </span>
+      </div>
+      <h4 class="font-serif text-base font-bold text-white mb-1">${ev.namaEvent}</h4>
+      <p class="text-xs text-zinc-400 mb-2">${ev.hashtagEvent || '#SnapEvent'} • Kuota: ${ev.maxFotoPerGuest || 10} Foto / Tamu</p>
+      <div class="flex items-center gap-2 text-[11px] text-zinc-400 mb-3 flex-wrap">
+        <span class="px-2 py-0.5 rounded bg-white/5 border border-white/10">${driveFolderText}</span>
+        <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
+      </div>
+      
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
+        <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+          ✏️ Edit Acara
+        </button>
+        <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
+          ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
+        </button>
+        <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+          📺 Proyektor
+        </button>
+        <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
+          📲 Link & QR
+        </button>
+      </div>
+    `;
 
-        card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
-          STATE.activeEventId = ev.idEvent;
-          STATE.activeEvent = ev;
-          openSlideshow();
-        });
-
-        card.querySelector('.btn-share-qr').addEventListener('click', () => {
-          openShareQrModal(ev);
-        });
-
-        listContainer.appendChild(card);
+    const btnActivate = card.querySelector('.btn-activate-event');
+    if (btnActivate) {
+      btnActivate.addEventListener('click', () => {
+        activateEvent(ev.idEvent);
       });
     }
 
-    // Config Form Values
-    if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
-    if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
-    if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
-    if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
-    if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
-    if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
-    if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
-    if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
+    card.querySelector('.btn-edit-event').addEventListener('click', () => {
+      populateEditEventForm(ev);
+      switchAdminTab('create');
+    });
 
-    // Render User Accounts List & Frames List
-    renderUserAccountsList();
-    renderCustomFramesList();
+    card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
+      ev.isRevealed = !ev.isRevealed;
+      localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+      showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
+      renderAdminDashboard();
 
-    // Render Leaderboard
-    renderLeaderboard();
-  } catch (err) {
-    console.error("Gagal merender Admin Dashboard:", err);
-  }
+      if (STATE.gasApiUrl) {
+        try {
+          await fetch(STATE.gasApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'adminToggleReveal',
+              idEvent: ev.idEvent,
+              isRevealed: ev.isRevealed
+            })
+          });
+        } catch (err) {
+          console.warn("GAS reveal sync warn:", err.message);
+        }
+      }
+    });
+
+    card.querySelector('.btn-open-slideshow').addEventListener('click', () => {
+      STATE.activeEventId = ev.idEvent;
+      STATE.activeEvent = ev;
+      openSlideshow();
+    });
+
+    card.querySelector('.btn-share-qr').addEventListener('click', () => {
+      openShareQrModal(ev);
+    });
+
+    listContainer.appendChild(card);
+  });
+
+  // Config Form Values
+  if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
+  if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
+  if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
+  if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
+  if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
+  if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
+  if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
+  if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
+
+  // Render User Accounts List & Frames List
+  renderUserAccountsList();
+  renderCustomFramesList();
+
+  // Render Leaderboard
+  renderLeaderboard();
 }
 
 function renderUserAccountsList() {
@@ -2891,21 +2088,6 @@ function populateEditEventForm(ev) {
   document.getElementById('formCheckLike').checked = ev.likeEnabled !== false;
   document.getElementById('formCheckVisibility').checked = ev.publicVisible !== false;
 
-  // Populate Frame Policy Controls
-  const isSingle = (ev.frameLockMode === 'single');
-  const radSingle = document.querySelector('input[name="frameLockModeRadio"][value="single"]');
-  const radMulti = document.querySelector('input[name="frameLockModeRadio"][value="multi"]');
-  if (isSingle && radSingle) radSingle.checked = true;
-  else if (radMulti) radMulti.checked = true;
-
-  const containerSingle = document.getElementById('containerSingleFrameLock');
-  const containerMulti = document.getElementById('containerMultiFrameSelection');
-  if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
-  if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
-
-  const singleSelect = document.getElementById('formEventSingleFrameSelect');
-  renderAdminFrameSettings(ev);
-
   renderCategoryInputRows(STATE.activeCategories);
 }
 
@@ -2950,15 +2132,7 @@ function switchAdminTab(tabName) {
   if (tabName === 'settings') document.getElementById('adminTabSettings').classList.remove('hidden');
 }
 
-async function saveAdminEventForm() {
-  const submitBtn = document.querySelector('#formSaveEvent button[type="submit"]');
-  let originalBtnHtml = '';
-  if (submitBtn) {
-    originalBtnHtml = submitBtn.innerHTML;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span>⏳</span> Menyimpan Acara & Bingkai ke Cloud...';
-  }
-
+function saveAdminEventForm() {
   const nama = document.getElementById('formEventNama').value.trim();
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const tanggal = document.getElementById('formEventTanggal').value;
@@ -2981,44 +2155,10 @@ async function saveAdminEventForm() {
     if (val) cats.push({ idKategori: `KAT-${idx + 1}`, namaKategori: val, urutan: idx + 1 });
   });
 
+  const customFrameData = STATE.tempCustomFrameData || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
+
   const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
-
-  const customFrameData = STATE.tempCustomFrameData || (existingEv ? (existingEv.customFrameData || existingEv.customFrameUrl) : null) || (STATE.activeEvent ? (STATE.activeEvent.customFrameData || STATE.activeEvent.customFrameUrl) : null);
-
-  let frameLockMode = 'multi';
-  document.getElementsByName('frameLockModeRadio').forEach(r => {
-    if (r.checked) frameLockMode = r.value;
-  });
-
-  let singleLockedFrame = document.getElementById('formEventSingleFrameSelect')?.value || 'GOLD_DECO';
-  if (singleLockedFrame.indexOf('frame_') === 0) {
-    singleLockedFrame = 'CUSTOM_EVENT';
-  }
-
-  let activeFrames = [];
-  if (frameLockMode === 'single') {
-    activeFrames = [singleLockedFrame];
-  } else {
-    document.querySelectorAll('#adminFrameSortableList .frame-sortable-item').forEach(item => {
-      const chk = item.querySelector('.adm-frame-check');
-      if (chk && chk.checked) {
-        let val = chk.value;
-        if (val.indexOf('frame_') === 0) val = 'CUSTOM_EVENT';
-        if (!activeFrames.includes(val)) activeFrames.push(val);
-      }
-    });
-    if (activeFrames.length === 0) {
-      document.querySelectorAll('.adm-frame-check').forEach(chk => {
-        if (chk.checked) {
-          let val = chk.value;
-          if (val.indexOf('frame_') === 0) val = 'CUSTOM_EVENT';
-          if (!activeFrames.includes(val)) activeFrames.push(val);
-        }
-      });
-    }
-    if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
-  }
 
   const savedEvent = Object.assign({}, existingEv, {
     idEvent: targetEventId,
@@ -3033,9 +2173,6 @@ async function saveAdminEventForm() {
     likeEnabled: likeEnabled,
     publicVisible: publicVisible,
     gdriveFolderId: driveFolder,
-    frameLockMode: frameLockMode,
-    singleLockedFrame: singleLockedFrame,
-    activeFrames: activeFrames,
     customFrameData: customFrameData,
     customFrameUrl: customFrameData || '',
     categories: cats
@@ -3076,59 +2213,33 @@ async function saveAdminEventForm() {
     applyEventToUI();
   }
 
-  // Sinkronisasi ke Backend GAS dengan AWAIT (Pastikan Google Sheets selesai menulis sebelum F5)
+  // Sinkronisasi ke Backend GAS jika ada
   if (STATE.gasApiUrl) {
-    try {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'adminSaveEvent',
-          idEvent: savedEvent.idEvent,
-          namaEvent: nama,
-          slugEvent: savedEvent.slugEvent,
-          tanggalEvent: tanggal,
-          hashtagEvent: hashtag,
-          maxFotoPerGuest: maxFoto,
-          maxVotePerGuest: maxVote,
-          revealMode: revealMode,
-          isRevealed: savedEvent.isRevealed,
-          likeEnabled: likeEnabled,
-          publicVisible: publicVisible,
-          gdriveFolderId: driveFolder,
-          frameLockMode: frameLockMode,
-          singleLockedFrame: singleLockedFrame,
-          activeFrames: activeFrames,
-          customFrameUrl: customFrameData || '',
-          categories: cats
-        })
-      });
-
-      let res = null;
-      try { res = await resp.json(); } catch (jsonErr) {}
-      if (res && res.status === 'success') {
-        if (res.customFrameUrl) {
-          savedEvent.customFrameUrl = res.customFrameUrl;
-          if (STATE.activeEvent && STATE.activeEvent.idEvent === savedEvent.idEvent) {
-            STATE.activeEvent.customFrameUrl = res.customFrameUrl;
-          }
-          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-        }
-      } else if (res && res.status === 'error') {
-        console.warn("GAS simpan peringatan:", res.message);
-      }
-    } catch (err) {
-      console.warn("Sinkronisasi GAS warn:", err.message);
-    }
-  }
-
-  if (submitBtn) {
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = originalBtnHtml || 'Simpan Pengaturan Acara';
+    fetch(STATE.gasApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'adminSaveEvent',
+        idEvent: savedEvent.idEvent,
+        namaEvent: nama,
+        slugEvent: savedEvent.slugEvent,
+        tanggalEvent: tanggal,
+        hashtagEvent: hashtag,
+        maxFotoPerGuest: maxFoto,
+        maxVotePerGuest: maxVote,
+        revealMode: revealMode,
+        isRevealed: savedEvent.isRevealed,
+        likeEnabled: likeEnabled,
+        publicVisible: publicVisible,
+        gdriveFolderId: driveFolder,
+        customFrameUrl: customFrameData || '',
+        categories: cats
+      })
+    }).catch(err => console.warn("Sinkronisasi GAS warn:", err.message));
   }
 
   applyEventToUI();
-  showToast("✅ Acara & Pengaturan Bingkai Berhasil Disimpan Permanen!", "success");
+  showToast("Acara & Bingkai berhasil disimpan!", "success");
   switchAdminTab('events');
   renderAdminDashboard();
 }
@@ -3194,58 +2305,9 @@ function bindEvents() {
     if (warnEl) warnEl.classList.add('hidden');
     STATE.guestNama = name;
     localStorage.setItem('snapevent_guest_nama', name);
-    updateGuestIdentityUI();
     showView('viewCamera');
     startCameraStream();
     showToast(`Halo ${name}, selamat memotret!`, "success");
-  });
-
-  // Tombol Reset / Ganti Nama Tamu di viewWelcome
-  document.getElementById('btnResetGuestName')?.addEventListener('click', () => {
-    if (confirm("Reset identitas nama Anda? Anda dapat mengetik nama baru setelah ini.")) {
-      resetGuestNameSession();
-    }
-  });
-
-  // Tombol Badge Nama di Status Bar Kamera untuk Ganti Nama
-  document.getElementById('btnCamChangeGuest')?.addEventListener('click', () => {
-    showView('viewWelcome');
-    showToast("Silakan ganti nama Anda atau klik tombol Reset Nama Tamu.", "info");
-    const inputGuest = document.getElementById('inputGuestName');
-    if (inputGuest) {
-      setTimeout(() => inputGuest.focus(), 250);
-    }
-  });
-
-  // Switcher Radio Mode Kebijakan Bingkai (Multi-Frame vs Single Lock) di Panel Admin
-  document.querySelectorAll('input[name="frameLockModeRadio"]').forEach(radio => {
-    radio.addEventListener('change', (e) => {
-      const isSingle = (e.target.value === 'single');
-      const containerSingle = document.getElementById('containerSingleFrameLock');
-      const containerMulti = document.getElementById('containerMultiFrameSelection');
-      if (containerSingle) containerSingle.classList.toggle('hidden', !isSingle);
-      if (containerMulti) containerMulti.classList.toggle('hidden', isSingle);
-
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-
-      if (isSingle) {
-        const singleSelect = document.getElementById('formEventSingleFrameSelect');
-        const lockedId = singleSelect?.value || currentEv?.singleLockedFrame || 'GOLD_DECO';
-        const candidateFrames = getAllAdminCandidateFrames(currentEv);
-        renderSingleLockCustomFrameList(candidateFrames, lockedId);
-      } else {
-        renderAdminFrameSettings(currentEv);
-      }
-    });
-  });
-
-  // Listener Perubahan Dropdown Pilihan Single Frame Lock (Sinkron ke Kartu Visual)
-  document.getElementById('formEventSingleFrameSelect')?.addEventListener('change', (e) => {
-    const targetEventId = document.getElementById('formEventId')?.value;
-    const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-    const candidateFrames = getAllAdminCandidateFrames(currentEv);
-    renderSingleLockCustomFrameList(candidateFrames, e.target.value);
   });
 
   // Hapus tanda error ketika tamu mulai mengetik namanya
@@ -3256,23 +2318,10 @@ function bindEvents() {
 
   // Navigation Bar Buttons (Kamera, Galeri, dan Profil Tamu / Tulis Nama)
   document.getElementById('navBtnCamera').addEventListener('click', () => {
-    if (!STATE.guestNama || !STATE.guestNama.trim()) {
-      showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
-      showView('viewWelcome');
-      const inputEl = document.getElementById('inputGuestName');
-      if (inputEl) {
-        inputEl.focus();
-        inputEl.classList.add('border-rose-500', 'ring-2', 'ring-rose-500/30');
-      }
-      const warnEl = document.getElementById('guestNameWarning');
-      if (warnEl) warnEl.classList.remove('hidden');
-      return;
-    }
     showView('viewCamera');
   });
   document.getElementById('navBtnGallery').addEventListener('click', () => {
     showView('viewGallery');
-    loadGallery();
   });
   document.getElementById('navBtnEventInfo').addEventListener('click', () => {
     showView('viewWelcome');
@@ -3281,7 +2330,6 @@ function bindEvents() {
   // Akses Cepat Galeri & Voting dari Halaman Tulis Nama (viewWelcome)
   document.getElementById('btnWelcomeGoGallery')?.addEventListener('click', () => {
     showView('viewGallery');
-    loadGallery();
   });
 
   // Shutter Action
@@ -3588,12 +2636,7 @@ function bindEvents() {
       document.getElementById('customFramePreviewImg').src = dataUrl;
       document.getElementById('customFramePreviewBox').classList.remove('hidden');
       document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
-
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-      renderAdminFrameSettings(currentEv);
-
-      showToast("Bingkai kustom PNG berhasil diunggah dan masuk ke daftar pilihan!", "info");
+      showToast("Bingkai kustom PNG berhasil diunggah!", "info");
     };
     reader.readAsDataURL(file);
   });
@@ -3607,9 +2650,6 @@ function bindEvents() {
       STATE.activeEvent.customFrameData = null;
       STATE.activeEvent.customFrameUrl = '';
     }
-    const targetEventId = document.getElementById('formEventId')?.value;
-    const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-    renderAdminFrameSettings(currentEv);
     showToast("Bingkai kustom dihapus.", "info");
   });
 
