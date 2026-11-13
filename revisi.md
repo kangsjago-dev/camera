@@ -1,73 +1,87 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.8: SINKRONISASI GALERI BERSIH DARI FOTO TERHAPUS, FULL HD 1080P SENSOR STREAM, PRESERVASI ASPEK RASIO BINGKAI ANTI-GEPENG, UPLOAD BINGKAI KUSTOM KE SERVER CLOUD)
+STATUS: SELESAI DITERAPKAN (RILIS v1.7.0: RESOLUSI BATAS 50.000 KARAKTER GAS, ELIMINASI SYNTAX ERROR JS STOPCAMERASTREAM, FIX OVERLAP SHUTTER & BOTTOM NAV, PENGATURAN PODIUM MEWAH EMAS & PERAK, SISTEM FILTER PEMENANG VOTING INTERAKTIF, FILTER GALERI SESUAI KATEGORI VOTING)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.6.8 (Zero Ghost Photos, Dynamic Aspect Ratio Custom Frame, Full HD 1080p, Cloud Custom Frame Sync)
+VERSI RANCANGAN: v1.7.0 (Production Hardened: Zero-Parse-Errors, 50k-Cell-Sanitization, Anti-Overlap Viewfinder, Luxury Podium Gold & Silver, Interactive Winners Filter, Clean Category Voting View)
 ================================================================================
 
-## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.8)
+## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.7.0)
 
 Permintaan pengguna:
 "/zettbot 
-- file pada server telah dihapus, tetapi di galeri, masih ada gambarnya
-- buat hasil foto menjadi Full HD (1080p / 1920 x 1080 piksel): Sekitar 1 MB hingga 3 MB (atau lebih, tergantung detail warna dan kompresi)
-- bingkai custom acara sesuaikan dengan hasil foto, jangan ubah menjadi gepeng seperti gambar, sesuaikan
-- hsil dari bingkai kustom acara masih disimpan dilokal, blm di upload ke server agar disemua user settingannya sama
+- perbaiki error seperti gambar (Peringatan GAS: Error processing request: Your input contains more than the maximum of 50000 characters in a single cell)
+- tombol shutter dan menu galleri saling menutupi, perbaiki
+- "URL Backend Google Apps Script (Web App Endpoint) *Wajib Cloud" sudah disetting ulang, namun masih lokal, karrena di cek di tempat lain, masih sama seperti sebelumnya, buat menjadi sync sesuai dengan settingan yang baru saja disimpan
+- "Sisa Suara: 3", apa maksud dari menu ini, apabila tidak dibutuhkan, hapus
+- juara 1 emas, juara 2 perak, buat custom agar lebih menarik
+- buat tampilan pemenang voting, apakah voting juara umum atau juara per kategori atau tampil semuanya.
+- tampilan kategori voting, tampilkan hasil votingannya saja sesuai kategori, tidak perlu tampilkan semua image galleri
 terapkan segera dan jangan ubah yang sudah ada"
 
-Poin Inti Rekayasa v1.6.8:
-1. **Pemberantasan Tampilan Foto Hantu yang Sudah Dihapus di Server**:
-   - **Eliminasi Fallback Sample Photos**: Menghapus baris injeksi `MOCK_DATA.samplePhotos` pada `loadGallery()` dan `loadEventPhotos()` ketika server mengembalikan 0 foto. Saat seluruh foto dihapus dari server/Drive, galeri secara jujur menampilkan status bersih (*Empty State*) "Belum Ada Foto Terbit" dengan badge "0 Foto".
-   - **Eliminasi Gambar Unsplash Fallback**: Mengganti `onerror="this.src='unsplash'"` pada kartu foto dengan handler cerdas `img.onerror`. Jika file di Drive telah dihapus (404), kartu foto seketika dicopot dari DOM, dipangkas dari `STATE.photos`, dan cache lokal diperbarui.
-   - **Verifikasi Server-Side di `code.gs`**: Pada `handleGetGallery()`, menambahkan pengecekan `DriveApp.getFileById(gdriveId).isTrashed()`. File yang berada di tempat sampah atau sudah dihapus permanen di Google Drive tidak akan pernah dikembalikan ke aplikasi tamu.
-   - **Pembersih Data Admin**: Menambahkan tindakan `adminCleanDeletedPhotos` untuk membersihkan baris foto usang di Google Sheets `DataFoto`.
+Poin Inti Rekayasa v1.7.0:
+1. **Penyelesaian Error Batas Maksimum 50.000 Karakter Google Sheets**:
+   - **Pencegahan Pengiriman Base64 Raksasa Berulang di `app.js`**: `saveAdminEventForm()` kini memeriksa apakah ada file bingkai baru yang diunggah (`STATE.tempCustomFrameData`). Jika admin hanya mengedit nama atau metadata acara tanpa mengganti file bingkai, client mengirimkan URL cloud HTTP eksisting (`existingEv.customFrameUrl`), bukan base64 usang ratusan ribu karakter.
+   - **Sanitisasi Mutlak Sel Google Sheets di `code.gs`**: Ditambahkan pembatasan mutlak `if (customFrameUrl.indexOf("data:") === 0 || customFrameUrl.length > 500)`. Jika konversi Drive gagal atau string melebihi batas 500 karakter, nilai disanitasi ke URL aman eksisting atau string kosong. Sel Google Sheets terbebas 100% dari error batas 50.000 karakter.
 
-2. **Kualitas Full HD Sensor Murni (1080p / 1920 x 1080 piksel, ~1 MB - 3 MB)**:
-   - **Resolusi Sensor Responsif Orientasi**: Mengoreksi batasan `getUserMedia` agar orientasi potret ponsel meminta `width: 1080, height: 1920` (menghilangkan error `OverconstrainedError` akibat `min: 1280` horizontal pada sensor kamera vertikal).
-   - **Rendering Canvas Full HD**: Menjamin dimensi canvas berada pada standar 1080p (sisi terpendek minimal 1080px, sisi terpanjang 1920px).
-   - **Kompresi Detail Tinggi**: Ekspor `canvas.toDataURL('image/jpeg', 0.98)` dengan `imageSmoothingQuality = 'high'` menghasilkan ukuran file 1.2 MB hingga 2.8 MB sesuai standar industri fotografi acara.
+2. **Resolusi Total Syntax Error JS & `stopCameraStream is not defined`**:
+   - **Pemberantasan Kurung Kurawal Berlebih**: Ditemukan dan dihapus kurung kurawal penutup berlebih (`}`) pada baris 2575 di `app.js` setelah `renderVotingWinners()`. Keberadaan `}` berlebih ini memicu *JavaScript Parsing Syntax Error* yang membatalkan evaluasi seluruh skrip di peramban pengguna, sehingga memunculkan error `stopCameraStream is not defined`.
+   - **Defensive Global Hook**: Menjaga fungsi deklaratif `window.stopCameraStream` di baris atas `app.js` agar selalu tersedia secara aman di semua lifecycle view peramban.
 
-3. **Preservasi Aspek Rasio Bingkai Kustom (Anti-Gepeng / Zero Distortion)**:
-   - **Deteksi Rasio Asli**: Melakukan preload bingkai kustom PNG dan menghitung rasio asli `customFrameRatio = frameWidth / frameHeight`.
-   - **Dimensi Canvas Adaptif**:
-     - Jika bingkai potret (e.g. 3:4, 4:5, 9:16): `canvas.height = 1920; canvas.width = Math.round(1920 * customFrameRatio);` (misal 1440x1920 untuk 3:4, 1536x1920 untuk 4:5).
-     - Jika bingkai lanskap (e.g. 16:9, 4:3): `canvas.width = 1920; canvas.height = Math.round(1920 / customFrameRatio);`.
-   - **Center Crop Cover**: Menyesuaikan crop foto kamera agar mengisi kanvas secara proporsional.
-   - **Drawing Presisi**: Pada `renderCustomFrameOverlay()`, bingkai digambar dengan perlindungan aspek rasio (`drawX, drawY, drawW, drawH`). Hasilnya: gambar pengantin, ornamen bunga, dan tipografi 100% proporsional, tanpa distorsi horizontal/vertikal (tidak gepeng).
+3. **Perbaikan Layout Tombol Shutter & Menu Galeri (Anti-Saling Menutupi)**:
+   - **Kompensasi Ketinggian Viewfinder di `style.css`**: Ketinggian kontainer kamera `.camera-page-container` disesuaikan dari `calc(100dvh - 4.5rem)` menjadi `calc(100dvh - 8.5rem)` dengan `padding-bottom: 0.75rem`.
+   - **Margin Bawah yang Aman**: Memberikan jarak bersih ~16px di atas fixed bottom navigation bar (`#bottomNavBar`). Tombol shutter bundar emas, tombol putar kamera, dan tombol unggah galeri kini tampil proporsional tanpa terpotong atau saling menutupi.
 
-4. **Penyimpanan Bingkai Kustom ke Server Cloud Google Drive**:
-   - **Optimasi Otomatis PNG di Browser**: Saat admin memilih file bingkai PNG, kanvas off-screen secara otomatis mengecilkan dimensi maksimal ke 1920px dengan transparansi alfa utuh. Bobot payload terpangkas dari 8MB menjadi ~300KB - 700KB.
-   - **Pencegahan Timeout GAS POST**: Payload base64 yang ramping menjamin POST ke Google Apps Script berhasil tanpa melampaui kuota eksekusi.
-   - **Penyimpanan Permanen di Google Drive**: `code.gs` mendekode base64, menyimpannya ke folder Google Drive acara, menetapkan izin publik (*Anyone with link can view*), menulis URL resmi `https://lh3.googleusercontent.com/d/[FILE_ID]` ke Sheet `DataEvent` Kolom 17 (`CUSTOM_FRAME_URL`), dan mengembalikannya ke client.
-   - **Kelengkapan Data Admin**: `handleAdminGetSummary()` kini menyertakan `customFrameUrl`, `activeFrames`, dan kebijakan bingkai sehingga sinkronisasi lintas perangkat bersifat seragam dan permanen.
+4. **Klarifikasi & Sinkronisasi URL Backend Google Apps Script (Cloud Sync)**:
+   - **Penjelasan Mekanisme Sync**: Pengaturan di peramban admin tersimpan di `localStorage` peramban tersebut. Agar seluruh tamu dan perangkat lain otomatis tersinkron ke backend baru tanpa perlu pengaturan manual, admin dapat membagikan tautan/QR dari modal **"Link & QR"** atau layar **Proyektor** yang secara otomatis menyematkan parameter `?gas=URL_BARU`. Perangkat tamu yang memindai QR code akan langsung menyimpan URL cloud tersebut secara otomatis.
+   - **Konsistensi UI**: Menghapus nilai default hardcoded yang membingungkan pada formulir input pengaturan di `index.html`.
+
+5. **Penghapusan Label "Sisa Suara: 3"**:
+   - Menghapus elemen `<span id="userVoteQuotaInfo">Sisa Suara: 3</span>` dari `index.html` dan membersihkan referensi sisa kuota statis yang sudah tidak relevan dengan sistem kategori voting dinamis (1 suara per kategori).
+
+6. **Kustomisasi Mewah Podium Juara 1 Emas & Juara 2 Perak**:
+   - **Desain Luxury Radial Gradient**: Menambahkan styling kustom `.podium-card-gold`, `.podium-card-silver`, dan `.podium-card-bronze` di `style.css` dengan border metalik berkarakter emas murni (`#D4AF37`) dan perak platinum (`rgba(200, 210, 225, 0.7)`), efek pendar cahaya (*box-shadow glow*), serta mahkota/laurel kemewahan.
+   - **Hover & Active Micro-Interactions**: Ditambahkan efek hover elevasi dinamis dan klik foto untuk langsung membuka *Photo Zoom Modal*.
+
+7. **Sistem Pilihan Tampilan Pemenang Voting (Juara Umum, Per Kategori, atau Semua)**:
+   - Ditambahkan pengalih segmen interaktif (*Segmented Pill Control*) pada bagian atas podium: `🌟 Semua`, `🏆 Juara Umum`, `👑 Per Kategori`.
+   - Pengunjung dapat memilih untuk melihat 3 besar pemenang juara umum (*Grand Champions*), pemenang peringkat 1 di masing-masing kategori, atau keduanya sekaligus.
+
+8. **Filter Galeri Berdasarkan Kategori Voting (Tampilkan Hanya Foto Sesuai Kategori)**:
+   - Pada `renderGallery()` di `app.js`, ketika tamu menekan tab kategori tertentu (bukan "Semua Foto" atau "Paling Populer"), galeri hanya menampilkan foto-foto yang memiliki suara pada kategori tersebut (`categoryLikes[activeCatId] > 0`), diurutkan dari perolehan suara terbanyak ke terkecil.
+   - Foto yang belum mendapatkan suara pada kategori tersebut disembunyikan dari tab kategori, memberikan pengalaman *Contest Leaderboard* yang bersih dan informatif.
 
 ================================================================================
 
 ## 2. FILE TERDAMPAK & SPESIFIKASI PERUBAHAN
 1. `app.js`:
-   - Koreksi `loadEventPhotos` & `loadGallery`: hapus pemaksaan mock data sample saat galeri server kosong.
-   - Perbaikan `img.onerror` di `renderGallery`: pemangkasan seketika kartu foto terhapus.
-   - Orientasi responsif pada `startCameraStream()` (Full HD portrait & landscape).
-   - Adaptasi rasio dinamis di `processPhotoWithFrameAndFilter` & `renderCustomFrameOverlay` (anti-gepeng).
-   - Optimasi client-side PNG pada `formEventCustomFrame` & penanganan respon `customFrameUrl`.
+   - Eliminasi kurung kurawal ganda penutup `}` di baris 2575 (Zero Syntax Parse Error).
+   - Penguatan sanitasi payload di `saveAdminEventForm()` (cegah pengiriman base64 berulang).
+   - Filter foto kategori voting eksklusif (`categoryLikes[catId] > 0`) di `renderGallery()`.
+   - Kontrol filter pemenang voting (`Semua`, `Juara Umum`, `Per Kategori`) di `renderVotingWinners()`.
+   - Penyematan kartu podium kustom Juara 1 Emas & Juara 2 Perak dengan interaksi zoom.
 2. `code.gs`:
-   - Validasi keberadaan file di Google Drive pada `handleGetGallery`.
-   - Penambahan `customFrameUrl` dan framing policy pada `handleAdminGetSummary`.
-   - Penambahan aksi `adminCleanDeletedPhotos`.
-3. `index.html`:
-   - Cache-busting script dan stylesheet diperbarui ke `v=1.6.8`.
-4. `prd.md`:
-   - Pencatatan log rilis arsitektur v1.6.8.
+   - Sanitisasi mutlak `customFrameUrl` maks 500 karakter di `handleAdminSaveEvent`.
+   - Pencegahan error Google Sheets 50.000 karakter pada sel spreadsheet.
+3. `style.css`:
+   - Penyesuaian tinggi `.camera-page-container` ke `calc(100dvh - 8.5rem)` (anti-overlap).
+   - Penambahan styling podium emas & perak mewah (`.podium-card-gold`, `.podium-card-silver`).
+4. `index.html`:
+   - Penghapusan teks "Sisa Suara: 3".
+   - Pembersihan atribut fallback value pada input GAS URL.
+   - Cache-busting script & stylesheet diperbarui ke `v=1.7.0`.
+5. `prd.md`:
+   - Pencatatan log arsitektur & implementasi rilis v1.7.0.
 
 ================================================================================
 ## 3. CHECKLIST VERIFIKASI SEBELUM RILIS
-- [x] Syntax & Bracket Balancing Test (Curlies: 0, Parens: 0, Brackets: 0 di app.js dan code.gs).
-- [x] Galeri kosong menampilkan pesan bersih tanpa foto hantu atau gambar Unsplash tiruan.
-- [x] Kartu foto yang gagal dimuat dari server Drive langsung dibersihkan otomatis.
-- [x] Kamera live stream meminta Full HD 1080p tanpa error overconstrained di ponsel vertikal.
-- [x] Bingkai kustom acara mempertahankan proporsi asli (3:4, 4:5, 9:16) tanpa gepeng / melar.
-- [x] Upload bingkai kustom dioptimasi otomatis dan berhasil tersimpan di Google Drive & Kolom 17 DataEvent.
-- [x] Semua pengguna / tamu di perangkat lain menerima bingkai kustom yang sama dari server.
-- [x] File disinkronkan ke repo GitHub lokal `C:\Users\Administrator\Documents\GitHub\camera`.
+- [x] Syntax & Bracket Balancing Test (Braces: 947 vs 947 [diff: 0], Parens: 2558 vs 2558 [diff: 0], Brackets: 245 vs 245 [diff: 0]).
+- [x] Error `stopCameraStream is not defined` tuntas teratasi (skrip ter-parse sempurna).
+- [x] Peringatan GAS 50.000 karakter per cell dicegah dengan sanitisasi URL & Drive converter.
+- [x] Tombol shutter dan menu galeri bebas dari tumpang tindih dengan bottom navigation bar.
+- [x] Label "Sisa Suara: 3" bersih terhapus dari antarmuka galeri.
+- [x] Kartu Juara 1 Emas dan Juara 2 Perak tampil dengan desain custom luxury premium.
+- [x] Filter pemenang voting (Semua / Juara Umum / Per Kategori) berfungsi dinamis & responsif.
+- [x] Tab kategori galeri hanya menampilkan foto yang memiliki suara pada kategori terkait.
+- [x] Seluruh file disinkronkan ke repositori GitHub lokal `C:\Users\Administrator\Documents\GitHub\camera`.

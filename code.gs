@@ -1186,11 +1186,12 @@ function handleAdminSaveEvent(payload) {
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
     if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
       try {
-        let frameBase64 = customFrameUrl.split(",")[1];
+        let parts = customFrameUrl.split(",");
+        let frameBase64 = parts[1];
         let frameMime = "image/png";
         if (customFrameUrl.indexOf("image/jpeg") !== -1) frameMime = "image/jpeg";
         const frameBytes = Utilities.base64Decode(frameBase64);
-        const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + slugEvent + "_" + Date.now() + ".png");
+        const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + (slugEvent || "custom") + "_" + Date.now() + ".png");
         let fFolder = DriveApp.getRootFolder();
         if (folderId) {
           try { fFolder = DriveApp.getFolderById(folderId); } catch(fe) {}
@@ -1200,7 +1201,17 @@ function handleAdminSaveEvent(payload) {
         customFrameUrl = "https://lh3.googleusercontent.com/d/" + fFile.getId();
       } catch (fErr) {
         Logger.log("Custom frame upload error: " + fErr.message);
+        customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL]) ? oldRow[COL_EVENT.CUSTOM_FRAME_URL] : "";
       }
+    }
+
+    // SANITISASI MUTLAK CELL GOOGLE SHEETS:
+    // Google Sheets membatasi 50.000 karakter per cell. Cegah error 'contains more than maximum 50000 characters'!
+    if (customFrameUrl.indexOf("data:") === 0 || customFrameUrl.length > 500) {
+      Logger.log("Sanitasi customFrameUrl terlalu panjang: " + customFrameUrl.length + " karakter");
+      customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL] && oldRow[COL_EVENT.CUSTOM_FRAME_URL].length <= 500)
+        ? oldRow[COL_EVENT.CUSTOM_FRAME_URL]
+        : "";
     }
 
     // Struktur Penyimpanan Kebijakan Bingkai (Mode Single Lock vs Multi Bebas)
