@@ -63,6 +63,29 @@ const STATE = {
   slideshowTimer: null
 };
 
+// Defensive Global Hook to Prevent Any 'stopCameraStream is not defined' ReferenceErrors
+window.stopCameraStream = function() {
+  if (STATE && STATE.mediaStream) {
+    try {
+      STATE.mediaStream.getTracks().forEach(track => {
+        try { track.stop(); } catch(e) {}
+      });
+    } catch (err) {
+      console.warn("stopCameraStream warning:", err);
+    }
+    STATE.mediaStream = null;
+  }
+  const video = document.getElementById('cameraVideo');
+  if (video) {
+    try { video.srcObject = null; } catch(e) {}
+  }
+};
+function stopCameraStream() {
+  if (typeof window.stopCameraStream === 'function') {
+    window.stopCameraStream();
+  }
+}
+
 // --- DATA ISOLATION HELPERS PER EVENT ---
 function getResolvedEventId(idOrSlug) {
   const target = String(idOrSlug || STATE.activeEventId || '').trim();
@@ -185,36 +208,39 @@ function getQrImageUrl(text, size = 300) {
 
 function getAvailableFrames() {
   const allFrames = [
-    { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin' },
-    { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin' },
-    { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin' },
-    { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin' }
+    { id: 'GOLD_DECO', name: '✨ Gold Deco', type: 'builtin', icon: '✨' },
+    { id: 'POLAROID', name: '📷 Polaroid', type: 'builtin', icon: '📷' },
+    { id: 'MINIMAL', name: '▪️ Minimalist', type: 'builtin', icon: '▪️' },
+    { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin', icon: '🚫' }
   ];
+
+  // Prioritas Utama: Bingkai Kustom Acara yang aktif saat ini
+  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
+  if (activeCustomData) {
+    allFrames.unshift({
+      id: 'CUSTOM_EVENT',
+      name: STATE.activeEvent?.customFrameName ? `🖼️ ${STATE.activeEvent.customFrameName}` : '🖼️ Bingkai Kustom Acara',
+      type: 'custom',
+      scope: 'event',
+      dataUrl: activeCustomData,
+      icon: '🖼️'
+    });
+  }
 
   if (Array.isArray(STATE.customFrames)) {
     const activeEvId = getResolvedEventId(STATE.activeEventId);
     STATE.customFrames.forEach(cf => {
       const cfEvId = cf.eventId ? getResolvedEventId(cf.eventId) : '';
-      if (cf.scope === 'global' || !cf.eventId || cfEvId === activeEvId) {
+      if ((cf.scope === 'global' || !cf.eventId || cfEvId === activeEvId) && !allFrames.some(f => f.id === cf.id || (cf.dataUrl && f.dataUrl === cf.dataUrl))) {
         allFrames.push({
           id: cf.id,
           name: `🖼️ ${cf.name || 'Custom'}`,
           type: 'custom',
           scope: cf.scope,
-          dataUrl: cf.dataUrl
+          dataUrl: cf.dataUrl,
+          icon: '🖼️'
         });
       }
-    });
-  }
-
-  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
-  if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
-    allFrames.push({
-      id: 'CUSTOM_EVENT',
-      name: STATE.activeEvent?.customFrameName ? `🖼️ ${STATE.activeEvent.customFrameName}` : '🖼️ Bingkai Kustom Acara',
-      type: 'custom',
-      scope: 'event',
-      dataUrl: activeCustomData
     });
   }
 
@@ -235,16 +261,15 @@ function getAvailableFrames() {
     const isCustomMatch = (id, frame) => {
       if (!frame) return false;
       if (frame.id === id) return true;
-      const isCustomKey = (id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).indexOf('frame_') === 0 || String(id).indexOf('FRAME_') === 0);
-      if (isCustomKey && (frame.type === 'custom' || frame.id === 'CUSTOM_EVENT' || (activeCustomData && frame.dataUrl === activeCustomData))) {
-        return true;
+      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
+        return frame.id === 'CUSTOM_EVENT' || (activeCustomData && frame.dataUrl === activeCustomData);
       }
       return false;
     };
 
     // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (jangan tampilkan yang lainnya)
     if (mode === 'single') {
-      const targetLocked = lockedId || (Array.isArray(activeList) && activeList[0]) || 'GOLD_DECO';
+      const targetLocked = lockedId || (Array.isArray(activeList) && activeList[0]) || (activeCustomData ? 'CUSTOM_EVENT' : 'GOLD_DECO');
       const single = allFrames.find(f => isCustomMatch(targetLocked, f));
       return [single || allFrames[0]];
     }
@@ -1071,6 +1096,10 @@ async function loadGallery() {
 
       STATE.photos = finalPhotos;
       STATE.votedPhotoIds = res.votedPhotoIds || [];
+      if (Array.isArray(res.categories) && res.categories.length > 0) {
+        STATE.activeCategories = res.categories;
+        applyEventToUI();
+      }
       saveEventPhotos(targetId);
       renderGallery();
 
@@ -1192,29 +1221,63 @@ function applyEventToUI() {
     STATE.customFrameImgObj = null;
   }
 
-  // Render Pilihan Frame di Viewfinder (Dinamis sesuai izin Admin)
+  // Render Pilihan Frame di Viewfinder (Dinamis sesuai mode Single Lock / Multi Bebas)
   const frameContainer = document.getElementById('frameListContainer');
+  const singleBadge = document.getElementById('camSingleFrameBadge');
+  const singleNameEl = document.getElementById('camSingleFrameName');
   const availFrames = getAvailableFrames();
-  if (frameContainer) {
-    frameContainer.innerHTML = availFrames.map(f => `
-      <button data-frame="${f.id}" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">${f.name}</button>
-    `).join('');
+  const isSingleLock = (ev.frameLockMode === 'single');
+
+  if (isSingleLock) {
+    if (frameContainer) frameContainer.classList.add('hidden');
+    if (singleBadge) {
+      singleBadge.classList.remove('hidden');
+      const activeObj = availFrames[0];
+      if (singleNameEl) singleNameEl.textContent = activeObj ? activeObj.name.replace(/^🖼️\s*/, '') : 'Bingkai Acara';
+    }
+  } else {
+    if (singleBadge) singleBadge.classList.add('hidden');
+    if (frameContainer) {
+      frameContainer.classList.remove('hidden');
+      frameContainer.innerHTML = availFrames.map(f => {
+        const isActive = (STATE.activeFrame === f.id);
+        const thumbHtml = f.dataUrl 
+          ? `<img src="${f.dataUrl}" class="w-4 h-4 object-contain rounded shrink-0 pointer-events-none" alt="" />`
+          : `<span class="text-[10px] pointer-events-none">${f.icon || '🖼️'}</span>`;
+        return `
+          <button data-frame="${f.id}" class="frame-pill shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${isActive ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition active:scale-95">
+            ${thumbHtml}
+            <span class="truncate max-w-[90px]">${f.name.replace(/^🖼️\s*/, '')}</span>
+          </button>
+        `;
+      }).join('');
+    }
   }
 
   // Render Kategori Voting di Galeri
   const catContainer = document.getElementById('galleryCategoryTabs');
-  catContainer.innerHTML = `
-    <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">Semua Foto</button>
-    <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">🔥 Paling Populer</button>
-  `;
+  if (catContainer) {
+    const isAll = (STATE.activeGalleryFilter === 'ALL' || !STATE.activeGalleryFilter);
+    const isWinners = (STATE.activeGalleryFilter === 'WINNERS');
+    const isPopular = (STATE.activeGalleryFilter === 'POPULAR');
 
-  STATE.activeCategories.forEach(cat => {
-    const btn = document.createElement('button');
-    btn.setAttribute('data-cat', cat.idKategori);
-    btn.className = "cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition";
-    btn.textContent = `👑 ${cat.namaKategori}`;
-    catContainer.appendChild(btn);
-  });
+    let tabsHtml = `
+      <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} transition">Semua Foto</button>
+      <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isWinners ? 'bg-amber-400 text-black border-amber-400 shadow-sm' : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'} transition flex items-center gap-1.5">🏆 Pemenang Voting</button>
+      <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isPopular ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} transition">🔥 Paling Populer</button>
+    `;
+
+    (STATE.activeCategories || []).forEach(cat => {
+      const isCatActive = (STATE.activeGalleryFilter === cat.idKategori);
+      tabsHtml += `
+        <button data-cat="${cat.idKategori}" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isCatActive ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} transition">
+          👑 ${cat.namaKategori}
+        </button>
+      `;
+    });
+
+    catContainer.innerHTML = tabsHtml;
+  }
 
   // Set bingkai aktif sesuai kebijakan frame acara
   let targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
@@ -1336,15 +1399,29 @@ function applyActiveFrame(frameId) {
   const activeFrameNameEl = document.getElementById('activeFrameName');
   if (activeFrameNameEl) activeFrameNameEl.textContent = (selected?.name || '').toUpperCase();
   
+  // Sinkronisasi status visual pill bingkai di Viewfinder Live Cam
+  document.querySelectorAll('#frameListContainer .frame-pill').forEach(pill => {
+    const pId = pill.getAttribute('data-frame');
+    if (pId === STATE.activeFrame) {
+      pill.classList.remove('bg-white/5', 'text-zinc-300', 'border-white/10');
+      pill.classList.add('bg-brand-gold', 'text-black', 'border-brand-gold', 'shadow-sm');
+    } else {
+      pill.classList.remove('bg-brand-gold', 'text-black', 'border-brand-gold', 'shadow-sm');
+      pill.classList.add('bg-white/5', 'text-zinc-300', 'border-white/10');
+    }
+  });
+
   const customImgEl = document.getElementById('vfCustomFrameImg');
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
   
   let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
-  if (!customUrl && selected && selected.type === 'custom') {
+  if (!customUrl && selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT')) {
     customUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
   }
 
-  if (selected && selected.type === 'custom' && customUrl) {
+  const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT') && customUrl);
+
+  if (isCustomFrame) {
     if (customImgEl) {
       customImgEl.src = customUrl;
       customImgEl.classList.remove('hidden');
@@ -2108,6 +2185,14 @@ function renderGallery() {
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+  } else if (STATE.activeGalleryFilter && STATE.activeGalleryFilter !== 'ALL') {
+    const activeCatId = STATE.activeGalleryFilter;
+    filtered.sort((a, b) => {
+      const likesA = (a.categoryLikes && a.categoryLikes[activeCatId]) || 0;
+      const likesB = (b.categoryLikes && b.categoryLikes[activeCatId]) || 0;
+      if (likesB !== likesA) return likesB - likesA;
+      return (b.totalLikes || 0) - (a.totalLikes || 0);
+    });
   }
 
   if (countBadge) {
@@ -2126,9 +2211,14 @@ function renderGallery() {
 
     filtered.forEach(photo => {
       const isVoted = Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(photo.idFoto);
+      const isCatFilter = Boolean(STATE.activeGalleryFilter && STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'POPULAR');
+      const catLikes = isCatFilter ? ((photo.categoryLikes && photo.categoryLikes[STATE.activeGalleryFilter]) || 0) : null;
+      
       const card = document.createElement('div');
       card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
       card.setAttribute('data-id', photo.idFoto);
+
+      const likeBadgeText = isCatFilter ? `${catLikes} Suara Kategori` : `${photo.totalLikes || 0}`;
 
       card.innerHTML = `
         <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
@@ -2137,14 +2227,14 @@ function renderGallery() {
             <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
           </div>
         </div>
-        <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
-          <div class="truncate pr-1">
+        <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5 gap-1.5">
+          <div class="truncate min-w-0">
             <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
-            <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+            <div class="text-[9px] text-zinc-400 uppercase truncate">${photo.cameraStyle || '800T'}</div>
           </div>
-          <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
+          <button class="btn-like-photo shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
             <span>${isVoted ? '❤️' : '🤍'}</span>
-            <span>${photo.totalLikes || 0}</span>
+            <span>${likeBadgeText}</span>
           </button>
         </div>
       `;
@@ -2175,7 +2265,8 @@ function renderVotingWinners() {
   if (empty) empty.classList.add('hidden');
   podium.innerHTML = '';
 
-  const sorted = [...STATE.photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+  const photos = Array.isArray(STATE.photos) ? STATE.photos : [];
+  const sorted = [...photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   if (countBadge) countBadge.textContent = `${sorted.length} Foto Pilihan`;
 
   if (sorted.length === 0 || (sorted[0].totalLikes || 0) === 0) {
@@ -2190,66 +2281,143 @@ function renderVotingWinners() {
   }
 
   const p1 = sorted[0];
-  const p2 = sorted.length > 1 ? sorted[1] : null;
-  const p3 = sorted.length > 2 ? sorted[2] : null;
+  const p2 = sorted.length > 1 && (sorted[1].totalLikes || 0) > 0 ? sorted[1] : null;
+  const p3 = sorted.length > 2 && (sorted[2].totalLikes || 0) > 0 ? sorted[2] : null;
 
   let podiumHtml = `
-    <!-- Juara 1 Emas (Champion) -->
-    <div class="podium-card-gold winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="0" title="Klik untuk memperbesar foto Juara 1">
-      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
-        <span>🥇 Juara 1 (Emas)</span>
+    <!-- 1. PODIUM JUARA UMUM TERFAVORIT PESTA -->
+    <div class="mb-6">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-base">🌟</span>
+        <h4 class="font-bold text-xs uppercase tracking-widest text-brand-gold">Juara Umum Terfavorit Pesta</h4>
       </div>
-      <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-brand-gold/70 shadow-xl">
-        <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
-      </div>
-      <h4 class="font-bold text-sm text-white">${p1.guestNama}</h4>
-      <p class="text-xs text-zinc-300 italic truncate max-w-[220px] mb-2">"${p1.caption || 'Tanpa ucapan'}"</p>
-      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold border border-brand-gold/40">
-        <span>❤️</span>
-        <span>${p1.totalLikes || 0} Suka</span>
-      </div>
-      <span class="text-[10px] text-brand-gold/70 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
-    </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <!-- Juara 1 Emas (Champion) -->
+        <div class="podium-card-gold winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none bg-gradient-to-b from-amber-500/20 via-[#1A1A24] to-black border-2 border-brand-gold shadow-xl hover:scale-[1.02] transition" data-photo-id="${p1.idFoto}" title="Klik untuk memperbesar foto Juara 1">
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold text-black text-[11px] font-extrabold uppercase tracking-wider mb-2.5 shadow-md">
+            <span>🥇 Juara 1 (Emas)</span>
+          </div>
+          <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border border-brand-gold/60 shadow-xl">
+            <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
+          </div>
+          <h4 class="font-bold text-sm text-white truncate max-w-[170px]">${p1.guestNama || 'Tamu'}</h4>
+          <p class="text-xs text-zinc-300 italic truncate max-w-[180px] mb-2">"${p1.caption || 'Tanpa ucapan'}"</p>
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold border border-brand-gold/40">
+            <span>❤️</span>
+            <span>${p1.totalLikes || 0} Suka Total</span>
+          </div>
+          <span class="text-[10px] text-brand-gold/70 mt-1 font-medium">🔍 Klik untuk perbesar</span>
+        </div>
   `;
 
   if (p2) {
     podiumHtml += `
-      <!-- Juara 2 Perak -->
-      <div class="podium-card-silver winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="1" title="Klik untuk memperbesar foto Juara 2">
-        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-300 text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
-          <span>🥈 Juara 2 (Perak)</span>
+        <!-- Juara 2 Perak -->
+        <div class="podium-card-silver winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none bg-gradient-to-b from-zinc-400/15 via-[#1A1A24] to-black border border-zinc-400/50 shadow-lg hover:scale-[1.02] transition" data-photo-id="${p2.idFoto}" title="Klik untuk memperbesar foto Juara 2">
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-300 text-black text-[11px] font-extrabold uppercase tracking-wider mb-2.5 shadow-md">
+            <span>🥈 Juara 2 (Perak)</span>
+          </div>
+          <div class="w-28 h-36 rounded-xl overflow-hidden bg-black mb-2 border border-zinc-400/60 shadow-lg">
+            <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
+          </div>
+          <h4 class="font-bold text-sm text-white truncate max-w-[150px]">${p2.guestNama || 'Tamu'}</h4>
+          <p class="text-xs text-zinc-300 italic truncate max-w-[160px] mb-2">"${p2.caption || 'Tanpa ucapan'}"</p>
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 text-zinc-200 text-xs font-bold border border-white/20">
+            <span>❤️</span>
+            <span>${p2.totalLikes || 0} Suka Total</span>
+          </div>
+          <span class="text-[10px] text-zinc-400 mt-1 font-medium">🔍 Klik untuk perbesar</span>
         </div>
-        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/70 shadow-lg">
-          <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
-        </div>
-        <h4 class="font-bold text-sm text-white">${p2.guestNama}</h4>
-        <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p2.caption || 'Tanpa ucapan'}"</p>
-        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 text-zinc-200 text-xs font-bold border border-white/20">
-          <span>❤️</span>
-          <span>${p2.totalLikes || 0} Suka</span>
-        </div>
-        <span class="text-[10px] text-zinc-400 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
-      </div>
     `;
   }
 
   if (p3) {
     podiumHtml += `
-      <!-- Juara 3 Perunggu -->
-      <div class="podium-card-bronze winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none" data-idx="2" title="Klik untuk memperbesar foto Juara 3">
-        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-700 text-white text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
-          <span>🥉 Juara 3 (Perunggu)</span>
+        <!-- Juara 3 Perunggu -->
+        <div class="podium-card-bronze winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none bg-gradient-to-b from-amber-700/15 via-[#1A1A24] to-black border border-amber-600/50 shadow-lg hover:scale-[1.02] transition" data-photo-id="${p3.idFoto}" title="Klik untuk memperbesar foto Juara 3">
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-700 text-white text-[11px] font-extrabold uppercase tracking-wider mb-2.5 shadow-md">
+            <span>🥉 Juara 3 (Perunggu)</span>
+          </div>
+          <div class="w-28 h-36 rounded-xl overflow-hidden bg-black mb-2 border border-amber-600/60 shadow-lg">
+            <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
+          </div>
+          <h4 class="font-bold text-sm text-white truncate max-w-[150px]">${p3.guestNama || 'Tamu'}</h4>
+          <p class="text-xs text-zinc-300 italic truncate max-w-[160px] mb-2">"${p3.caption || 'Tanpa ucapan'}"</p>
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-600/20 text-amber-300 text-xs font-bold border border-amber-600/40">
+            <span>❤️</span>
+            <span>${p3.totalLikes || 0} Suka Total</span>
+          </div>
+          <span class="text-[10px] text-amber-300/70 mt-1 font-medium">🔍 Klik untuk perbesar</span>
         </div>
-        <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/70 shadow-lg">
-          <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
+    `;
+  }
+
+  podiumHtml += `
+      </div>
+    </div>
+  `;
+
+  // 2. HASIL JUARA PER KATEGORI VOTING (CATEGORY WINNERS BREAKDOWN)
+  const cats = Array.isArray(STATE.activeCategories) ? STATE.activeCategories : [];
+  if (cats.length > 0) {
+    podiumHtml += `
+      <div class="mt-8 pt-5 border-t border-white/10">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-base">👑</span>
+          <h4 class="font-bold text-xs uppercase tracking-widest text-amber-300">Juara per Kategori Voting</h4>
         </div>
-        <h4 class="font-bold text-sm text-white">${p3.guestNama}</h4>
-        <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p3.caption || 'Tanpa ucapan'}"</p>
-        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-600/20 text-amber-300 text-xs font-bold border border-amber-600/40">
-          <span>❤️</span>
-          <span>${p3.totalLikes || 0} Suka</span>
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+    `;
+
+    cats.forEach(cat => {
+      let topCatPhoto = null;
+      let maxCatLikes = 0;
+      photos.forEach(p => {
+        const cLikes = (p.categoryLikes && p.categoryLikes[cat.idKategori]) || 0;
+        if (cLikes > maxCatLikes) {
+          maxCatLikes = cLikes;
+          topCatPhoto = p;
+        }
+      });
+
+      if (topCatPhoto && maxCatLikes > 0) {
+        podiumHtml += `
+          <div class="winner-podium-card flex items-center gap-3 p-3 rounded-2xl bg-brand-surfaceLight border border-brand-gold/40 hover:border-brand-gold transition cursor-pointer select-none group" data-photo-id="${topCatPhoto.idFoto}" title="Klik untuk perbesar foto pemenang kategori ${cat.namaKategori}">
+            <div class="w-16 h-20 rounded-xl overflow-hidden bg-black shrink-0 border border-brand-gold/50 shadow-md">
+              <img src="${topCatPhoto.gdriveViewUrl}" alt="${topCatPhoto.guestNama}" class="w-full h-full object-cover group-hover:scale-105 transition" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <span class="inline-block text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full mb-1">
+                👑 ${cat.namaKategori}
+              </span>
+              <h5 class="font-bold text-sm text-white truncate">${topCatPhoto.guestNama || 'Tamu'}</h5>
+              <p class="text-xs text-zinc-400 italic truncate mb-1">"${topCatPhoto.caption || 'Momen seru!'}"</p>
+              <div class="inline-flex items-center gap-1 text-[11px] font-bold text-brand-gold bg-brand-gold/10 px-2 py-0.5 rounded-lg border border-brand-gold/20">
+                <span>❤️</span>
+                <span>${maxCatLikes} Suara Kategori</span>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        podiumHtml += `
+          <div class="flex items-center gap-3 p-3 rounded-2xl bg-brand-surfaceLight/50 border border-white/5 opacity-70">
+            <div class="w-16 h-20 rounded-xl bg-white/5 flex items-center justify-center text-2xl shrink-0 border border-white/5">
+              👑
+            </div>
+            <div class="min-w-0 flex-1">
+              <span class="inline-block text-[10px] font-semibold text-zinc-400 bg-white/5 px-2 py-0.5 rounded-full mb-1">
+                👑 ${cat.namaKategori}
+              </span>
+              <p class="text-xs text-zinc-400">Belum ada suara masuk untuk kategori ini.</p>
+            </div>
+          </div>
+        `;
+      }
+    });
+
+    podiumHtml += `
         </div>
-        <span class="text-[10px] text-amber-300/70 mt-1.5 font-medium">🔍 Klik untuk perbesar</span>
       </div>
     `;
   }
@@ -2258,8 +2426,9 @@ function renderVotingWinners() {
 
   podium.querySelectorAll('.winner-podium-card').forEach(el => {
     el.addEventListener('click', () => {
-      const idx = parseInt(el.getAttribute('data-idx'), 10);
-      if (sorted[idx]) openPhotoZoom(sorted[idx]);
+      const pId = el.getAttribute('data-photo-id');
+      const photoObj = STATE.photos.find(p => p.idFoto === pId);
+      if (photoObj) openPhotoZoom(photoObj);
     });
   });
 }
@@ -3564,6 +3733,16 @@ function bindEvents() {
     document.getElementById('activeFilterName').textContent = pill.textContent.trim().toUpperCase();
     document.getElementById('vfFrameTopLeft').textContent = `SNAPEVENT ${STATE.activeFilter}`;
     updateLiveCameraFilter();
+  });
+
+  // Live Camera Frame Selector Pills (Pilih Bingkai Sebelum Foto Langsung di Viewfinder)
+  document.getElementById('frameListContainer')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.frame-pill');
+    if (!pill) return;
+    const chosenFrame = pill.getAttribute('data-frame');
+    if (chosenFrame) {
+      applyActiveFrame(chosenFrame);
+    }
   });
 
   // Review Frame Selector Pills (Pilih Bingkai Pasca-Foto)

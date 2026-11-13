@@ -1,10 +1,59 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.6: FULL HD 1080P, BACKGROUND UPLOAD, DIRECT DRIVE FOLDER ROUTING, MODAL PILIH KATEGORI VOTING)
+STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.7: BALLROOM DEAD-CENTER STAGE, LIVE CAM CUSTOM FRAME SELECTOR & PREVIEW, ZERO EMPTY DRIVE FOLDERS, MOBILE 1-PAGE ZERO-OVERLAP, CATEGORY VOTING WINNERS PODIUM)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.6.6 (Full HD 1080p Quality, Asynchronous Background Upload, Drive Target Folder, Category Voting Modal)
+VERSI RANCANGAN: v1.6.7 (Ballroom Center Stage, Live Cam Frame Bar, Drive Folder Deduplication, Category Voting Podium, Safe StopStream)
+================================================================================
+
+## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.7)
+
+Permintaan pengguna:
+"/zettbot 
+- live ballroom stream, buat foto ditengah, jangan terlalu atas dan atur agar posisi dan ukuran lebih menarik
+- pada menuh pilih bingkai foto pada live cam, tampilan untuk bingkai foto custom tidak ada, perbaiki
+- banyak folder yang terbentuk dan tidak ada isi, contoh seperti gambar yang dilampirkan
+- halaman live cam, perbaiki agar menjadi 1 halaman yang tidak saling menutupi dan bagus untuk digunakan
+- gunakan dan terapkan preview menggunakan custom bingkai foto yang telah ditentukan pada settingan acara
+- buat hasil voting berdasarkan kategori voting dan pemenangnya
+terapkan segera dan jangan ubah yang sudah ada"
+
+Poin Inti Rekayasa v1.6.7:
+1. **Live Ballroom Stream True Dead-Center Stage**:
+   - Restrukturisasi `#modalSlideshow` dengan arsitektur non-blocking overlay (`pointer-events-none`).
+   - Top Bar dan Bottom Bar berada di layer overlay atas dan bawah tanpa mengurangi ruang vertikal panggung utama.
+   - Panggung foto (`slideshowImg`) berada persis di titik tengah layar (true dead-center) dengan `max-h-[77vh] max-w-[70vw]`, berbingkai emas mewah, dan efek transisi lembut.
+   - Kartu ucapan dan nama pengunggah (`slideshowInfoOverlay`) mengambang rapi di bawah foto tanpa menutupi subjek foto.
+
+2. **Menu Pemilihan Bingkai & Pratinjau Bingkai Kustom pada Live Cam**:
+   - Mengaktifkan bar `#liveCamFrameSelectorWrap` di atas viewfinder kamera HP.
+   - Mode Single Lock: Menampilkan badge informatif `🔒 Bingkai Acara: [Nama Bingkai]` dan mengunci preview langsung ke bingkai kustom yang ditentukan admin.
+   - Mode Multi Bebas: Menampilkan pil bingkai yang dapat digeser (termasuk thumbnail bingkai kustom PNG acara).
+   - Mengoreksi logika pencocokan `isCustomMatch` di `getAvailableFrames()` agar bingkai kustom acara (`CUSTOM_EVENT`) tidak tertimpa oleh preset bawaan.
+   - Mengintegrasikan event listener klik pada pil bingkai live cam untuk mengubah pratinjau viewfinder secara seketika (*real-time sync*).
+
+3. **Pemberantasan Pembuatan Folder Kosong di Google Drive**:
+   - Memperbaiki *Temporal Dead Zone* variabel `folderId` pada `handleAdminSaveEvent` di `code.gs`.
+   - Menggunakan kembali `GDRIVE_FOLDER_ID` dari baris `DataEvent` yang sudah ada alih-alih membuat folder baru setiap kali disimpan.
+   - Memeriksa folder di `SnapEvent_Gallery_Master` menggunakan `getFoldersByName` sebelum membuat folder baru.
+   - Menghapus pembuatan folder cadangan acak di root saat pengunggahan foto gagal.
+
+4. **Desain 1 Layar Penuh Bebas Tumpang Tindih (Mobile 100dvh Layout)**:
+   - Mengatur `#viewCamera` dengan container `100dvh - 4.5rem` dengan hirarki vertikal terstruktur: Top Bar Sisa Jepretan, Frame Selector Bar, Viewfinder (`flex-1 min-h-0`), Filter Pills (mengambang di bawah viewfinder), dan Shutter Controls Bar.
+   - Seluruh elemen dapat diakses nyaman tanpa scroll dan tanpa saling tumpang tindih.
+
+5. **Hasil Voting Berdasarkan Kategori & Penentuan Pemenang (Category Winners Podium)**:
+   - Memperbarui `renderVotingWinners()` untuk menampilkan:
+     - **Podium Juara Umum Terfavorit** (Juara 1 Emas, Juara 2 Perak, Juara 3 Perunggu berdasarkan akumulasi like).
+     - **Pemenang per Kategori Acara** (Kartu juara untuk masing-masing kategori, menampilkan foto peraih like terbanyak di kategori tersebut, ucapan, dan jumlah suara).
+   - Memfilter dan mengurutkan galeri saat tab kategori dipilih berdasarkan jumlah suara spesifik kategori.
+
+6. **Perbaikan Defensif `stopCameraStream is not defined`**:
+   - Mendefinisikan `window.stopCameraStream` di layer global paling atas pada `app.js`.
+   - Melindungi setiap pemanggilan `stopCameraStream` dengan pemeriksaan `typeof`.
+   - Memperbarui cache-buster script ke `v=1.6.7`.
+
 ================================================================================
 
 ## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.6)

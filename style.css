@@ -33,6 +33,14 @@
   background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
 }
 
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit) */
 .camera-page-container {
   height: calc(100dvh - 4.5rem);

@@ -441,7 +441,8 @@ function handleGetGallery(eventId, guestId) {
   const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
 
-  // Ambil info status reveal event
+  // Ambil info status reveal event & resolusi Event ID resmi (Mendukung ID maupun Slug)
+  let resolvedEventId = eventId;
   let isRevealed = true;
   let revealMode = "SEGERA";
   let likeEnabled = true;
@@ -450,6 +451,7 @@ function handleGetGallery(eventId, guestId) {
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+        resolvedEventId = evRows[i][COL_EVENT.ID];
         revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
         const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
         isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
@@ -469,21 +471,57 @@ function handleGetGallery(eventId, guestId) {
     };
   }
 
+  // Agregasi Suara per Kategori dari DataVoting (Menghitung like per kategori untuk tiap foto)
+  const photoCatLikes = {}; // { [idFoto]: { [idKategori]: count } }
+  const votedPhotoIds = [];
+  const guestVotesMap = {};
+
+  if (voteSheet && voteSheet.getLastRow() > 1) {
+    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 7).getDisplayValues();
+    for (let vIdx = 0; vIdx < vRows.length; vIdx++) {
+      const vr = vRows[vIdx];
+      const rowEvtId = vr[COL_VOTE.ID_EVENT];
+      if (rowEvtId === resolvedEventId || rowEvtId === eventId) {
+        const pId = vr[COL_VOTE.ID_FOTO];
+        const cId = vr[COL_VOTE.ID_KAT] || "GENERAL";
+        const gId = vr[COL_VOTE.GUEST_ID];
+
+        if (pId) {
+          if (!photoCatLikes[pId]) photoCatLikes[pId] = {};
+          photoCatLikes[pId][cId] = (photoCatLikes[pId][cId] || 0) + 1;
+        }
+
+        if (guestId && gId === guestId) {
+          if (pId && !votedPhotoIds.includes(pId)) {
+            votedPhotoIds.push(pId);
+          }
+          if (cId) {
+            guestVotesMap[cId] = (guestVotesMap[cId] || 0) + 1;
+          }
+        }
+      }
+    }
+  }
+
   // Ambil daftar foto
   const photos = [];
   if (fotoSheet && fotoSheet.getLastRow() > 1) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === eventId) {
+      const fEvtId = fr[COL_FOTO.ID_EVENT];
+      if (fEvtId === resolvedEventId || fEvtId === eventId) {
+        const curPhotoId = fr[COL_FOTO.ID];
+        const catLikes = photoCatLikes[curPhotoId] || {};
         photos.push({
-          idFoto: fr[COL_FOTO.ID],
+          idFoto: curPhotoId,
           guestNama: fr[COL_FOTO.GUEST_NAMA],
           caption: fr[COL_FOTO.CAPTION],
           cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
           frameStyle: fr[COL_FOTO.FRAME_STYLE],
           gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
           totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
+          categoryLikes: catLikes,
           isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
           createdAt: fr[COL_FOTO.CREATED_AT]
         });
@@ -494,13 +532,48 @@ function handleGetGallery(eventId, guestId) {
   // Balik urutan agar foto terbaru tampil di paling atas
   photos.reverse();
 
-  // Ambil riwayat foto yang sudah divote oleh guest ini
-  const votedPhotoIds = [];
-  if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
-    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
-    vRows.forEach(function(vr) {
-      if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
-        votedPhotoIds.push(vr[COL_VOTE.ID_FOTO]);
+  // Hitung Pemenang Voting per Kategori Acara
+  const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+  const categories = [];
+  const categoryWinners = [];
+
+  if (katSheet && katSheet.getLastRow() > 1) {
+    const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
+    kRows.forEach(function(kr) {
+      if (kr[COL_KAT.ID_EVENT] === resolvedEventId || kr[COL_KAT.ID_EVENT] === eventId) {
+        const catId = kr[COL_KAT.ID];
+        const catName = kr[COL_KAT.NAMA];
+        categories.push({
+          idKategori: catId,
+          namaKategori: catName,
+          deskripsi: kr[COL_KAT.DESKRIPSI]
+        });
+
+        // Cari foto dengan like tertinggi di kategori ini
+        let topPhoto = null;
+        let maxLikesInCat = 0;
+        photos.forEach(function(p) {
+          const lCount = (p.categoryLikes && p.categoryLikes[catId]) || 0;
+          if (lCount > maxLikesInCat) {
+            maxLikesInCat = lCount;
+            topPhoto = {
+              idFoto: p.idFoto,
+              guestNama: p.guestNama,
+              caption: p.caption,
+              gdriveViewUrl: p.gdriveViewUrl,
+              likesInCat: lCount,
+              totalLikes: p.totalLikes
+            };
+          }
+        });
+
+        if (topPhoto) {
+          categoryWinners.push({
+            idKategori: catId,
+            namaKategori: catName,
+            winner: topPhoto
+          });
+        }
       }
     });
   }
@@ -510,7 +583,10 @@ function handleGetGallery(eventId, guestId) {
     isRevealed: true,
     likeEnabled: likeEnabled,
     photos: photos,
-    votedPhotoIds: votedPhotoIds
+    votedPhotoIds: votedPhotoIds,
+    guestVotesMap: guestVotesMap,
+    categories: categories,
+    categoryWinners: categoryWinners
   };
 }
 
@@ -674,13 +750,12 @@ function handleUploadPhoto(payload) {
       }
     }
 
-    // C. Prioritas 3: Fallback buat subfolder terorganisir di Drive
+    // C. Prioritas 3: Fallback ke Master Folder atau Root langsung (Cegah pembuatan folder kosong acak)
     if (!targetFolder) {
-      try {
-        const root = DriveApp.getRootFolder();
-        targetFolder = root.createFolder("SnapEvent_" + namaEvent.replace(/[^a-zA-Z0-9]/g, "_"));
-        targetFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (eRoot) {
+      if (masterFolderId) {
+        try { targetFolder = DriveApp.getFolderById(masterFolderId); } catch (eMasterFallback) {}
+      }
+      if (!targetFolder) {
         targetFolder = DriveApp.getRootFolder();
       }
     }
@@ -997,8 +1072,75 @@ function handleAdminSaveEvent(payload) {
     const isRevealed = payload.isRevealed === true || payload.isRevealed === "true";
     const likeEnabled = payload.likeEnabled !== false && payload.likeEnabled !== "false";
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
-    const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
-    const frames = JSON.stringify(payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+    const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+    const ymStr = Utilities.formatDate(new Date(), timeZone, "yyyyMM");
+
+    let savedIdEvent = idEvent;
+
+    // Cari baris event eksisting jika ini adalah update
+    let targetRow = -1;
+    let oldRow = null;
+    if (idEvent && eventSheet && eventSheet.getLastRow() > 1) {
+      const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i][COL_EVENT.ID] === idEvent) {
+          targetRow = i + 2;
+          oldRow = rows[i];
+          break;
+        }
+      }
+    }
+
+    // Resolusi Google Drive Folder ID (Pertahankan folder eksisting & cegah pembentukan folder duplikat)
+    let folderId = String(payload.gdriveFolderId || "").trim();
+    if (!folderId && oldRow) {
+      folderId = String(oldRow[COL_EVENT.GDRIVE_FOLDER_ID] || "").trim();
+    }
+
+    // Jika folderId belum ada, cari di folder Master Drive atau buat 1 folder definitif
+    if (!folderId) {
+      try {
+        const root = DriveApp.getRootFolder();
+        let masterFolder = null;
+        const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+        let masterIdConfig = "";
+        if (configSheet && configSheet.getLastRow() > 1) {
+          const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+          for (let ci = 0; ci < cRows.length; ci++) {
+            if (cRows[ci][COL_CONFIG.KEY] === "master_drive_folder_id") {
+              masterIdConfig = extractDriveFolderId(cRows[ci][COL_CONFIG.VAL]);
+            }
+          }
+        }
+        if (masterIdConfig) {
+          try { masterFolder = DriveApp.getFolderById(masterIdConfig); } catch(me) {}
+        }
+        if (!masterFolder) {
+          const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
+          masterFolder = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
+          masterFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        }
+
+        const safeFolderName = (slugEvent || createSlug(namaEvent)).replace(/[^a-zA-Z0-9_-]/g, "");
+        const subIter = masterFolder.getFoldersByName(safeFolderName);
+        if (subIter.hasNext()) {
+          folderId = subIter.next().getId();
+        } else {
+          const newFolder = masterFolder.createFolder(safeFolderName);
+          newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          folderId = newFolder.getId();
+        }
+      } catch (dErr) {
+        Logger.log("Drive folder reuse warn: " + dErr.message);
+      }
+    }
+
+    // Upload & Konversi Custom Frame Base64 ke File Drive
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
     if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
       try {
@@ -1018,32 +1160,16 @@ function handleAdminSaveEvent(payload) {
         Logger.log("Custom frame upload error: " + fErr.message);
       }
     }
+
+    // Struktur Penyimpanan Kebijakan Bingkai (Mode Single Lock vs Multi Bebas)
+    const framePolicyObj = {
+      mode: payload.frameLockMode || (payload.activeFrames && payload.activeFrames.length === 1 ? "single" : "multi"),
+      locked: payload.singleLockedFrame || (payload.activeFrames && payload.activeFrames[0]) || "GOLD_DECO",
+      frames: payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]
+    };
+    const frames = JSON.stringify(framePolicyObj);
+    const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
     const categories = payload.categories || [];
-
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-    const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
-
-    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
-    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
-    const ymStr = Utilities.formatDate(new Date(), timeZone, "yyyyMM");
-
-    let savedIdEvent = idEvent;
-    let folderId = payload.gdriveFolderId || "";
-
-    // Buat Subfolder Google Drive jika belum ada
-    if (!folderId) {
-      try {
-        const root = DriveApp.getRootFolder();
-        const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
-        const master = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
-        const newFolder = master.createFolder(slugEvent.replace(/[^a-zA-Z0-9_-]/g, ""));
-        newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        folderId = newFolder.getId();
-      } catch (dErr) {
-        Logger.log("Drive folder warn: " + dErr.message);
-      }
-    }
 
     if (!idEvent) {
       // INSERT EVENT BARU (17 Kolom)
