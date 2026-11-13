@@ -1519,17 +1519,24 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
   STATE.rawCapturedImageObj = imgSource;
 
-  // Aspect ratio 4:5 Portrait Standard (1080 x 1350)
-  canvas.width = 1080;
-  canvas.height = 1350;
+  // Ekstraksi dimensi riil (Krusial: HTMLVideoElement, ImageBitmap, HTMLImageElement)
+  const srcWidth = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
+  const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1920;
+  const isLandscape = srcWidth > srcHeight;
 
-  // Optimasi Rendering HD: Smoothing Tajam & Berkualitas Tinggi
+  // Standar Resolusi Full HD (1080p / 1920 x 1080 piksel): 1080 x 1920 Portrait / 1920 x 1080 Landscape
+  if (isLandscape) {
+    canvas.width = 1920;
+    canvas.height = 1080;
+  } else {
+    canvas.width = 1080;
+    canvas.height = 1920;
+  }
+
+  // Optimasi Rendering HD: Smoothing Tajam & Kualitas Maksimal
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // Ekstraksi dimensi riil (Krusial: HTMLVideoElement, ImageBitmap, HTMLImageElement)
-  const srcWidth = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
-  const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
   const imgRatio = srcWidth / srcHeight;
   const targetRatio = canvas.width / canvas.height;
   let renderW, renderH, offsetX, offsetY;
@@ -1559,8 +1566,8 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   STATE.activeFrame = frameToUse;
   await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
-  // Tampilkan ke elemen <img> pratinjau dengan kualitas HD (JPEG 0.95)
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+  // Tampilkan ke elemen <img> pratinjau dengan kualitas Full HD (Sekitar 1 MB hingga 3 MB, JPEG 0.98)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
   STATE.currentCapturedDataUrl = dataUrl;
 
   const reviewImg = document.getElementById('reviewPhotoImg');
@@ -1777,22 +1784,22 @@ function drawDecoCorner(ctx, x, y, flipX = false, flipY = false) {
 function generateSimulatedPartySnapshot() {
   const offCanvas = document.createElement('canvas');
   offCanvas.width = 1080;
-  offCanvas.height = 1350;
+  offCanvas.height = 1920;
   const offCtx = offCanvas.getContext('2d');
 
   // Gradient latar belakang suasana pesta
-  const grad = offCtx.createLinearGradient(0, 0, 1080, 1350);
+  const grad = offCtx.createLinearGradient(0, 0, 1080, 1920);
   grad.addColorStop(0, '#151322');
   grad.addColorStop(0.5, '#2D1B36');
   grad.addColorStop(1, '#110C1B');
   offCtx.fillStyle = grad;
-  offCtx.fillRect(0, 0, 1080, 1350);
+  offCtx.fillRect(0, 0, 1080, 1920);
 
   // Efek Bokeh Cahaya Emas
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 35; i++) {
     const bx = Math.random() * 1080;
-    const by = Math.random() * 1350;
-    const br = 25 + Math.random() * 80;
+    const by = Math.random() * 1920;
+    const br = 30 + Math.random() * 90;
     const bGrad = offCtx.createRadialGradient(bx, by, 0, bx, by, br);
     bGrad.addColorStop(0, 'rgba(255, 215, 0, 0.45)');
     bGrad.addColorStop(0.7, 'rgba(212, 175, 55, 0.15)');
@@ -1805,13 +1812,13 @@ function generateSimulatedPartySnapshot() {
 
   // Teks Momen Pesta
   offCtx.fillStyle = '#F3E5AB';
-  offCtx.font = 'bold 44px "Playfair Display", serif';
+  offCtx.font = 'bold 50px "Playfair Display", serif';
   offCtx.textAlign = 'center';
-  offCtx.fillText(STATE.activeEvent?.namaEvent || "SnapEvent Party", 540, 640);
+  offCtx.fillText(STATE.activeEvent?.namaEvent || "SnapEvent Party", 540, 900);
 
   offCtx.fillStyle = '#E4E4E7';
-  offCtx.font = '24px "Plus Jakarta Sans", sans-serif';
-  offCtx.fillText(STATE.activeEvent?.hashtagEvent || "#MomenTerbaik", 540, 700);
+  offCtx.font = '28px "Plus Jakarta Sans", sans-serif';
+  offCtx.fillText(STATE.activeEvent?.hashtagEvent || "#MomenTerbaik", 540, 960);
 
   return offCanvas;
 }
@@ -1832,10 +1839,8 @@ function downloadPhotoToDevice(dataUrl, photoId) {
   }
 }
 
-// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG LIVE KE GOOGLE DRIVE & GALERI MASING-MASING) ---
+// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG KE HP & UPLOAD LATAR BELAKANG KE GOOGLE DRIVE) ---
 async function handleSavePhotoToDrive() {
-  const btn = document.getElementById('btnSaveToDrive');
-  const btnText = document.getElementById('btnSaveText');
   const caption = document.getElementById('inputPhotoCaption').value.trim();
 
   // Pastikan ada nama tamu saat menyimpan foto ke Drive & Galeri (Camera-First Friendly Fallback)
@@ -1847,127 +1852,179 @@ async function handleSavePhotoToDrive() {
       const nameInputEl = document.getElementById('inputGuestName');
       if (nameInputEl) nameInputEl.value = STATE.guestNama;
     } else {
-      // Fallback nama ramah otomatis agar tamu tetap bisa menyimpan foto seketika
       STATE.guestNama = `Tamu-${STATE.guestId ? STATE.guestId.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
       localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
     }
   }
 
-  btn.disabled = true;
-  btnText.textContent = "Mengunggah ke Drive...";
+  const targetEventId = getResolvedEventId(STATE.activeEventId);
+  const dataUrlToSave = STATE.currentCapturedDataUrl;
+  const tempPhotoId = "FTO-" + Date.now();
 
-  try {
-    const targetEventId = getResolvedEventId(STATE.activeEventId);
+  // 1. LANGKAH INSTAN 1: Simpan Langsung ke Galeri / Download HP Tamu (Tanpa Menunggu Server)
+  downloadPhotoToDevice(dataUrlToSave, tempPhotoId);
 
-    // 1. JIKA API GAS TERSEDIA: UPLOAD LANGSUNG LIVE KE DRIVE & SHEETS
-    if (STATE.gasApiUrl) {
-      const payload = {
-        action: "uploadPhoto",
-        eventId: targetEventId,
-        guestId: STATE.guestId,
-        guestNama: STATE.guestNama || "Tamu",
-        caption: caption || "Momen seru!",
-        cameraStyle: STATE.activeFilter || "RAW",
-        frameStyle: STATE.activeFrame || "POLAROID",
-        imageBase64: STATE.currentCapturedDataUrl
-      };
+  // 2. LANGKAH INSTAN 2: Simpan ke Galeri Lokal Aplikasi (Optimistic UI)
+  const localPhoto = {
+    idFoto: tempPhotoId,
+    eventId: targetEventId,
+    guestId: STATE.guestId,
+    guestNama: STATE.guestNama || "Tamu",
+    caption: caption || "Momen seru!",
+    cameraStyle: STATE.activeFilter || "RAW",
+    frameStyle: STATE.activeFrame || "POLAROID",
+    gdriveViewUrl: dataUrlToSave,
+    totalLikes: 0,
+    isFeatured: false,
+    createdAt: "Baru Saja",
+    isUploading: true
+  };
 
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
-      const res = await resp.json();
+  STATE.photos = [localPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
+  saveEventPhotos(targetEventId);
 
-      if (res && res.status === 'success') {
-        const cloudPhoto = {
-          idFoto: res.idFoto || ("FTO-" + Date.now()),
+  // 3. LANGKAH INSTAN 3: Tutup Modal Review Segera Agar Tamu Bebas Menjepret Foto Selanjutnya!
+  document.getElementById('modalReviewPhoto').classList.add('hidden');
+  updateRemainingQuotaDisplay();
+  updateGuestIdentityUI();
+  showToast("💾 Foto tersimpan di HP! Mengunggah ke server di latar belakang...", "info");
+
+  // Reset input caption untuk foto berikutnya
+  document.getElementById('inputPhotoCaption').value = "";
+
+  // 4. PROSES UNGGAH DI LATAR BELAKANG (ASYNCHRONOUS BACKGROUND UPLOAD KE GOOGLE DRIVE)
+  if (STATE.gasApiUrl) {
+    (async () => {
+      try {
+        const payload = {
+          action: "uploadPhoto",
           eventId: targetEventId,
+          folderId: STATE.activeEvent?.gdriveFolderId || STATE.driveMasterId || "",
           guestId: STATE.guestId,
           guestNama: STATE.guestNama || "Tamu",
           caption: caption || "Momen seru!",
           cameraStyle: STATE.activeFilter || "RAW",
           frameStyle: STATE.activeFrame || "POLAROID",
-          gdriveViewUrl: res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : STATE.currentCapturedDataUrl),
-          totalLikes: 0,
-          isFeatured: false,
-          createdAt: "Baru Saja"
+          imageBase64: dataUrlToSave
         };
 
-        // 1. Simpan salinan kualitas HD langsung ke galeri / penyimpanan ponsel tamu
-        downloadPhotoToDevice(STATE.currentCapturedDataUrl, cloudPhoto.idFoto);
+        const resp = await fetch(STATE.gasApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
 
-        // 2. Masukkan foto cloud ke daftar foto terdepan
-        STATE.photos = [cloudPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== cloudPhoto.idFoto)];
-        saveEventPhotos(targetEventId);
-
-        // Tutup modal review foto dan alihkan ke galeri
-        document.getElementById('modalReviewPhoto').classList.add('hidden');
-        showView('viewGallery');
-        renderGallery();
-        updateRemainingQuotaDisplay();
-        updateGuestIdentityUI();
-
-        showToast("✅ Foto tersimpan di Galeri HP & berhasil diunggah ke Google Drive!", "success");
-
-        // Sinkronkan galeri dengan cloud database
-        loadGallery();
-        return;
-      } else if (res && res.status === 'limit_reached') {
-        showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
-        return;
-      } else {
-        throw new Error((res && res.message) || "Gagal mengunggah foto ke Google Drive.");
+        if (res && res.status === 'success') {
+          // Sinkronkan ID resmi dan URL Google Drive ke foto lokal
+          const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+          if (idx !== -1) {
+            STATE.photos[idx].idFoto = res.idFoto || tempPhotoId;
+            STATE.photos[idx].gdriveViewUrl = res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : dataUrlToSave);
+            STATE.photos[idx].isUploading = false;
+          }
+          if (res.folderId && STATE.activeEvent && !STATE.activeEvent.gdriveFolderId) {
+            STATE.activeEvent.gdriveFolderId = res.folderId;
+            localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+          }
+          saveEventPhotos(targetEventId);
+          showToast("☁️ Foto berhasil terunggah ke Google Drive & Galeri Acara!", "success");
+          if (!document.getElementById('viewGallery')?.classList.contains('hidden')) {
+            renderGallery();
+          }
+        } else if (res && res.status === 'limit_reached') {
+          showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+        }
+      } catch (bgErr) {
+        console.warn("Background upload warning:", bgErr.message);
+        const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+        if (idx !== -1) {
+          STATE.photos[idx].isUploading = false;
+          STATE.photos[idx].uploadPending = true;
+        }
       }
-    }
-
-    // 2. FALLBACK OFFLINE (Hanya jika belum ada GAS API)
-    const localPhotoId = "FTO-" + Date.now();
-    const newPhoto = {
-      idFoto: localPhotoId,
-      eventId: targetEventId,
-      guestId: STATE.guestId,
-      guestNama: STATE.guestNama || "Tamu",
-      caption: caption || "Momen seru!",
-      cameraStyle: STATE.activeFilter || "RAW",
-      frameStyle: STATE.activeFrame || "POLAROID",
-      gdriveViewUrl: STATE.currentCapturedDataUrl,
-      totalLikes: 0,
-      isFeatured: false,
-      createdAt: "Baru Saja"
-    };
-
-    // Simpan salinan kualitas HD ke galeri ponsel
-    downloadPhotoToDevice(STATE.currentCapturedDataUrl, localPhotoId);
-
-    STATE.photos = [newPhoto, ...(STATE.photos || [])];
-    saveEventPhotos(targetEventId);
-
-    document.getElementById('modalReviewPhoto').classList.add('hidden');
-    showView('viewGallery');
-    renderGallery();
-    updateRemainingQuotaDisplay();
-    updateGuestIdentityUI();
-    showToast("✅ Foto tersimpan di Galeri HP (Mode offline)", "info");
-
-  } catch (err) {
-    console.error("Upload Google Drive error:", err);
-    showToast("⚠️ Gagal upload: " + err.message, "error");
-  } finally {
-    btn.disabled = false;
-    btnText.textContent = "Simpan ke Rol";
+    })();
   }
 }
 
-// --- 7. VOTING / LIKE SYSTEM (MUTLAK 1X PER KATEGORI) ---
-async function handleVotePhoto(idFoto, idKategori = '') {
-  // Ambil kategori aktif atau kategori default
-  const targetCat = idKategori || (STATE.activeCategories[0]?.idKategori || 'KAT-001');
+// --- 7. VOTING / LIKE SYSTEM (PILIHAN KATEGORI & 1X PER KATEGORI PER USER) ---
+function openVoteCategoryModal(photoId) {
+  // Cek apakah user sudah pernah menyukai foto ini
+  if (STATE.votedPhotoIds.includes(photoId)) {
+    showToast("Anda sudah memberikan suara untuk foto ini!", "warning");
+    return;
+  }
 
-  // Enforce 1 vote per category (Aturan Ketat)
-  if (STATE.votedCategoryIds.includes(targetCat)) {
+  const categories = STATE.activeCategories || [];
+  if (categories.length === 0) {
+    showToast("Belum ada kategori voting aktif untuk acara ini.", "info");
+    return;
+  }
+
+  const modal = document.getElementById('modalVoteCategory');
+  const container = document.getElementById('voteCategoryListContainer');
+  const hintEl = document.getElementById('voteModalRemainingHint');
+
+  const votedCats = STATE.votedCategoryIds || [];
+  const remainingCount = categories.filter(c => !votedCats.includes(c.idKategori)).length;
+
+  if (hintEl) {
+    if (remainingCount > 0) {
+      hintEl.textContent = `Sisa kuota suara Anda: ${remainingCount} dari ${categories.length} kategori`;
+    } else {
+      hintEl.textContent = `Seluruh kategori telah Anda beri suara (Maksimal 1x per kategori)`;
+    }
+  }
+
+  container.innerHTML = categories.map(cat => {
+    const isVoted = votedCats.includes(cat.idKategori);
+    if (isVoted) {
+      return `
+        <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 opacity-40 cursor-not-allowed">
+          <div>
+            <p class="text-xs font-semibold text-zinc-300">👑 ${cat.namaKategori}</p>
+            <p class="text-[10px] text-zinc-500">${cat.deskripsi || 'Kategori resmi acara'}</p>
+          </div>
+          <span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            ✓ Sudah Dipilih (1x)
+          </span>
+        </div>
+      `;
+    } else {
+      return `
+        <button data-cat-id="${cat.idKategori}" class="btn-select-vote-cat w-full flex items-center justify-between p-3 rounded-xl bg-[#1D1D26] hover:bg-brand-gold/15 border border-white/10 hover:border-brand-gold transition text-left group">
+          <div>
+            <p class="text-xs font-bold text-white group-hover:text-brand-gold transition">👑 ${cat.namaKategori}</p>
+            <p class="text-[10px] text-zinc-400">${cat.deskripsi || 'Klik untuk memberikan 1 suara'}</p>
+          </div>
+          <span class="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-brand-gold text-black shadow-sm group-hover:scale-105 transition">
+            Pilih Ini
+          </span>
+        </button>
+      `;
+    }
+  }).join('');
+
+  // Pasang event listener klik pada kategori yang belum digunakan
+  container.querySelectorAll('.btn-select-vote-cat').forEach(btn => {
+    btn.onclick = () => {
+      const chosenCatId = btn.getAttribute('data-cat-id');
+      modal.classList.add('hidden');
+      handleVotePhoto(photoId, chosenCatId);
+    };
+  });
+
+  modal.classList.remove('hidden');
+}
+
+async function handleVotePhoto(idFoto, idKategori) {
+  if (!idKategori) {
+    openVoteCategoryModal(idFoto);
+    return;
+  }
+
+  // Enforce 1 vote per category (Aturan Ketat: 1 user hanya 1x per kategori)
+  if (STATE.votedCategoryIds.includes(idKategori)) {
     showToast("Anda sudah memberikan voting pada kategori ini (Maksimal 1 kali voting per kategori)!", "warning");
     return;
   }
@@ -1977,55 +2034,57 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     return;
   }
 
-  try {
-    if (STATE.gasApiUrl) {
+  const catObj = (STATE.activeCategories || []).find(c => c.idKategori === idKategori);
+  const catName = catObj ? catObj.namaKategori : "Kategori Pilihan";
+
+  // 1. Optimistic Update Lokal
+  STATE.votedPhotoIds.push(idFoto);
+  STATE.votedCategoryIds.push(idKategori);
+  saveEventVotes(STATE.activeEventId);
+
+  const targetPhoto = STATE.photos.find(p => p.idFoto === idFoto);
+  if (targetPhoto) {
+    targetPhoto.totalLikes = (targetPhoto.totalLikes || 0) + 1;
+  }
+  renderGallery();
+
+  const zoomLikesCount = document.getElementById('zoomLikesCount');
+  if (zoomLikesCount && targetPhoto) {
+    zoomLikesCount.textContent = `${targetPhoto.totalLikes} Suka`;
+  }
+
+  showToast(`✅ Suara Anda berhasil dicatat untuk kategori "${catName}"! ❤️`, "success");
+
+  // 2. Sinkronisasi ke Server Google Apps Script
+  if (STATE.gasApiUrl) {
+    try {
       const payload = {
         action: "submitVote",
         eventId: getResolvedEventId(STATE.activeEventId),
         idFoto: idFoto,
-        idKategori: targetCat,
+        idKategori: idKategori,
         guestId: STATE.guestId,
-        guestNama: STATE.guestNama
+        guestNama: STATE.guestNama || "Tamu"
       };
 
       const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload)
       });
       const res = await resp.json();
 
-      if (res.status === 'success') {
-        STATE.votedPhotoIds.push(idFoto);
-        STATE.votedCategoryIds.push(targetCat);
-        saveEventVotes(STATE.activeEventId);
-
-        showToast("Suara Anda berhasil dicatat! ❤️", "success");
-        await loadGallery();
-      } else {
+      if (res && res.status === 'success') {
+        if (typeof res.updatedLikes === 'number' && targetPhoto) {
+          targetPhoto.totalLikes = res.updatedLikes;
+          renderGallery();
+        }
+      } else if (res && res.status === 'already_voted') {
         showToast(res.message, "warning");
       }
-    } else {
-      // Local Mock Vote
-      STATE.votedPhotoIds.push(idFoto);
-      STATE.votedCategoryIds.push(targetCat);
-      saveEventVotes(STATE.activeEventId);
-
-      const target = STATE.photos.find(p => p.idFoto === idFoto);
-      if (target) target.totalLikes += 1;
-      showToast("Suara Anda berhasil dicatat! ❤️", "success");
-      renderGallery();
+    } catch (e) {
+      console.warn("Vote sync error:", e.message);
     }
-
-    const zoomLikesCount = document.getElementById('zoomLikesCount');
-    if (zoomLikesCount) {
-      const currentLikes = (STATE.photos.find(p => p.idFoto === idFoto)?.totalLikes || 0);
-      zoomLikesCount.textContent = `${currentLikes} Suka`;
-    }
-  } catch (e) {
-    showToast("Gagal mencatat vote: " + e.message, "error");
   }
 }
 
@@ -2096,7 +2155,7 @@ function renderGallery() {
 
       card.querySelector('.btn-like-photo')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        handleVotePhoto(photo.idFoto);
+        openVoteCategoryModal(photo.idFoto);
       });
 
       grid.appendChild(card);
@@ -2213,7 +2272,7 @@ function openPhotoZoom(photo) {
   document.getElementById('zoomLikesCount').textContent = `${photo.totalLikes || 0} Suka`;
 
   const btnVote = document.getElementById('btnZoomVote');
-  btnVote.onclick = () => handleVotePhoto(photo.idFoto);
+  btnVote.onclick = () => openVoteCategoryModal(photo.idFoto);
 
   const btnDl = document.getElementById('btnZoomDownload');
   btnDl.onclick = () => {
@@ -3887,6 +3946,16 @@ function bindEvents() {
   // Zoom Modal Close
   document.getElementById('btnCloseZoom').addEventListener('click', () => {
     document.getElementById('modalZoomPhoto').classList.add('hidden');
+  });
+
+  // Vote Category Modal Close
+  document.getElementById('btnCloseVoteModal')?.addEventListener('click', () => {
+    document.getElementById('modalVoteCategory')?.classList.add('hidden');
+  });
+  document.getElementById('modalVoteCategory')?.addEventListener('click', (e) => {
+    if (e.target.id === 'modalVoteCategory') {
+      document.getElementById('modalVoteCategory').classList.add('hidden');
+    }
   });
 
   document.getElementById('btnEmptyGoCamera').addEventListener('click', () => {
