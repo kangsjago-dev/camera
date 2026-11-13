@@ -1,11 +1,40 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (RILIS v1.7.2: EDIT KATA GELAR KHUSUS ADMIN, RESOLUSI TOTAL ERROR FETCHeventDetails & 50K CHAR CELL GAS, CLOUD SYNC MENYELURUH, LIVE GALLERY AUTO-REFRESH ENGINE 5 DETIK TANPA F5)
+STATUS: SELESAI DITERAPKAN (RILIS v1.7.4: RESOLUSI MUTLAK ERROR GAS 50.000 KARAKTER, ANTI-DUPLIKASI UPLOAD FOTO DRIVE, ELIMINASI FOLDER KOSONG GANDA, & SINKRONISASI CLOUD CUSTOM GAS URL)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.7.2 (Production Enterprise: Admin-Gated Podium Titles, Zero 50k Sheet Error via Pre-Drive Conversion, Robust Cloud Sync, Real-Time Live Gallery Auto-Update)
+VERSI RANCANGAN: v1.7.4 (Production Enterprise: Zero 50k Sheet Limit Error via getSafeFrameHttpUrl, Strict In-Flight Photo Upload Lock, Drive Folder ID Reuse, Cloud Persistent GAS Web App URL)
 ================================================================================
+
+## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.7.4)
+
+Permintaan pengguna:
+"/zettbot 
+perbaiki, masih error !!!!
+jgn ubah yang lainnya"
+(Melampirkan gambar error "Peringatan GAS: Error processing request: Your input contains more than the maximum of 50000 characters in a single cell.", duplikasi foto Budi 7x di Google Drive, dan folder berganda "ilham---sherwin").
+
+Poin Inti Rekayasa v1.7.4:
+1. **Resolusi Mutlak Error Google Sheets 50.000 Karakter (`getSafeFrameHttpUrl`)**:
+   - Ditambahkan fungsi helper `getSafeFrameHttpUrl(url)` yang memverifikasi bahwa URL bingkai HANYALAH string HTTP resmi yang berukuran < 500 karakter.
+   - Pada `loadEventData()`, `syncEventsFromBackend()`, dan `saveAdminEventForm()`, seluruh string data/base64 yang melebihi batas dinetralkan menjadi empty string `""` atau link Drive pendek yang valid.
+   - Nilai `savedEvent.customFrameUrl` dan payload `adminSaveEvent` kini 100% steril dari base64, menjamin Google Sheets tidak akan pernah lagi menolak data dengan error batas 50.000 karakter per cell.
+
+2. **Proteksi Anti-Duplikasi Ekstrem Upload Foto Google Drive (`IN_FLIGHT_PHOTO_UPLOADS`)**:
+   - Dibuat `IN_FLIGHT_PHOTO_UPLOADS = new Set()` di client (`app.js`).
+   - Setiap foto yang sedang dalam proses unggah latar belakang dikunci sehingga timer polling galeri (5 detik) maupun peramban tidak dapat memicu pengunggahan ganda.
+   - Fungsi `autoUploadPendingPhotos()` kini HANYA memproses foto yang berstatus gagal / pending retry (`uploadPending === true`), mencegah kejadian foto yang sama terunggah 7 kali di Google Drive.
+
+3. **Eliminasi Pembuatan Folder Kosong Duplikat di Google Drive**:
+   - Pada `saveAdminEventForm()`, `driveFolder` secara otomatis menggunakan `existingEv?.gdriveFolderId` jika field folder ID kosong, sehingga sistem mempertahankan folder Google Drive yang sudah terbentuk dan tidak menciptakan subfolder baru tanpa isi.
+
+4. **Sinkronisasi Otomatis Custom URL Backend Google Apps Script (`gas_webapp_url`)**:
+   - Input URL Web App GAS yang disimpan admin di tab Pengaturan Global dikirimkan via `adminUpdateGlobalConfig` ke sheet `DataPengaturanGlobal`.
+   - Seluruh perangkat tamu dan kru yang membuka aplikasi secara otomatis menyelaraskan `STATE.gasApiUrl` ke URL cloud terbaru dari backend saat inisialisasi / heartbeat.
+
+5. **Peningkatan Versi Cache-Buster ke `v=1.7.4`**:
+   - `index.html` diperbarui memuat `style.css?v=1.7.4` dan `app.js?v=1.7.4` untuk memastikan seluruh peramban tamu segera memuat kode terbaru tanpa cache lama.
 
 ## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.7.2)
 

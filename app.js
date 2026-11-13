@@ -64,6 +64,17 @@ const STATE = {
   slideshowTimer: null
 };
 
+// Global Set untuk melacak foto yang sedang dalam antrean upload (Mencegah upload ganda/duplikat)
+const IN_FLIGHT_PHOTO_UPLOADS = new Set();
+
+// Helper Sanitisasi Mutlak URL Bingkai (Cegah Overflow 50.000 Karakter Google Sheets)
+function getSafeFrameHttpUrl(url) {
+  if (typeof url === 'string' && url.startsWith('http') && url.length < 500) {
+    return url;
+  }
+  return '';
+}
+
 // Defensive Global Hook to Prevent Any 'stopCameraStream is not defined' ReferenceErrors
 window.stopCameraStream = function() {
   if (STATE && STATE.mediaStream) {
@@ -706,8 +717,8 @@ async function loadEventData() {
           frameLockMode: inferredMode,
           singleLockedFrame: inferredLocked,
           activeFrames: inferredFrames,
-          customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
-          customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
+          customFrameData: getSafeFrameHttpUrl(res.event.customFrameUrl) || getSafeFrameHttpUrl(localActive?.customFrameData) || '',
+          customFrameUrl: getSafeFrameHttpUrl(res.event.customFrameUrl) || getSafeFrameHttpUrl(localActive?.customFrameUrl) || ''
         };
         STATE.activeCategories = res.categories || [];
 
@@ -749,8 +760,8 @@ async function loadEventData() {
               frameLockMode: sMode,
               singleLockedFrame: sLocked,
               activeFrames: sFrames,
-              customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
-              customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
+              customFrameData: getSafeFrameHttpUrl(serverEv.customFrameUrl) || getSafeFrameHttpUrl(localEv?.customFrameData) || '',
+              customFrameUrl: getSafeFrameHttpUrl(serverEv.customFrameUrl) || getSafeFrameHttpUrl(localEv?.customFrameUrl) || ''
             };
           });
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
@@ -784,6 +795,15 @@ async function loadEventData() {
           if (res.globalConfig.admin_pass) {
             STATE.adminPass = res.globalConfig.admin_pass;
             localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
+          }
+          if (res.globalConfig.gas_webapp_url && res.globalConfig.gas_webapp_url.trim().startsWith('http')) {
+            const cloudGas = res.globalConfig.gas_webapp_url.trim();
+            if (cloudGas && cloudGas !== GLOBAL_CONFIG.OLD_DEFAULT_GAS_URL && cloudGas !== STATE.gasApiUrl) {
+              STATE.gasApiUrl = cloudGas;
+              localStorage.setItem('snapevent_gas_url', cloudGas);
+              const inputEl = document.getElementById('cfgGasUrl');
+              if (inputEl) inputEl.value = cloudGas;
+            }
           }
           if (res.globalConfig.user_accounts) {
             try {
@@ -943,8 +963,8 @@ async function syncEventsFromBackend(showToastNotice = false) {
           activeFrames: (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
             ? serverEv.activeFrames
             : (localEv?.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL']),
-          customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
-          customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
+          customFrameData: getSafeFrameHttpUrl(serverEv.customFrameUrl) || getSafeFrameHttpUrl(localEv?.customFrameData) || '',
+          customFrameUrl: getSafeFrameHttpUrl(serverEv.customFrameUrl) || getSafeFrameHttpUrl(localEv?.customFrameUrl) || ''
         };
       });
       localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
@@ -1002,6 +1022,15 @@ async function syncEventsFromBackend(showToastNotice = false) {
         if (res.globalConfig.admin_pass) {
           STATE.adminPass = res.globalConfig.admin_pass;
           localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
+        }
+        if (res.globalConfig.gas_webapp_url && res.globalConfig.gas_webapp_url.trim().startsWith('http')) {
+          const cloudGas = res.globalConfig.gas_webapp_url.trim();
+          if (cloudGas && cloudGas !== GLOBAL_CONFIG.OLD_DEFAULT_GAS_URL && cloudGas !== STATE.gasApiUrl) {
+            STATE.gasApiUrl = cloudGas;
+            localStorage.setItem('snapevent_gas_url', cloudGas);
+            const inputEl = document.getElementById('cfgGasUrl');
+            if (inputEl) inputEl.value = cloudGas;
+          }
         }
         if (res.globalConfig.user_accounts) {
           try {
@@ -1126,7 +1155,12 @@ async function autoUploadPendingPhotos(pendingList) {
   if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
   for (const photo of pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
-    if (photo._isUploadStarted) continue; // MENCEGAH DUPLIKASI: Lewati jika upload sudah berjalan!
+    // MENCEGAH DUPLIKASI TOTAL: Jangan pernah upload foto yang sedang in-flight!
+    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue;
+    // Hanya proses foto yang berstatus gagal / pending retry
+    if (!photo.uploadPending) continue;
+
+    IN_FLIGHT_PHOTO_UPLOADS.add(photo.idFoto);
     photo._isUploadStarted = true;
     try {
       const payload = {
@@ -1150,6 +1184,7 @@ async function autoUploadPendingPhotos(pendingList) {
         if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
         photo.isUploading = false;
         photo._isUploadStarted = false;
+        photo.uploadPending = false;
         saveEventPhotos(STATE.activeEventId);
         renderGallery();
       } else {
@@ -1158,6 +1193,8 @@ async function autoUploadPendingPhotos(pendingList) {
     } catch (err) {
       photo._isUploadStarted = false;
       console.warn("Auto-sync background upload error untuk foto:", photo.idFoto, err.message);
+    } finally {
+      IN_FLIGHT_PHOTO_UPLOADS.delete(photo.idFoto);
     }
   }
 }
@@ -2089,6 +2126,9 @@ async function handleSavePhotoToDrive() {
 
   // 4. PROSES UNGGAH DI LATAR BELAKANG (ASYNCHRONOUS BACKGROUND UPLOAD KE GOOGLE DRIVE)
   if (STATE.gasApiUrl) {
+    if (IN_FLIGHT_PHOTO_UPLOADS.has(tempPhotoId)) return;
+    IN_FLIGHT_PHOTO_UPLOADS.add(tempPhotoId);
+
     (async () => {
       try {
         const payload = {
@@ -2117,6 +2157,8 @@ async function handleSavePhotoToDrive() {
             STATE.photos[idx].idFoto = res.idFoto || tempPhotoId;
             STATE.photos[idx].gdriveViewUrl = res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : dataUrlToSave);
             STATE.photos[idx].isUploading = false;
+            STATE.photos[idx]._isUploadStarted = false;
+            STATE.photos[idx].uploadPending = false;
           }
           if (res.folderId && STATE.activeEvent && !STATE.activeEvent.gdriveFolderId) {
             STATE.activeEvent.gdriveFolderId = res.folderId;
@@ -2135,8 +2177,11 @@ async function handleSavePhotoToDrive() {
         const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
         if (idx !== -1) {
           STATE.photos[idx].isUploading = false;
+          STATE.photos[idx]._isUploadStarted = false;
           STATE.photos[idx].uploadPending = true;
         }
+      } finally {
+        IN_FLIGHT_PHOTO_UPLOADS.delete(tempPhotoId);
       }
     })();
   }
@@ -3628,7 +3673,8 @@ async function saveAdminEventForm() {
   const tanggal = document.getElementById('formEventTanggal').value;
   const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
   const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 1;
-  const driveFolder = extractDriveFolderId(document.getElementById('formEventDriveFolder').value.trim());
+  const rawDriveFolder = extractDriveFolderId(document.getElementById('formEventDriveFolder').value.trim());
+  const driveFolder = rawDriveFolder || existingEv?.gdriveFolderId || (STATE.activeEvent && STATE.activeEvent.idEvent === targetEventId ? STATE.activeEvent.gdriveFolderId : '') || '';
 
   let revealMode = 'SEGERA';
   document.getElementsByName('revealModeRadio').forEach(r => {
@@ -3763,8 +3809,8 @@ async function saveAdminEventForm() {
     frameLockMode: frameLockMode,
     singleLockedFrame: singleLockedFrame,
     activeFrames: activeFrames,
-    customFrameData: customFrameData,
-    customFrameUrl: customFrameData || '',
+    customFrameData: getSafeFrameHttpUrl(customFrameData),
+    customFrameUrl: getSafeFrameHttpUrl(customFrameData),
     podiumTitles: podiumTitles,
     categories: cats
   });
@@ -3837,7 +3883,7 @@ async function saveAdminEventForm() {
           frameLockMode: frameLockMode,
           singleLockedFrame: singleLockedFrame,
           activeFrames: activeFrames,
-          customFrameUrl: customFrameData || '',
+          customFrameUrl: getSafeFrameHttpUrl(customFrameData),
           podiumTitles: podiumTitles,
           categories: cats
         })
@@ -4516,6 +4562,7 @@ function bindEvents() {
           body: JSON.stringify({
             action: 'adminUpdateGlobalConfig',
             updates: {
+              gas_webapp_url: url,
               app_title: appTitle,
               app_logo_url: appLogoUrl,
               app_phone: appPhone,

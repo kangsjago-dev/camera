@@ -1,10 +1,10 @@
 # PRODUCT REQUIREMENT DOCUMENT (PRD)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI: 1.5.1
-STATUS: PRODUCTION READY (CUSTOM BACKEND & MASTER DRIVE SEEDED PERMANENTLY)
+VERSI: 1.7.4
+STATUS: PRODUCTION HARDENED (ZERO 50K CHAR ERROR, IN-FLIGHT UPLOAD DEDUPLICATION, CLOUD URL PERSISTENCE)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
-TANGGAL: 09 November 2026
+TANGGAL: 14 November 2026
 ================================================================================
 
 ================================================================================
@@ -265,6 +265,7 @@ ZONA BAWAH: MASTER CONTEXT & LOGIKA SISTEM TERKINI (LIVING CONTEXT)
   - Integrasi Google Drive Cerdas: Ekstraksi otomatis ID folder dari URL lengkap Drive, upload Base64 dengan header CORS aman (`text/plain;charset=utf-8`).
   - Multi-User Login & Branding Kustom: Mendukung penambahan akun operator/kru, kustomisasi nama brand aplikasi, unggah logo kustom, serta nomor WhatsApp & Instagram kontak resmi.
 - **Log Pembaruan Resmi:**
+  - [2026-11-14] Rilis v1.7.4: Production Hardened Release (Resolusi mutlak error 50.000 karakter Google Sheets via sanitasi `getSafeFrameHttpUrl` pada form dan event fetch, proteksi anti-duplikasi foto Google Drive dengan client-side lock `IN_FLIGHT_PHOTO_UPLOADS` dan retry-only `autoUploadPendingPhotos`, eliminasi pembuatan folder Drive duplikat kosong via fallback ID folder eksisting, serta sinkronisasi otomatis custom URL Backend GAS `gas_webapp_url` ke seluruh perangkat pengguna).
   - [2026-11-14] Rilis v1.7.2: Production Enterprise Release (Penguncian fitur edit kata/gelar juara khusus halaman admin [penghapusan tombol dari podium publik tamu, penambahan tombol `#btnAdminEditPodiumTitles` di tab leaderboard admin dan form pengaturan acara], resolusi total error `fetchEventDetails is not defined` pada sinkronisasi cloud, proteksi ganda error 50.000 karakter sel Google Sheets via Pre-Drive conversion di `saveAdminEventForm()` dan sanitisasi mutlak string >500 karakter, sinkronisasi dan fungsi menyeluruh tombol 'Bersihkan Cache Offline & Sync Ulang', serta implementasi Live Gallery Auto-Refresh Engine 5 detik tanpa refresh manual [polling aktif saat galeri/slideshow terbuka, signature diffing anti-flicker DOM, dan badge visual `Auto-Sync` dengan pulsing dot]).
   - [2026-11-14] Rilis v1.7.1: Production Enterprise Release (Fitur edit kata/gelar juara 1 emas & juara 2 perak via form admin & inline modal di layar podium `promptEditPodiumTitles()`, resolusi menyeluruh error batas 50.000 karakter sel Google Sheets dengan fungsi universal `sanitizeCellValue(val, maxLen=49000)`, perbaikan bug variabel `frameBase64` pada `code.gs` untuk konversi bingkai kustom ke Google Drive tanpa error, pembaruan paten URL Web App GAS kustom `https://script.google.com/macros/s/AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw/exec` beserta auto-migration pada perangkat pengguna, tombol 'Bersihkan Cache Offline & Sync Ulang' `#btnAdminPurgeOfflineCache` dan pembersihan otomatis foto hantu di `loadGallery()`, proteksi ganda anti-duplikasi upload Google Drive melalui client mutex + server deduplication di `code.gs`, serta peningkatan mutu foto Full HD 1080p [1080x1920 portrait / 1920x1080 landscape, JPEG kualitas 0.99] dengan analog photographic sensor grain menghasilkan ukuran file foto riil 1.2 MB - 2.8 MB).
   - [2026-11-14] Rilis v1.7.0: Production Hardened Release (Resolusi batas sel 50.000 karakter Google Sheets via sanitisasi mutlak & Drive conversion di `code.gs` + pencegahan duplikasi payload di `app.js`, eliminasi fatal syntax parse error penyebab `stopCameraStream is not defined`, perbaikan tata letak anti-overlap shutter & menu galeri terhadap bottom nav bar, custom luxury styling podium Juara 1 Emas & Juara 2 Perak, sistem filter interaktif pemenang voting [Semua / Juara Umum / Per Kategori], filter eksklusif galeri per kategori voting [hanya tampilkan foto dengan suara], serta pembersihan teks usang 'Sisa Suara: 3').
