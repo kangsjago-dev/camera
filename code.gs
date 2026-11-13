@@ -12,15 +12,6 @@
  * ================================================================================
  */
 
-// Nama Lembar Spreadsheet Resmi (Sesuai Standar Database setup.gs)
-const SHEET_NAMES = {
-  EVENT: "DataEvent",
-  FOTO: "DataFoto",
-  KATEGORI: "DataKategoriVoting",
-  VOTING: "DataVoting",
-  PENGATURAN: "DataPengaturanGlobal"
-};
-
 // Peta Indeks Kolom Resmi (Index-Based Mapping)
 const COL_EVENT = {
   ID: 0,
@@ -213,8 +204,6 @@ function handleGetInitialData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
   const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
-  const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
 
   if (!eventSheet) {
     return { status: "error", message: "Database belum diinisialisasi. Jalankan inisialisasiDatabase() di setup.gs" };
@@ -235,7 +224,6 @@ function handleGetInitialData() {
     const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     rows.forEach(function(r) {
       if (r[COL_EVENT.ID]) {
-        const frameCfg = parseEventFramesConfig(r[COL_EVENT.FRAMES]);
         events.push({
           idEvent: r[COL_EVENT.ID],
           namaEvent: r[COL_EVENT.NAMA] || "Acara",
@@ -249,9 +237,7 @@ function handleGetInitialData() {
           likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
           publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
           activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-          frameLockMode: frameCfg.frameLockMode,
-          singleLockedFrame: frameCfg.singleLockedFrame,
-          activeFrames: frameCfg.activeFrames,
+          activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
           gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
           statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
           customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -260,24 +246,12 @@ function handleGetInitialData() {
     });
   }
 
-  const totalEvents = events.length;
-  const totalPhotos = fotoSheet ? Math.max(0, fotoSheet.getLastRow() - 1) : 0;
-  const totalVotes = voteSheet ? Math.max(0, voteSheet.getLastRow() - 1) : 0;
-
   return {
     status: "success",
     appTitle: configMap["app_title"] || "SnapEvent Enterprise Studio",
     globalConfig: configMap,
     events: events,
-    allEvents: events,
-    totalEvents: totalEvents,
-    totalPhotos: totalPhotos,
-    totalVotes: totalVotes,
-    metrics: {
-      totalEvents: totalEvents,
-      totalPhotos: totalPhotos,
-      totalVotes: totalVotes
-    }
+    allEvents: events
   };
 }
 
@@ -285,25 +259,15 @@ function handleGetAllEvents() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
   const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
-  const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
 
   if (!eventSheet || eventSheet.getLastRow() <= 1) {
-    return { 
-      status: "success", 
-      events: [], 
-      totalEvents: 0,
-      totalPhotos: 0,
-      totalVotes: 0,
-      metrics: { totalEvents: 0, totalPhotos: 0, totalVotes: 0 } 
-    };
+    return { status: "success", events: [], totalEvents: 0 };
   }
 
   const events = [];
   const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
   rows.forEach(function(r) {
     if (r[COL_EVENT.ID]) {
-      const frameCfg = parseEventFramesConfig(r[COL_EVENT.FRAMES]);
       events.push({
         idEvent: r[COL_EVENT.ID],
         namaEvent: r[COL_EVENT.NAMA] || "Acara",
@@ -317,9 +281,7 @@ function handleGetAllEvents() {
         likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
         activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-        frameLockMode: frameCfg.frameLockMode,
-        singleLockedFrame: frameCfg.singleLockedFrame,
-        activeFrames: frameCfg.activeFrames,
+        activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
         gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
         statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
         customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -335,21 +297,10 @@ function handleGetAllEvents() {
     });
   }
 
-  const totalEvents = events.length;
-  const totalPhotos = fotoSheet ? Math.max(0, fotoSheet.getLastRow() - 1) : 0;
-  const totalVotes = voteSheet ? Math.max(0, voteSheet.getLastRow() - 1) : 0;
-
   return {
     status: "success",
     events: events,
-    totalEvents: totalEvents,
-    totalPhotos: totalPhotos,
-    totalVotes: totalVotes,
-    metrics: {
-      totalEvents: totalEvents,
-      totalPhotos: totalPhotos,
-      totalVotes: totalVotes
-    },
+    totalEvents: events.length,
     globalConfig: globalConfig
   };
 }
@@ -371,7 +322,6 @@ function handleGetEventDetails(eventId, guestId) {
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     if (r[COL_EVENT.ID] === eventId || r[COL_EVENT.SLUG] === eventId) {
-      const frameCfg = parseEventFramesConfig(r[COL_EVENT.FRAMES]);
       eventData = {
         idEvent: r[COL_EVENT.ID],
         namaEvent: r[COL_EVENT.NAMA],
@@ -385,43 +335,11 @@ function handleGetEventDetails(eventId, guestId) {
         likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
         activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-        frameLockMode: frameCfg.frameLockMode,
-        singleLockedFrame: frameCfg.singleLockedFrame,
-        activeFrames: frameCfg.activeFrames,
+        activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
         customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || "",
         statusEvent: r[COL_EVENT.STATUS]
       };
       break;
-    }
-  }
-
-  // Graceful Fallback: Jika eventId tidak cocok atau kosong, ambil event pertama yang berstatus AKTIF
-  if (!eventData && rows.length > 0) {
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      if (r[COL_EVENT.STATUS] === "AKTIF" || i === 0) {
-        const frameCfg = parseEventFramesConfig(r[COL_EVENT.FRAMES]);
-        eventData = {
-          idEvent: r[COL_EVENT.ID],
-          namaEvent: r[COL_EVENT.NAMA],
-          slugEvent: r[COL_EVENT.SLUG],
-          tanggalEvent: r[COL_EVENT.TANGGAL],
-          hashtagEvent: r[COL_EVENT.HASHTAG],
-          maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-          maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
-          revealMode: r[COL_EVENT.REVEAL_MODE],
-          isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
-          likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
-          publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-          activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-          frameLockMode: frameCfg.frameLockMode,
-          singleLockedFrame: frameCfg.singleLockedFrame,
-          activeFrames: frameCfg.activeFrames,
-          customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || "",
-          statusEvent: r[COL_EVENT.STATUS]
-        };
-        if (r[COL_EVENT.STATUS] === "AKTIF") break;
-      }
     }
   }
 
@@ -484,7 +402,6 @@ function handleGetEventDetails(eventId, guestId) {
   for (let eIdx = 0; eIdx < rows.length; eIdx++) {
     const er = rows[eIdx];
     if (er[COL_EVENT.ID]) {
-      const frameCfg = parseEventFramesConfig(er[COL_EVENT.FRAMES]);
       allEvents.push({
         idEvent: er[COL_EVENT.ID],
         namaEvent: er[COL_EVENT.NAMA] || "Acara",
@@ -497,10 +414,6 @@ function handleGetEventDetails(eventId, guestId) {
         isRevealed: er[COL_EVENT.IS_REVEALED] === "TRUE" || er[COL_EVENT.IS_REVEALED] === "true",
         likeEnabled: er[COL_EVENT.LIKE_ENABLED] !== "FALSE" && er[COL_EVENT.LIKE_ENABLED] !== "false",
         publicVisible: er[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && er[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-        activeCameraStyles: parseJsonSafe(er[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-        frameLockMode: frameCfg.frameLockMode,
-        singleLockedFrame: frameCfg.singleLockedFrame,
-        activeFrames: frameCfg.activeFrames,
         gdriveFolderId: er[COL_EVENT.GDRIVE_FOLDER_ID] || "",
         statusEvent: er[COL_EVENT.STATUS] || "INAKTIF",
         customFrameUrl: er[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -508,22 +421,10 @@ function handleGetEventDetails(eventId, guestId) {
     }
   }
 
-  const totalEvents = allEvents.length;
-  const totalPhotos = fotoSheet ? Math.max(0, fotoSheet.getLastRow() - 1) : 0;
-  const totalVotes = voteSheet ? Math.max(0, voteSheet.getLastRow() - 1) : 0;
-
   return {
     status: "success",
     event: eventData,
     allEvents: allEvents,
-    totalEvents: totalEvents,
-    totalPhotos: totalPhotos,
-    totalVotes: totalVotes,
-    metrics: {
-      totalEvents: totalEvents,
-      totalPhotos: totalPhotos,
-      totalVotes: totalVotes
-    },
     globalConfig: globalConfig,
     guestStats: {
       guestPhotoCount: guestPhotoCount,
@@ -540,38 +441,20 @@ function handleGetGallery(eventId, guestId) {
   const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
 
-  let targetEventId = String(eventId || "").trim();
+  // Ambil info status reveal event
   let isRevealed = true;
   let revealMode = "SEGERA";
   let likeEnabled = true;
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-    let found = false;
-    if (targetEventId) {
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.ID] === targetEventId || evRows[i][COL_EVENT.SLUG] === targetEventId) {
-          targetEventId = evRows[i][COL_EVENT.ID]; // Normalisasi ke Master ID (misal EVT-202611-001)
-          revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
-          const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
-          isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
-          likeEnabled = evRows[i][COL_EVENT.LIKE_ENABLED] !== "FALSE" && evRows[i][COL_EVENT.LIKE_ENABLED] !== "false";
-          found = true;
-          break;
-        }
-      }
-    }
-    // Jika tidak ditemukan atau eventId tidak dikirim / kosong, ambil event pertama yang AKTIF (atau row 1)
-    if (!found) {
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.STATUS] === "AKTIF" || i === 0) {
-          targetEventId = evRows[i][COL_EVENT.ID];
-          revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
-          const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
-          isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
-          likeEnabled = evRows[i][COL_EVENT.LIKE_ENABLED] !== "FALSE" && evRows[i][COL_EVENT.LIKE_ENABLED] !== "false";
-          if (evRows[i][COL_EVENT.STATUS] === "AKTIF") break;
-        }
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
+    for (let i = 0; i < evRows.length; i++) {
+      if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+        revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
+        const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
+        isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
+        likeEnabled = evRows[i][COL_EVENT.LIKE_ENABLED] !== "FALSE" && evRows[i][COL_EVENT.LIKE_ENABLED] !== "false";
+        break;
       }
     }
   }
@@ -580,7 +463,6 @@ function handleGetGallery(eventId, guestId) {
   if (!isRevealed) {
     return {
       status: "locked",
-      eventId: targetEventId,
       isRevealed: false,
       message: "Foto-foto sedang disimpan rapi di rol film! Galeri akan terbuka secara resmi setelah acara selesai.",
       photos: []
@@ -593,7 +475,7 @@ function handleGetGallery(eventId, guestId) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === targetEventId || (targetEventId && fr[COL_FOTO.ID_EVENT] === eventId)) {
+      if (fr[COL_FOTO.ID_EVENT] === eventId) {
         photos.push({
           idFoto: fr[COL_FOTO.ID],
           guestNama: fr[COL_FOTO.GUEST_NAMA],
@@ -617,7 +499,7 @@ function handleGetGallery(eventId, guestId) {
   if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
     const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
     vRows.forEach(function(vr) {
-      if ((vr[COL_VOTE.ID_EVENT] === targetEventId || vr[COL_VOTE.ID_EVENT] === eventId) && vr[COL_VOTE.GUEST_ID] === guestId) {
+      if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
         votedPhotoIds.push(vr[COL_VOTE.ID_FOTO]);
       }
     });
@@ -625,7 +507,6 @@ function handleGetGallery(eventId, guestId) {
 
   return {
     status: "success",
-    eventId: targetEventId,
     isRevealed: true,
     likeEnabled: likeEnabled,
     photos: photos,
@@ -638,32 +519,16 @@ function handleGetSlideshowPhotos(eventId) {
   const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
 
-  let targetEventId = String(eventId || "").trim();
   let hashtag = "#SnapEvent";
   let namaEvent = "Live Event Gallery";
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-    let found = false;
-    if (targetEventId) {
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.ID] === targetEventId || evRows[i][COL_EVENT.SLUG] === targetEventId) {
-          targetEventId = evRows[i][COL_EVENT.ID];
-          namaEvent = evRows[i][COL_EVENT.NAMA];
-          hashtag = evRows[i][COL_EVENT.HASHTAG];
-          found = true;
-          break;
-        }
-      }
-    }
-    if (!found) {
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.STATUS] === "AKTIF" || i === 0) {
-          targetEventId = evRows[i][COL_EVENT.ID];
-          namaEvent = evRows[i][COL_EVENT.NAMA];
-          hashtag = evRows[i][COL_EVENT.HASHTAG];
-          if (evRows[i][COL_EVENT.STATUS] === "AKTIF") break;
-        }
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 5).getDisplayValues();
+    for (let i = 0; i < evRows.length; i++) {
+      if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+        namaEvent = evRows[i][COL_EVENT.NAMA];
+        hashtag = evRows[i][COL_EVENT.HASHTAG];
+        break;
       }
     }
   }
@@ -673,7 +538,7 @@ function handleGetSlideshowPhotos(eventId) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === targetEventId || (targetEventId && fr[COL_FOTO.ID_EVENT] === eventId)) {
+      if (fr[COL_FOTO.ID_EVENT] === eventId) {
         photos.push({
           idFoto: fr[COL_FOTO.ID],
           guestNama: fr[COL_FOTO.GUEST_NAMA],
@@ -689,7 +554,6 @@ function handleGetSlideshowPhotos(eventId) {
 
   return {
     status: "success",
-    eventId: targetEventId,
     namaEvent: namaEvent,
     hashtag: hashtag,
     photos: photos
@@ -731,7 +595,6 @@ function handleUploadPhoto(payload) {
 
     // 1. Cek Metadata Event & Batas Kuota
     let targetEventRow = -1;
-    let masterEventId = eventId;
     let maxFoto = 10;
     let folderId = "";
     let namaEvent = "Event";
@@ -744,25 +607,10 @@ function handleUploadPhoto(payload) {
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
         targetEventRow = i + 2;
-        masterEventId = evRows[i][COL_EVENT.ID];
         maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
         folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
         namaEvent = evRows[i][COL_EVENT.NAMA];
         break;
-      }
-    }
-
-    if (targetEventRow === -1) {
-      // Jika tidak cocok langsung, cari event berstatus AKTIF
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.STATUS] === "AKTIF") {
-          targetEventRow = i + 2;
-          masterEventId = evRows[i][COL_EVENT.ID];
-          maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
-          folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
-          namaEvent = evRows[i][COL_EVENT.NAMA];
-          break;
-        }
       }
     }
 
@@ -775,7 +623,7 @@ function handleUploadPhoto(payload) {
     if (fotoSheet.getLastRow() > 1) {
       const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
       fRows.forEach(function(fr) {
-        if ((fr[COL_FOTO.ID_EVENT] === masterEventId || fr[COL_FOTO.ID_EVENT] === eventId) && fr[COL_FOTO.GUEST_ID] === guestId) {
+        if (fr[COL_FOTO.ID_EVENT] === eventId && fr[COL_FOTO.GUEST_ID] === guestId) {
           currentGuestUploads++;
         }
       });
@@ -855,7 +703,7 @@ function handleUploadPhoto(payload) {
     // 4. Catat ke DataFoto
     fotoSheet.appendRow([
       newIdFoto,            // COL[0] ID
-      masterEventId,        // COL[1] ID_EVENT
+      eventId,              // COL[1] ID_EVENT
       guestId,              // COL[2] GUEST_ID
       guestNama,            // COL[3] GUEST_NAMA
       caption,              // COL[4] CAPTION
@@ -910,14 +758,12 @@ function handleSubmitVote(payload) {
     const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
     const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
 
-    // Cek batas vote event & normalisasi masterEventId
+    // Cek batas vote event
     let maxVote = 3;
-    let masterEventId = eventId;
     if (eventSheet && eventSheet.getLastRow() > 1) {
-      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
+      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 7).getDisplayValues();
       for (let i = 0; i < evRows.length; i++) {
         if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
-          masterEventId = evRows[i][COL_EVENT.ID];
           maxVote = Number(evRows[i][COL_EVENT.MAX_VOTE]) || 3;
           break;
         }
@@ -930,7 +776,7 @@ function handleSubmitVote(payload) {
       const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
       for (let j = 0; j < vRows.length; j++) {
         const vr = vRows[j];
-        if ((vr[COL_VOTE.ID_EVENT] === masterEventId || vr[COL_VOTE.ID_EVENT] === eventId) && vr[COL_VOTE.GUEST_ID] === guestId) {
+        if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
           if (vr[COL_VOTE.ID_FOTO] === idFoto) {
             return { status: "already_voted", message: "Anda sudah menyukai foto ini!" };
           }
@@ -973,7 +819,7 @@ function handleSubmitVote(payload) {
 
     voteSheet.appendRow([
       newIdVote,
-      masterEventId,
+      eventId,
       idFoto,
       idKategori,
       guestId,
@@ -1065,7 +911,7 @@ function handleAdminGetSummary(pin) {
   // Daftar Semua Event
   const events = [];
   if (eventSheet && totalEvents > 0) {
-    const rows = eventSheet.getRange(2, 1, totalEvents, 16).getDisplayValues();
+    const rows = eventSheet.getRange(2, 1, totalEvents, 17).getDisplayValues();
     rows.forEach(function(r) {
       events.push({
         idEvent: r[COL_EVENT.ID],
@@ -1128,24 +974,8 @@ function handleAdminSaveEvent(payload) {
     const likeEnabled = payload.likeEnabled !== false && payload.likeEnabled !== "false";
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
-    const frameLockMode = payload.frameLockMode === "single" ? "single" : "multi";
-    let singleLockedFrame = String(payload.singleLockedFrame || "GOLD_DECO");
-    if (singleLockedFrame.indexOf("frame_") === 0) {
-      singleLockedFrame = "CUSTOM_EVENT";
-    }
-
-    const activeFramesList = Array.isArray(payload.activeFrames) ? payload.activeFrames.map(function(fId) {
-      if (String(fId).indexOf("frame_") === 0) return "CUSTOM_EVENT";
-      return fId;
-    }) : (frameLockMode === "single" ? [singleLockedFrame] : ["GOLD_DECO", "POLAROID", "MINIMAL"]);
-
-    const frames = JSON.stringify({
-      mode: frameLockMode,
-      locked: singleLockedFrame,
-      frames: activeFramesList
-    });
-
-    let finalCustomFrameUrl = String(payload.customFrameUrl || "").trim();
+    const frames = JSON.stringify(payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+    const customFrameUrl = String(payload.customFrameUrl || "").trim();
     const categories = payload.categories || [];
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1173,38 +1003,6 @@ function handleAdminSaveEvent(payload) {
       }
     }
 
-    // Jika customFrameUrl adalah Base64 PNG baru, unggah langsung ke Google Drive agar permanen dan dapat diakses semua perangkat
-    if (finalCustomFrameUrl.indexOf("data:") === 0) {
-      try {
-        let pureBase64 = finalCustomFrameUrl;
-        let mimeType = "image/png";
-        const parts = pureBase64.split(",");
-        pureBase64 = parts[1];
-        if (parts[0].indexOf("image/jpeg") !== -1) mimeType = "image/jpeg";
-        const decodedBytes = Utilities.base64Decode(pureBase64);
-        const fileName = "custom_frame_" + slugEvent.replace(/[^a-zA-Z0-9_-]/g, "") + "_" + Date.now() + ".png";
-        const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
-
-        let targetFolder = null;
-        if (folderId) {
-          try { targetFolder = DriveApp.getFolderById(folderId); } catch (fErr) {}
-        }
-        if (!targetFolder) {
-          const root = DriveApp.getRootFolder();
-          const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
-          targetFolder = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
-        }
-        const driveFile = targetFolder.createFile(blob);
-        driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        finalCustomFrameUrl = "https://lh3.googleusercontent.com/d/" + driveFile.getId();
-      } catch (uploadErr) {
-        Logger.log("Gagal upload custom frame ke Drive: " + uploadErr.message);
-        if (finalCustomFrameUrl.length > 500) {
-          finalCustomFrameUrl = "";
-        }
-      }
-    }
-
     if (!idEvent) {
       // INSERT EVENT BARU (17 Kolom)
       savedIdEvent = generateIncrementalId(eventSheet, "EVT-" + ymStr + "-", COL_EVENT.ID);
@@ -1225,10 +1023,10 @@ function handleAdminSaveEvent(payload) {
         folderId,
         "AKTIF",
         nowStr,
-        finalCustomFrameUrl
+        customFrameUrl
       ]);
     } else {
-      // UPDATE EVENT EKSISTING ATAU INSERT JIKA BELUM ADA DI SHEET
+      // UPDATE EVENT EKSISTING (17 Kolom Resmi)
       let targetRow = -1;
       const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 1).getDisplayValues();
       for (let i = 0; i < rows.length; i++) {
@@ -1238,28 +1036,7 @@ function handleAdminSaveEvent(payload) {
         }
       }
 
-      if (targetRow === -1) {
-        // ID dikirim dari frontend tetapi belum ada di baris sheet -> Append sebagai baris baru!
-        eventSheet.appendRow([
-          idEvent,
-          namaEvent,
-          slugEvent,
-          tanggalEvent,
-          hashtagEvent,
-          maxFoto,
-          maxVote,
-          revealMode,
-          isRevealed,
-          likeEnabled,
-          publicVisible,
-          cameraStyles,
-          frames,
-          folderId,
-          "AKTIF",
-          nowStr,
-          finalCustomFrameUrl
-        ]);
-      } else {
+      if (targetRow !== -1) {
         const oldRow = eventSheet.getRange(targetRow, 1, 1, 17).getDisplayValues()[0];
         const curStatus = oldRow[COL_EVENT.STATUS] || "INAKTIF";
         const curCreatedAt = oldRow[COL_EVENT.CREATED_AT] || nowStr;
@@ -1281,7 +1058,7 @@ function handleAdminSaveEvent(payload) {
           folderId,
           curStatus,
           curCreatedAt,
-          finalCustomFrameUrl
+          customFrameUrl
         ]]);
       }
     }
@@ -1317,8 +1094,7 @@ function handleAdminSaveEvent(payload) {
       status: "success",
       message: "Event '" + namaEvent + "' berhasil disimpan!",
       idEvent: savedIdEvent,
-      folderId: folderId,
-      customFrameUrl: finalCustomFrameUrl
+      folderId: folderId
     };
   } finally {
     lock.releaseLock();
@@ -1373,7 +1149,7 @@ function handleAdminSetActiveEvent(payload) {
       return { status: "error", message: "Sheet Event kosong." };
     }
 
-    const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 16).getDisplayValues();
+    const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     let found = false;
     for (let i = 0; i < rows.length; i++) {
       const rowIndex = i + 2;
@@ -1469,31 +1245,6 @@ function parseJsonSafe(jsonStr, fallback) {
   } catch (e) {
     return fallback;
   }
-}
-
-function parseEventFramesConfig(raw) {
-  const parsed = parseJsonSafe(raw, ["GOLD_DECO", "POLAROID", "MINIMAL"]);
-  let mode = "multi";
-  let locked = "GOLD_DECO";
-  let frames = ["GOLD_DECO", "POLAROID", "MINIMAL"];
-
-  if (Array.isArray(parsed)) {
-    frames = parsed;
-    if (frames.length === 1) {
-      mode = "single";
-      locked = frames[0];
-    }
-  } else if (parsed && typeof parsed === "object") {
-    mode = parsed.mode || "multi";
-    locked = parsed.locked || "GOLD_DECO";
-    frames = Array.isArray(parsed.frames) ? parsed.frames : [locked];
-  }
-
-  return {
-    frameLockMode: mode,
-    singleLockedFrame: locked,
-    activeFrames: frames
-  };
 }
 
 function createSlug(text) {
