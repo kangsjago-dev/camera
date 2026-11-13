@@ -81,6 +81,21 @@ function createJsonResponse(data) {
 }
 
 /**
+ * Sanitasi Nilai Sel Google Sheets: Batasi Panjang Maksimal 49.000 Karakter
+ * Mencegah Error: 'Your input contains more than the maximum of 50000 characters in a single cell'
+ */
+function sanitizeCellValue(val, maxLen) {
+  if (val === null || val === undefined) return "";
+  maxLen = maxLen || 49000;
+  var str = String(val);
+  if (str.length > maxLen) {
+    Logger.log("WARNING: Nilai sel dipangkas dari " + str.length + " ke " + maxLen + " karakter untuk proteksi sel Sheets");
+    return str.substring(0, maxLen);
+  }
+  return str;
+}
+
+/**
  * HTTP GET Router: Melayani pembacaan data (Events, Galeri, Status, Quota)
  */
 function doGet(e) {
@@ -242,6 +257,7 @@ function handleGetInitialData() {
           publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
           activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
           activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
+          podiumTitles: (parseJsonSafe(r[COL_EVENT.FRAMES], {}).podiumTitles) || null,
           gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
           statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
           customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -286,6 +302,7 @@ function handleGetAllEvents() {
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
         activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
         activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
+        podiumTitles: (parseJsonSafe(r[COL_EVENT.FRAMES], {}).podiumTitles) || null,
         gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
         statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
         customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -340,6 +357,7 @@ function handleGetEventDetails(eventId, guestId) {
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
         activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
         activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
+        podiumTitles: (parseJsonSafe(r[COL_EVENT.FRAMES], {}).podiumTitles) || null,
         customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || "",
         statusEvent: r[COL_EVENT.STATUS]
       };
@@ -738,6 +756,31 @@ function handleUploadPhoto(payload) {
       };
     }
 
+    // 2B. Proteksi Anti-Duplikasi Ekstrem: Cek apakah foto yang sama persis baru saja diunggah tamu ini
+    if (fotoSheet.getLastRow() > 1) {
+      const recentCount = Math.min(10, fotoSheet.getLastRow() - 1);
+      const startR = Math.max(2, fotoSheet.getLastRow() - recentCount + 1);
+      const recentRows = fotoSheet.getRange(startR, 1, recentCount, 12).getDisplayValues();
+      for (let ri = recentRows.length - 1; ri >= 0; ri--) {
+        const rCheck = recentRows[ri];
+        if (rCheck[COL_FOTO.ID_EVENT] === eventId && 
+            rCheck[COL_FOTO.GUEST_ID] === guestId && 
+            rCheck[COL_FOTO.CAPTION] === caption && 
+            rCheck[COL_FOTO.GDRIVE_FILE_ID]) {
+          Logger.log("Mencegah duplikasi file Drive: Foto identik telah tercatat sebagai " + rCheck[COL_FOTO.ID]);
+          return {
+            status: "success",
+            message: "Foto sudah tersimpan aman di rol acara!",
+            idFoto: rCheck[COL_FOTO.ID],
+            viewUrl: rCheck[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + rCheck[COL_FOTO.GDRIVE_FILE_ID]),
+            fileId: rCheck[COL_FOTO.GDRIVE_FILE_ID],
+            folderId: folderId,
+            remainingPhotos: Math.max(0, maxFoto - currentGuestUploads)
+          };
+        }
+      }
+    }
+
     // 3. Simpan File ke Google Drive Target Resmi (Folder yang Telah Ditentukan)
     let targetFolder = null;
 
@@ -820,20 +863,20 @@ function handleUploadPhoto(payload) {
     // Direct link tampilan gambar Google Drive
     const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
 
-    // 4. Catat ke DataFoto
+    // 4. Catat ke DataFoto dengan Sanitisasi Sel Penuh
     fotoSheet.appendRow([
-      newIdFoto,            // COL[0] ID
-      eventId,              // COL[1] ID_EVENT
-      guestId,              // COL[2] GUEST_ID
-      guestNama,            // COL[3] GUEST_NAMA
-      caption,              // COL[4] CAPTION
-      cameraStyle,          // COL[5] CAMERA_STYLE
-      frameStyle,           // COL[6] FRAME_STYLE
-      fileId,               // COL[7] GDRIVE_FILE_ID
-      directViewUrl,        // COL[8] GDRIVE_VIEW_URL
-      0,                    // COL[9] TOTAL_LIKES
-      false,                // COL[10] IS_FEATURED
-      nowStr                // COL[11] CREATED_AT
+      sanitizeCellValue(newIdFoto),            // COL[0] ID
+      sanitizeCellValue(eventId),              // COL[1] ID_EVENT
+      sanitizeCellValue(guestId),              // COL[2] GUEST_ID
+      sanitizeCellValue(guestNama),            // COL[3] GUEST_NAMA
+      sanitizeCellValue(caption),              // COL[4] CAPTION
+      sanitizeCellValue(cameraStyle),          // COL[5] CAMERA_STYLE
+      sanitizeCellValue(frameStyle),           // COL[6] FRAME_STYLE
+      sanitizeCellValue(fileId),               // COL[7] GDRIVE_FILE_ID
+      sanitizeCellValue(directViewUrl),        // COL[8] GDRIVE_VIEW_URL
+      0,                                       // COL[9] TOTAL_LIKES
+      false,                                   // COL[10] IS_FEATURED
+      sanitizeCellValue(nowStr)                // COL[11] CREATED_AT
     ]);
 
     SpreadsheetApp.flush();
@@ -1186,10 +1229,9 @@ function handleAdminSaveEvent(payload) {
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
     if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
       try {
-        let parts = customFrameUrl.split(",");
-        let frameBase64 = parts[1];
         let frameMime = "image/png";
         if (customFrameUrl.indexOf("image/jpeg") !== -1) frameMime = "image/jpeg";
+        const frameBase64 = customFrameUrl.indexOf(",") !== -1 ? customFrameUrl.split(",")[1] : customFrameUrl;
         const frameBytes = Utilities.base64Decode(frameBase64);
         const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + (slugEvent || "custom") + "_" + Date.now() + ".png");
         let fFolder = DriveApp.getRootFolder();
@@ -1214,40 +1256,47 @@ function handleAdminSaveEvent(payload) {
         : "";
     }
 
-    // Struktur Penyimpanan Kebijakan Bingkai (Mode Single Lock vs Multi Bebas)
+    // Struktur Penyimpanan Kebijakan Bingkai & Gelar Juara Podium
+    const podiumTitles = payload.podiumTitles || {
+      p1: payload.podiumTitleP1 || "👑 JUARA 1 EMAS",
+      p2: payload.podiumTitleP2 || "⭐ JUARA 2 PERAK",
+      p3: payload.podiumTitleP3 || "🥉 JUARA 3 PERUNGGU"
+    };
+
     const framePolicyObj = {
       mode: payload.frameLockMode || (payload.activeFrames && payload.activeFrames.length === 1 ? "single" : "multi"),
       locked: payload.singleLockedFrame || (payload.activeFrames && payload.activeFrames[0]) || "GOLD_DECO",
-      frames: payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]
+      frames: payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"],
+      podiumTitles: podiumTitles
     };
     const frames = JSON.stringify(framePolicyObj);
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
     const categories = payload.categories || [];
 
     if (!idEvent) {
-      // INSERT EVENT BARU (17 Kolom)
+      // INSERT EVENT BARU (17 Kolom) dengan Sanitasi Mutlak 49.000 Karakter
       savedIdEvent = generateIncrementalId(eventSheet, "EVT-" + ymStr + "-", COL_EVENT.ID);
       eventSheet.appendRow([
-        savedIdEvent,
-        namaEvent,
-        slugEvent,
-        tanggalEvent,
-        hashtagEvent,
+        sanitizeCellValue(savedIdEvent),
+        sanitizeCellValue(namaEvent),
+        sanitizeCellValue(slugEvent),
+        sanitizeCellValue(tanggalEvent),
+        sanitizeCellValue(hashtagEvent),
         maxFoto,
         maxVote,
-        revealMode,
+        sanitizeCellValue(revealMode),
         isRevealed,
         likeEnabled,
         publicVisible,
-        cameraStyles,
-        frames,
-        folderId,
+        sanitizeCellValue(cameraStyles),
+        sanitizeCellValue(frames),
+        sanitizeCellValue(folderId),
         "AKTIF",
-        nowStr,
-        customFrameUrl
+        sanitizeCellValue(nowStr),
+        sanitizeCellValue(customFrameUrl)
       ]);
     } else {
-      // UPDATE EVENT EKSISTING (17 Kolom Resmi)
+      // UPDATE EVENT EKSISTING (17 Kolom Resmi) dengan Sanitasi Mutlak 49.000 Karakter
       let targetRow = -1;
       const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 1).getDisplayValues();
       for (let i = 0; i < rows.length; i++) {
@@ -1263,23 +1312,23 @@ function handleAdminSaveEvent(payload) {
         const curCreatedAt = oldRow[COL_EVENT.CREATED_AT] || nowStr;
 
         eventSheet.getRange(targetRow, 1, 1, 17).setValues([[
-          idEvent,
-          namaEvent,
-          slugEvent,
-          tanggalEvent,
-          hashtagEvent,
+          sanitizeCellValue(idEvent),
+          sanitizeCellValue(namaEvent),
+          sanitizeCellValue(slugEvent),
+          sanitizeCellValue(tanggalEvent),
+          sanitizeCellValue(hashtagEvent),
           maxFoto,
           maxVote,
-          revealMode,
+          sanitizeCellValue(revealMode),
           isRevealed,
           likeEnabled,
           publicVisible,
-          cameraStyles,
-          frames,
-          folderId,
-          curStatus,
-          curCreatedAt,
-          customFrameUrl
+          sanitizeCellValue(cameraStyles),
+          sanitizeCellValue(frames),
+          sanitizeCellValue(folderId),
+          sanitizeCellValue(curStatus),
+          sanitizeCellValue(curCreatedAt),
+          sanitizeCellValue(customFrameUrl)
         ]]);
       }
     }

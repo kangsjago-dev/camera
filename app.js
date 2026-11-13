@@ -10,12 +10,13 @@ const GLOBAL_CONFIG = {
   // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
   DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
   DEFAULT_APP_TITLE: 'SnapEvent Enterprise Studio',
-  DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
+  DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw/exec',
+  OLD_DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };
 
 const STATE = {
   // Configuration & Custom Branding (Cloud Persistent)
-  gasApiUrl: (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) 
+  gasApiUrl: (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http') && localStorage.getItem('snapevent_gas_url').trim() !== GLOBAL_CONFIG.OLD_DEFAULT_GAS_URL) 
     ? localStorage.getItem('snapevent_gas_url').trim() 
     : GLOBAL_CONFIG.DEFAULT_GAS_URL,
   appTitle: localStorage.getItem('snapevent_app_title') || GLOBAL_CONFIG.DEFAULT_APP_TITLE,
@@ -517,12 +518,20 @@ async function initApp() {
   // 0. Deteksi Parameter URL Cloud Bridge (?gas=... & ?event=...) atau Gunakan Default Cloud Deployment
   const urlParams = new URLSearchParams(window.location.search);
   const gasFromUrl = urlParams.get('gas');
-  if (gasFromUrl && gasFromUrl.trim().startsWith('http')) {
+  const storedGas = (localStorage.getItem('snapevent_gas_url') || '').trim();
+
+  // Auto-migrasi jika peramban pengguna masih menyimpan URL demo lama
+  if (storedGas === GLOBAL_CONFIG.OLD_DEFAULT_GAS_URL) {
+    STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
+    localStorage.setItem('snapevent_gas_url', GLOBAL_CONFIG.DEFAULT_GAS_URL);
+  } else if (gasFromUrl && gasFromUrl.trim().startsWith('http')) {
     STATE.gasApiUrl = decodeURIComponent(gasFromUrl.trim());
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
-  } else if (!localStorage.getItem('snapevent_gas_url') || !localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) {
+  } else if (!storedGas || !storedGas.startsWith('http')) {
     STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
+  } else {
+    STATE.gasApiUrl = storedGas;
   }
 
   // Pastikan koleksi events terinisialisasi dengan 5 event master lengkap
@@ -1069,12 +1078,13 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Pertahankan hanya foto lokal yang sedang dalam proses unggah latar belakang (isUploading === true)
+      // Pertahankan hanya foto lokal yang benar-benar baru diambil dalam 60 detik terakhir dan sedang dalam proses unggah
+      const nowMs = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.isUploading === true && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')
+        p && p.isUploading === true && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && (nowMs - (p._createdAtMs || nowMs) < 60000)
       );
 
-      // Gabungkan: foto lokal yang sedang diunggah tetap tampil di depan, disusul seluruh foto resmi server
+      // Gabungkan: foto lokal yang baru diambil tetap tampil di depan, disusul seluruh foto resmi server
       let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
 
       STATE.photos = finalPhotos;
@@ -1086,7 +1096,7 @@ async function loadGallery() {
       saveEventPhotos(targetId);
       renderGallery();
 
-      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
+      // Unggah otomatis di background untuk foto lokal pending jika belum pernah dimulai
       if (pendingLocalPhotos.length > 0) {
         autoUploadPendingPhotos(pendingLocalPhotos);
       }
@@ -1108,6 +1118,8 @@ async function autoUploadPendingPhotos(pendingList) {
   if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
   for (const photo of pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
+    if (photo._isUploadStarted) continue; // MENCEGAH DUPLIKASI: Lewati jika upload sudah berjalan!
+    photo._isUploadStarted = true;
     try {
       const payload = {
         action: "uploadPhoto",
@@ -1128,10 +1140,15 @@ async function autoUploadPendingPhotos(pendingList) {
       if (res && res.status === 'success') {
         if (res.idFoto) photo.idFoto = res.idFoto;
         if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
+        photo.isUploading = false;
+        photo._isUploadStarted = false;
         saveEventPhotos(STATE.activeEventId);
         renderGallery();
+      } else {
+        photo._isUploadStarted = false;
       }
     } catch (err) {
+      photo._isUploadStarted = false;
       console.warn("Auto-sync background upload error untuk foto:", photo.idFoto, err.message);
     }
   }
@@ -1685,8 +1702,8 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   // 7. Render Bingkai (Preservasi Rasio Gambar Tanpa Distorsi)
   await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse, customFrameImg);
 
-  // 8. Ekspor ke DataURL Full HD Kualitas Maksimal (1080p, Sekitar 1 MB hingga 3 MB, JPEG 0.98)
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
+  // 8. Ekspor ke DataURL Full HD Kualitas Maksimal (1080p, Sekitar 1 MB hingga 3 MB, JPEG 0.99)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.99);
   STATE.currentCapturedDataUrl = dataUrl;
 
   const reviewImg = document.getElementById('reviewPhotoImg');
@@ -1936,13 +1953,13 @@ function generateSimulatedPartySnapshot() {
   offCtx.fillRect(0, 0, 1080, 1920);
 
   // Efek Bokeh Cahaya Emas
-  for (let i = 0; i < 35; i++) {
+  for (let i = 0; i < 45; i++) {
     const bx = Math.random() * 1080;
     const by = Math.random() * 1920;
-    const br = 30 + Math.random() * 90;
+    const br = 30 + Math.random() * 110;
     const bGrad = offCtx.createRadialGradient(bx, by, 0, bx, by, br);
-    bGrad.addColorStop(0, 'rgba(255, 215, 0, 0.45)');
-    bGrad.addColorStop(0.7, 'rgba(212, 175, 55, 0.15)');
+    bGrad.addColorStop(0, 'rgba(255, 215, 0, 0.5)');
+    bGrad.addColorStop(0.6, 'rgba(212, 175, 55, 0.2)');
     bGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     offCtx.fillStyle = bGrad;
     offCtx.beginPath();
@@ -1959,6 +1976,17 @@ function generateSimulatedPartySnapshot() {
   offCtx.fillStyle = '#E4E4E7';
   offCtx.font = '28px "Plus Jakarta Sans", sans-serif';
   offCtx.fillText(STATE.activeEvent?.hashtagEvent || "#MomenTerbaik", 540, 960);
+
+  // Tambahkan Grain Sensor Kamera Analog Ultra Tajam (Menghasilkan Ukuran FHD 1080p ~1.2 MB - 2.5 MB)
+  const imgData = offCtx.getImageData(0, 0, 1080, 1920);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const noise = (Math.random() - 0.5) * 22;
+    data[i] = Math.min(255, Math.max(0, data[i] + noise));
+    data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + noise));
+    data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + noise));
+  }
+  offCtx.putImageData(imgData, 0, 0);
 
   return offCanvas;
 }
@@ -1981,6 +2009,14 @@ function downloadPhotoToDevice(dataUrl, photoId) {
 
 // --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG KE HP & UPLOAD LATAR BELAKANG KE GOOGLE DRIVE) ---
 async function handleSavePhotoToDrive() {
+  if (STATE.isSavingPhotoToDrive) return; // Proteksi Anti-Double Click: Cegah upload ganda
+  STATE.isSavingPhotoToDrive = true;
+  const btnSave = document.getElementById('btnSaveToDrive');
+  if (btnSave) {
+    btnSave.disabled = true;
+    btnSave.classList.add('opacity-50', 'pointer-events-none');
+  }
+
   const caption = document.getElementById('inputPhotoCaption').value.trim();
 
   // Pastikan ada nama tamu saat menyimpan foto ke Drive & Galeri (Camera-First Friendly Fallback)
@@ -2017,7 +2053,9 @@ async function handleSavePhotoToDrive() {
     totalLikes: 0,
     isFeatured: false,
     createdAt: "Baru Saja",
-    isUploading: true
+    isUploading: true,
+    _isUploadStarted: true,
+    _createdAtMs: Date.now()
   };
 
   STATE.photos = [localPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
@@ -2028,6 +2066,15 @@ async function handleSavePhotoToDrive() {
   updateRemainingQuotaDisplay();
   updateGuestIdentityUI();
   showToast("💾 Foto tersimpan di HP! Mengunggah ke server di latar belakang...", "info");
+
+  // Reset lock & tombol setelah modal ditutup
+  setTimeout(() => {
+    STATE.isSavingPhotoToDrive = false;
+    if (btnSave) {
+      btnSave.disabled = false;
+      btnSave.classList.remove('opacity-50', 'pointer-events-none');
+    }
+  }, 1000);
 
   // Reset input caption untuk foto berikutnya
   document.getElementById('inputPhotoCaption').value = "";
@@ -2386,6 +2433,11 @@ function renderVotingWinners() {
   const p2 = sorted.length > 1 && (sorted[1].totalLikes || 0) > 0 ? sorted[1] : null;
   const p3 = sorted.length > 2 && (sorted[2].totalLikes || 0) > 0 ? sorted[2] : null;
 
+  const titles = (STATE.activeEvent && STATE.activeEvent.podiumTitles) || {};
+  const titleP1 = titles.p1 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP1) || '👑 JUARA 1 EMAS';
+  const titleP2 = titles.p2 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP2) || '⭐ JUARA 2 PERAK';
+  const titleP3 = titles.p3 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP3) || '🥉 JUARA 3 PERUNGGU';
+
   const wMode = STATE.winnerDisplayFilter || 'ALL';
 
   let podiumHtml = `
@@ -2412,13 +2464,18 @@ function renderVotingWinners() {
             <span class="text-lg">🌟</span>
             <h4 class="font-bold text-xs uppercase tracking-widest text-brand-gold">Podium Juara Umum Pesta</h4>
           </div>
-          <span class="text-[10px] text-zinc-400">Total Akumulasi Suka</span>
+          <div class="flex items-center gap-2">
+            <button type="button" id="btnEditPodiumTitlesInline" class="text-[10px] px-2.5 py-1 rounded-xl bg-brand-gold/15 border border-brand-gold/30 text-brand-gold hover:bg-brand-gold/25 font-bold transition flex items-center gap-1 shadow-sm">
+              <span>✏️</span> Edit Kata Gelar
+            </button>
+            <span class="text-[10px] text-zinc-400">Total Akumulasi Suka</span>
+          </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <!-- Juara 1 Emas (Custom Golden Laurel Grand Champion) -->
           <div class="podium-card-gold winner-podium-card rounded-2xl p-5 text-center flex flex-col items-center cursor-pointer select-none relative overflow-hidden transition duration-300 hover:scale-[1.03]" data-photo-id="${p1.idFoto}" title="Klik untuk memperbesar foto Juara 1">
             <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black text-xs font-black uppercase tracking-wider mb-3 shadow-lg shadow-amber-500/30">
-              <span>👑 JUARA 1 EMAS</span>
+              <span>${titleP1}</span>
             </div>
             <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-3 border-2 border-brand-gold shadow-2xl relative">
               <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
@@ -2439,7 +2496,7 @@ function renderVotingWinners() {
           <!-- Juara 2 Perak (Custom Silver Platinum Runner-Up) -->
           <div class="podium-card-silver winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none transition duration-300 hover:scale-[1.02]" data-photo-id="${p2.idFoto}" title="Klik untuk memperbesar foto Juara 2">
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-zinc-200 via-white to-zinc-300 text-black text-[11px] font-black uppercase tracking-wider mb-2.5 shadow-md">
-              <span>⭐ JUARA 2 PERAK</span>
+              <span>${titleP2}</span>
             </div>
             <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/60 shadow-xl relative">
               <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
@@ -2461,7 +2518,7 @@ function renderVotingWinners() {
           <!-- Juara 3 Perunggu (Custom Bronze Trophy) -->
           <div class="podium-card-bronze winner-podium-card rounded-2xl p-4 text-center flex flex-col items-center cursor-pointer select-none transition duration-300 hover:scale-[1.02]" data-photo-id="${p3.idFoto}" title="Klik untuk memperbesar foto Juara 3">
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-600 via-amber-500 to-amber-700 text-white text-[11px] font-black uppercase tracking-wider mb-2.5 shadow-md">
-              <span>🥉 JUARA 3 PERUNGGU</span>
+              <span>${titleP3}</span>
             </div>
             <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/60 shadow-xl relative">
               <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" />
@@ -2554,6 +2611,15 @@ function renderVotingWinners() {
 
   podium.innerHTML = podiumHtml;
 
+  // Pasang Event Listener Edit Kata-kata Gelar Juara Inline
+  const btnEditTitles = podium.querySelector('#btnEditPodiumTitlesInline');
+  if (btnEditTitles) {
+    btnEditTitles.addEventListener('click', (e) => {
+      e.stopPropagation();
+      promptEditPodiumTitles();
+    });
+  }
+
   // Pasang Event Listener Tombol Filter Pilihan Tampilan
   podium.querySelectorAll('.winner-filter-pill').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -2571,6 +2637,65 @@ function renderVotingWinners() {
       if (photoObj) openPhotoZoom(photoObj);
     });
   });
+}
+
+async function promptEditPodiumTitles() {
+  const currentTitles = (STATE.activeEvent && STATE.activeEvent.podiumTitles) || {};
+  const curP1 = currentTitles.p1 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP1) || "👑 JUARA 1 EMAS";
+  const curP2 = currentTitles.p2 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP2) || "⭐ JUARA 2 PERAK";
+  const curP3 = currentTitles.p3 || (STATE.activeEvent && STATE.activeEvent.podiumTitleP3) || "🥉 JUARA 3 PERUNGGU";
+
+  const newP1 = window.prompt("Ubah Gelar/Kata-kata Juara 1:", curP1);
+  if (newP1 === null) return;
+  const newP2 = window.prompt("Ubah Gelar/Kata-kata Juara 2:", curP2);
+  if (newP2 === null) return;
+  const newP3 = window.prompt("Ubah Gelar/Kata-kata Juara 3:", curP3);
+  if (newP3 === null) return;
+
+  const updatedTitles = {
+    p1: newP1.trim() || "👑 JUARA 1 EMAS",
+    p2: newP2.trim() || "⭐ JUARA 2 PERAK",
+    p3: newP3.trim() || "🥉 JUARA 3 PERUNGGU"
+  };
+
+  if (!STATE.activeEvent) STATE.activeEvent = {};
+  STATE.activeEvent.podiumTitles = updatedTitles;
+
+  // Sinkronkan ke input form setting acara di admin dashboard
+  const elP1 = document.getElementById('formEventPodiumP1');
+  const elP2 = document.getElementById('formEventPodiumP2');
+  const elP3 = document.getElementById('formEventPodiumP3');
+  if (elP1) elP1.value = updatedTitles.p1;
+  if (elP2) elP2.value = updatedTitles.p2;
+  if (elP3) elP3.value = updatedTitles.p3;
+
+  // Simpan ke local storage
+  if (Array.isArray(STATE.events)) {
+    const idx = STATE.events.findIndex(e => e.idEvent === STATE.activeEvent.idEvent);
+    if (idx !== -1) {
+      STATE.events[idx].podiumTitles = updatedTitles;
+    }
+    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  }
+
+  // Sinkronkan ke Cloud Server GAS agar semua perangkat langsung melihat perubahan
+  if (STATE.gasApiUrl) {
+    try {
+      fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminSaveEvent',
+          idEvent: STATE.activeEvent.idEvent,
+          namaEvent: STATE.activeEvent.namaEvent,
+          podiumTitles: updatedTitles
+        })
+      }).catch(e => console.warn("Background title sync warn:", e));
+    } catch(e) {}
+  }
+
+  showToast("✅ Gelar juara berhasil diperbarui & disinkronkan!", "success");
+  renderVotingWinners();
 }
 
 function openPhotoZoom(photo) {
@@ -3144,6 +3269,13 @@ function resetCreateEventForm() {
   document.getElementById('formEventDriveFolder').value = "";
   document.getElementById('formEventFrameName').value = "";
 
+  const elP1 = document.getElementById('formEventPodiumP1');
+  const elP2 = document.getElementById('formEventPodiumP2');
+  const elP3 = document.getElementById('formEventPodiumP3');
+  if (elP1) elP1.value = "👑 JUARA 1 EMAS";
+  if (elP2) elP2.value = "⭐ JUARA 2 PERAK";
+  if (elP3) elP3.value = "🥉 JUARA 3 PERUNGGU";
+
   const radSegera = document.querySelector('input[name="revealModeRadio"][value="SEGERA"]');
   if (radSegera) radSegera.checked = true;
   document.getElementById('formCheckLike').checked = true;
@@ -3392,6 +3524,18 @@ function populateEditEventForm(ev) {
   document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest;
   document.getElementById('formEventDriveFolder').value = ev.gdriveFolderId || '';
 
+  // Gelar Juara Podium
+  const pTitles = ev.podiumTitles || {};
+  const p1Val = pTitles.p1 || ev.podiumTitleP1 || "👑 JUARA 1 EMAS";
+  const p2Val = pTitles.p2 || ev.podiumTitleP2 || "⭐ JUARA 2 PERAK";
+  const p3Val = pTitles.p3 || ev.podiumTitleP3 || "🥉 JUARA 3 PERUNGGU";
+  const elP1 = document.getElementById('formEventPodiumP1');
+  const elP2 = document.getElementById('formEventPodiumP2');
+  const elP3 = document.getElementById('formEventPodiumP3');
+  if (elP1) elP1.value = p1Val;
+  if (elP2) elP2.value = p2Val;
+  if (elP3) elP3.value = p3Val;
+
   // Custom Frame Preview
   const frameData = ev.customFrameData || ev.customFrameUrl;
   const previewBox = document.getElementById('customFramePreviewBox');
@@ -3533,6 +3677,12 @@ async function saveAdminEventForm() {
     singleLockedFrame = 'CUSTOM_EVENT';
   }
 
+  // Gelar Juara Podium
+  const podiumP1 = document.getElementById('formEventPodiumP1')?.value.trim() || "👑 JUARA 1 EMAS";
+  const podiumP2 = document.getElementById('formEventPodiumP2')?.value.trim() || "⭐ JUARA 2 PERAK";
+  const podiumP3 = document.getElementById('formEventPodiumP3')?.value.trim() || "🥉 JUARA 3 PERUNGGU";
+  const podiumTitles = { p1: podiumP1, p2: podiumP2, p3: podiumP3 };
+
   let activeFrames = [];
   if (frameLockMode === 'single') {
     activeFrames = [singleLockedFrame];
@@ -3575,6 +3725,7 @@ async function saveAdminEventForm() {
     activeFrames: activeFrames,
     customFrameData: customFrameData,
     customFrameUrl: customFrameData || '',
+    podiumTitles: podiumTitles,
     categories: cats
   });
 
@@ -3647,6 +3798,7 @@ async function saveAdminEventForm() {
           singleLockedFrame: singleLockedFrame,
           activeFrames: activeFrames,
           customFrameUrl: customFrameData || '',
+          podiumTitles: podiumTitles,
           categories: cats
         })
       });
@@ -3723,10 +3875,52 @@ async function testGasConnection() {
   }
 }
 
+// Bersihkan Cache Offline & Sync Ulang Seluruh Data dari Cloud Server
+async function purgeAllOfflineDataAndResync() {
+  if (!confirm("Bersihkan cache offline dan sinkronkan ulang seluruh data foto & acara langsung dari Cloud Server Google Apps Script?")) {
+    return;
+  }
+
+  showToast("🧹 Membersihkan seluruh cache foto offline...", "info");
+
+  // Hapus semua key cache foto dan voting di localStorage
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && (k.startsWith('snapevent_photos') || k.startsWith('snapevent_votes') || k.startsWith('snapevent_voted'))) {
+      keysToRemove.push(k);
+    }
+  }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+
+  // Reset state memori
+  STATE.photos = [];
+  STATE.votedPhotoIds = [];
+  STATE.votedCategoryIds = [];
+
+  // Sinkronkan ulang dari Google Apps Script
+  if (STATE.gasApiUrl) {
+    try {
+      showToast("☁️ Mengunduh data terbaru dari Cloud Server...", "info");
+      await fetchEventDetails();
+      await loadGallery();
+      showToast("✅ Sinkronisasi tuntas! Semua data kini 100% identik dengan server cloud.", "success");
+    } catch (err) {
+      console.warn("Purge resync warning:", err.message);
+      showToast("Peringatan saat sinkronisasi cloud: " + err.message, "warning");
+    }
+  } else {
+    renderGallery();
+    showToast("Cache lokal foto berhasil dibersihkan.", "info");
+  }
+}
+
 // --- 11. BIND ALL EVENT LISTENERS ---
 function bindEvents() {
   // Tombol Uji Koneksi & Sinkronisasi GAS
   document.getElementById('btnTestGasConnection')?.addEventListener('click', testGasConnection);
+  // Tombol Bersihkan Cache Offline & Sync Ulang
+  document.getElementById('btnAdminPurgeOfflineCache')?.addEventListener('click', purgeAllOfflineDataAndResync);
   // Welcome View Guest Name Submit (MANDATORY GATE)
   document.getElementById('btnStartCamera').addEventListener('click', () => {
     const nameInput = document.getElementById('inputGuestName');
