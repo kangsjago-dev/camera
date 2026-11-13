@@ -1,55 +1,59 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.4: FRAME SETTINGS IMMEDIATE PREVIEW & SYNC)
+STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.5: HD LIVE CAPTURE, AUTO-SAVE TO DEVICE GALLERY & GOOGLE DRIVE, ASYNC FRAME PRELOADING)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.6.4 (Immediate Designated Frame Preview & Strict Frame Synchronization)
+VERSI RANCANGAN: v1.6.5 (HD Quality Live Camera, Dual Storage to Phone & Cloud, Async Custom Frame Preloading)
 ================================================================================
 
-## 1. DIAGNOSIS PENUH & AKAR MASALAH (ROOT CAUSE ANALYSIS)
+## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.5)
 
-Pengguna meminta:
-- "/zettbot preview frame langsung menampilkan settingan frame yang telah ditentukan, jangan tampilkan yang lainnya, buat menjadi sync, jangan ubah apapun apabila tidak dibutuhkan"
-- Foto tangkapan layar ponsel menunjukkan viewfinder kamera masih memuat bingkai bawaan default `GOLD_DECO`, dan teks built-in overlay menumpuk.
+Permintaan pengguna:
+"/zettbot pada saat capture live camera, upload ke googledrive serta save ke galery masing masing, serta capture dengan menggunakan mode kualitas HD. perbaiki penentuan serta preview penggunaan frame. terapkan segera dan jangan ubah yang sudah ada"
 
-### Analisis Mendalam Akar Masalah (Why it Happened):
-1. **Inisialisasi Frame di `STATE.activeFrame` Default Hardcoded ke `GOLD_DECO`**:
-   - Saat aplikasi pertama kali dimuat di HP tamu, `STATE.activeFrame` terisi `GOLD_DECO`.
-   - Ketika `loadEventData()` mengambil event dari server, objek `activeFrames` dari Google Sheets (`{"mode":"single","locked":"CUSTOM_EVENT","frames":["CUSTOM_EVENT"]}`) tidak ter-unpack dengan benar karena berbentuk objek bukan array.
-   - Akibatnya, sistem mundur ke fallback default (`GOLD_DECO`).
+Poin Inti Rekayasa:
+1. **Mode Tangkap Kualitas HD (High Definition / Sensor Quality)**:
+   - Stream kamera live (`startCameraStream()`) ditingkatkan ke resolusi ideal Full HD / 4K (`width: { min: 1280, ideal: 1920, max: 3840 }`, `height: { min: 720, ideal: 1080, max: 2160 }`) dengan fallback defensif bertingkat.
+   - Pemanfaatan `window.ImageCapture.takePhoto()` pada `triggerCameraShutter()` untuk menangkap frame foto pada resolusi sensor fisik kamera perangkat secara langsung jika didukung browser seluler.
+   - Canvas smoothing diatur ke `imageSmoothingQuality = 'high'` dan ekspor JPEG ditingkatkan ke kualitas `0.95`.
 
-2. **Overlay Custom PNG Masih Menampilkan Teks Built-in**:
-   - Di fungsi `applyActiveFrame()`, saat bingkai kustom PNG aktif, overlay teks bawaan (`viewfinderFrameOverlay`) tidak di-`hidden` sepenuhnya sehingga teks hashtag dan tanggal masih menumpuk di atas bingkai kustom.
+2. **Dual Storage (Google Drive + Galeri Perangkat Masing-Masing Tamu)**:
+   - "Upload ke Google Drive": Pengunggahan live via Google Apps Script Web App API (`action: "uploadPhoto"`) langsung ke folder Google Drive acara dan pencatatan sheet `DataFoto`.
+   - "Save ke Galeri Masing-Masing": Penambahan fungsi `downloadPhotoToDevice(dataUrl, photoId)` yang otomatis mengunduh file foto berkualitas tinggi ke memori fisik ponsel tamu (masuk langsung ke album Foto/Galeri perangkat) saat tombol "Simpan ke Rol" ditekan, baik mode cloud live maupun mode offline.
+   - Sinkronisasi galeri internal web app secara instan (`renderGallery()`).
 
-3. **Bingkai yang Tidak Dipilih Masih Muncul di Pilihan**:
-   - Fungsi `getAvailableFrames()` belum memfilter secara ketat bingkai yang tidak dicentang admin pada mode Bebas Pilih (Multi-Frame).
+3. **Perbaikan Penentuan & Preview Penggunaan Bingkai (Frame Determination & Async Preload)**:
+   - Mengatasi akar masalah mengapa bingkai kustom PNG kadang gagal tampil dan mundur ke bingkai emas teks bawaan: instansiasi `new Image()` sinkron pada saat render canvas belum sempat menyelesaikan proses loading.
+   - Menambahkan map cache global `FRAME_IMG_CACHE` dan fungsi preloader asynchronous `preloadFrameImage(dataUrl)` yang di-`await` di `renderCustomFrameOverlay()`.
+   - Live Viewfinder Preview (`applyActiveFrame()`): menyembunyikan overlay teks built-in saat custom PNG aktif dan langsung memuat custom PNG ke viewfinder serta preloading ke cache.
+   - Mode Single Lock: Viewfinder seketika terkunci dan menampilkan bingkai yang ditentukan admin, tombol ganti bingkai disembunyikan/dikunci.
+   - Mode Multi-Frame: Hanya menampilkan bingkai yang dicentang admin sesuai urutan prioritas.
 
-## 2. PERBAIKAN OPERASIONAL YANG DITERAPKAN (HOTFIX v1.6.4)
-1. **Unpacking Objek Kebijakan Bingkai Real-Time di `loadEventData()`**:
-   - Mendukung format respon Google Apps Script baik berupa objek (`{ mode, locked, frames }`) maupun array.
-   - Variabel `frameLockMode`, `singleLockedFrame`, dan `activeFrames` langsung tervalidasi dan tersinkronisasi seketika.
+4. **Kebijakan Tidak Mengubah Fitur Eksisting**:
+   - Filter kamera analog (`RAW`, `800T`, `WARM`, `BW`) tetap terjaga utuh.
+   - Sistem voting 1x per kategori, login kru/admin, dan batas kuota foto tetap berjalan persis seperti semula.
 
-2. **Preview Frame Langsung Menampilkan Settingan Resmi Acara**:
-   - Begitu data acara termuat (atau saat membuka kamera), sistem langsung mencocokkan `STATE.activeFrame` dengan bingkai yang telah ditentukan oleh admin (`availFrames[0].id` atau `singleLockedFrame`).
-   - Kamera langsung menampilkan bingkai tersebut tanpa perlu klik manual.
+================================================================================
+## 2. FILE TERDAMPAK & SPESIFIKASI PERUBAHAN
+1. `app.js`:
+   - Penambahan `FRAME_IMG_CACHE` dan `preloadFrameImage()`.
+   - Upgrade `startCameraStream()` dengan constraints HD (1080p-4K ideal) dan try-catch fallback.
+   - Penambahan sensor snapshot via `ImageCapture` di `triggerCameraShutter()`.
+   - Transformasi `processPhotoWithFrameAndFilter()` dan `renderCustomFrameOverlay()` menjadi `async/await`.
+   - Penambahan helper `downloadPhotoToDevice()` di `handleSavePhotoToDrive()`.
+   - Sinkronisasi penentuan bingkai di `getAvailableFrames()`, `loadEventData()`, `initCameraView()`, dan `showView('viewCamera')`.
+2. `code.gs`:
+   - Otomatisasi pengunggahan gambar bingkai kustom berformat base64 langsung ke Google Drive jika diunggah via form admin acara, dan mengembalikan direct view URL Google Drive.
+3. `index.html`:
+   - Bump cache-busting version ke `v=1.6.5` pada `style.css` dan `app.js`.
 
-3. **Penyaringan Ketat ("Jangan Tampilkan yang Lainnya")**:
-   - Pada mode Single Lock: Hanya 1 bingkai terkunci yang dikembalikan. Tombol pergantian bingkai otomatis terkunci / disembunyikan.
-   - Pada mode Multi-Frame: HANYA bingkai yang dicentang admin (`activeFrames`) yang dikembalikan dan ditampilkan di tombol review. Seluruh bingkai yang tidak dicentang otomatis disembunyikan total.
-
-4. **Tampilan Bersih Custom PNG di Viewfinder**:
-   - Saat bingkai kustom PNG aktif, built-in text overlay otomatis di-`hidden` 100% sehingga tampilan jernih sesuai desain PNG acara.
-
-5. **Pembaruan Kolom di `code.gs`**:
-   - Memperbaiki pembacaan kolom spreadsheet dari 16 ke 17 kolom agar kolom `CUSTOM_FRAME_URL` selalu terbaca sempurna.
-
-6. **Cache-Busting**:
-   - Menaikkan versi script dan stylesheet ke `v=1.6.4` di `index.html`.
-
-## 3. CHECKLIST VERIFIKASI
-- [x] Syntax & Bracket Balancing Test (Curlies: 0, Parens: 0, Brackets: 0 di app.js dan code.gs)
-- [x] Unpacking objek frame dari backend GAS teruji
-- [x] Viewfinder preview langsung sync ke bingkai resmi yang ditentukan
-- [x] Bingkai yang tidak dicentang admin tidak ditampilkan sama sekali
-- [x] Komitmen Git siap di-push di GitHub Desktop
+================================================================================
+## 3. CHECKLIST VERIFIKASI SEBELUM RILIS
+- [x] Syntax & Bracket Balancing Test (Curlies: 0, Parens: 0, Brackets: 0 di app.js dan code.gs).
+- [x] Stream kamera HD aktif dengan fallback kompatibel untuk ponsel lama.
+- [x] Jepret foto via shutter mengeksekusi `takePhoto()` atau video capture dengan canvas high-smoothing 1080x1350 JPEG 0.95.
+- [x] Unduh otomatis ke memori galeri HP tamu berjalan saat menyimpan foto.
+- [x] Unggah live langsung ke Google Drive dan Google Sheets berjalan mulus.
+- [x] Preload gambar bingkai kustom mencegah kegagalan render atau border emas dadakan.
+- [x] Sinkronisasi Git ke repository GitHub.

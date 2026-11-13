@@ -975,7 +975,25 @@ function handleAdminSaveEvent(payload) {
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
     const frames = JSON.stringify(payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]);
-    const customFrameUrl = String(payload.customFrameUrl || "").trim();
+    let customFrameUrl = String(payload.customFrameUrl || "").trim();
+    if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
+      try {
+        let frameBase64 = customFrameUrl.split(",")[1];
+        let frameMime = "image/png";
+        if (customFrameUrl.indexOf("image/jpeg") !== -1) frameMime = "image/jpeg";
+        const frameBytes = Utilities.base64Decode(frameBase64);
+        const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + slugEvent + "_" + Date.now() + ".png");
+        let fFolder = DriveApp.getRootFolder();
+        if (folderId) {
+          try { fFolder = DriveApp.getFolderById(folderId); } catch(fe) {}
+        }
+        const fFile = fFolder.createFile(frameBlob);
+        fFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        customFrameUrl = "https://lh3.googleusercontent.com/d/" + fFile.getId();
+      } catch (fErr) {
+        Logger.log("Custom frame upload error: " + fErr.message);
+      }
+    }
     const categories = payload.categories || [];
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1094,7 +1112,8 @@ function handleAdminSaveEvent(payload) {
       status: "success",
       message: "Event '" + namaEvent + "' berhasil disimpan!",
       idEvent: savedIdEvent,
-      folderId: folderId
+      folderId: folderId,
+      customFrameUrl: customFrameUrl
     };
   } finally {
     lock.releaseLock();

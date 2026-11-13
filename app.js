@@ -780,7 +780,9 @@ async function loadEventData() {
         applyGlobalConfigToUI();
         applyEventToUI();
         const avail = getAvailableFrames();
-        if (!avail.some(f => f.id === STATE.activeFrame)) {
+        if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+          STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
+        } else if (!avail.some(f => f.id === STATE.activeFrame)) {
           STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
         }
         applyActiveFrame(STATE.activeFrame);
@@ -1289,7 +1291,9 @@ function showView(viewId) {
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
     const avail = getAvailableFrames();
-    if (!avail.some(f => f.id === STATE.activeFrame)) {
+    if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+      STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
+    } else if (!avail.some(f => f.id === STATE.activeFrame)) {
       STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
     }
     applyActiveFrame(STATE.activeFrame);
@@ -1335,14 +1339,20 @@ function applyActiveFrame(frameId) {
   const customImgEl = document.getElementById('vfCustomFrameImg');
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
   
-  if (selected && selected.type === 'custom' && selected.dataUrl) {
+  let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
+  if (!customUrl && selected && selected.type === 'custom') {
+    customUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+  }
+
+  if (selected && selected.type === 'custom' && customUrl) {
     if (customImgEl) {
-      customImgEl.src = selected.dataUrl;
+      customImgEl.src = customUrl;
       customImgEl.classList.remove('hidden');
     }
     if (builtInOverlayEl) {
       builtInOverlayEl.classList.add('hidden'); // Sembunyikan overlay teks built-in sepenuhnya saat custom PNG aktif
     }
+    preloadFrameImage(customUrl);
   } else {
     if (customImgEl) customImgEl.classList.add('hidden');
     if (builtInOverlayEl) {
@@ -1355,7 +1365,16 @@ function applyActiveFrame(frameId) {
         const bh = document.getElementById('vfFrameBottomHashtag');
         const dt = document.getElementById('vfFrameDate');
         if (tl) tl.textContent = `SNAPEVENT ${STATE.activeFilter}`;
-        if (bt) bt.textContent = STATE.activeEvent ? STATE.activeEvent.namaEvent : 'Our Event';
+        if (bt) {
+          bt.textContent = STATE.activeEvent ? STATE.activeEvent.namaEvent : 'Our Event';
+          if (selected && selected.id === 'POLAROID') {
+            bt.className = 'font-hand font-bold text-base text-zinc-100 drop-shadow';
+          } else if (selected && selected.id === 'MINIMAL') {
+            bt.className = 'font-sans font-bold text-xs uppercase tracking-wider text-white drop-shadow';
+          } else {
+            bt.className = 'font-serif italic text-sm text-amber-200 drop-shadow';
+          }
+        }
         if (bh) bh.textContent = STATE.activeEvent ? (STATE.activeEvent.hashtagEvent || '#SnapEvent') : '#SnapEvent';
         if (dt) dt.textContent = STATE.activeEvent ? (STATE.activeEvent.tanggalEvent || '') : '';
       }
@@ -1390,6 +1409,32 @@ function cyclePrevFrame() {
 }
 
 // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
+// Cache & Preloader Gambar Bingkai Kustom (Cegah Layar Hitam & Fallback Border Emas)
+const FRAME_IMG_CACHE = new Map();
+
+function preloadFrameImage(dataUrl) {
+  if (!dataUrl) return Promise.resolve(null);
+  if (FRAME_IMG_CACHE.has(dataUrl)) {
+    const cached = FRAME_IMG_CACHE.get(dataUrl);
+    if (cached && (cached.complete || cached.naturalWidth > 0)) {
+      return Promise.resolve(cached);
+    }
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      FRAME_IMG_CACHE.set(dataUrl, img);
+      resolve(img);
+    };
+    img.onerror = () => {
+      console.warn("Preload custom frame image error:", dataUrl);
+      resolve(null);
+    };
+    img.src = dataUrl;
+  });
+}
+
 function updateLiveCameraFilter() {
   const video = document.getElementById('cameraVideo');
   if (!video) return;
@@ -1407,16 +1452,31 @@ async function startCameraStream() {
       STATE.mediaStream.getTracks().forEach(t => t.stop());
     }
 
-    const constraints = {
-      video: {
-        facingMode: { ideal: STATE.facingMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: false
-    };
+    let stream;
+    try {
+      // 1. Prioritaskan Mode Kualitas HD / Full HD Sensor (1080p - 4K ideal)
+      const hdConstraints = {
+        video: {
+          facingMode: { ideal: STATE.facingMode },
+          width: { min: 1280, ideal: 1920, max: 3840 },
+          height: { min: 720, ideal: 1080, max: 2160 }
+        },
+        audio: false
+      };
+      stream = await navigator.mediaDevices.getUserMedia(hdConstraints);
+    } catch (eHD) {
+      console.warn("HD stream constraints not supported, fallback to standard resolution:", eHD.message);
+      // Fallback ramah jika ponsel tidak mendukung batas min HD
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: STATE.facingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+    }
 
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     STATE.mediaStream = stream;
     video.srcObject = stream;
     standby.classList.add('hidden');
@@ -1452,18 +1512,22 @@ function triggerNativeCamera() {
   input.click();
 }
 
-function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
+async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const canvas = document.getElementById('photoRenderCanvas');
   const ctx = canvas.getContext('2d');
 
   // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
   STATE.rawCapturedImageObj = imgSource;
 
-  // Aspect ratio 4:5 Portrait Standard
+  // Aspect ratio 4:5 Portrait Standard (1080 x 1350)
   canvas.width = 1080;
   canvas.height = 1350;
 
-  // Ekstraksi dimensi riil (Krusial: HTMLVideoElement menggunakan videoWidth/videoHeight, bukan width/height!)
+  // Optimasi Rendering HD: Smoothing Tajam & Berkualitas Tinggi
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // Ekstraksi dimensi riil (Krusial: HTMLVideoElement, ImageBitmap, HTMLImageElement)
   const srcWidth = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
   const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
   const imgRatio = srcWidth / srcHeight;
@@ -1493,10 +1557,10 @@ function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
     frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
   }
   STATE.activeFrame = frameToUse;
-  renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
+  await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
-  // Tampilkan ke elemen <img> pratinjau agar pasti tampil tajam tanpa layar hitam
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  // Tampilkan ke elemen <img> pratinjau dengan kualitas HD (JPEG 0.95)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
   STATE.currentCapturedDataUrl = dataUrl;
 
   const reviewImg = document.getElementById('reviewPhotoImg');
@@ -1579,7 +1643,7 @@ function applyColorFilter(ctx, w, h, filterName) {
   }
 }
 
-function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
+async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
   const evName = STATE.activeEvent?.namaEvent || "The Wedding of Sarah & Kevin";
   const hashtag = STATE.activeEvent?.hashtagEvent || "#SarahKevinEverAfter";
   const dateStr = STATE.activeEvent?.tanggalEvent || "20.11.2026";
@@ -1660,34 +1724,37 @@ function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     }
 
     if (dataUrl) {
-      const frameImg = new Image();
-      frameImg.src = dataUrl;
-      if (frameImg.complete && frameImg.naturalWidth > 0) {
+      const frameImg = await preloadFrameImage(dataUrl);
+      if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
         ctx.drawImage(frameImg, 0, 0, w, h);
-      } else {
-        // Fallback Border Emas jika gambar masih proses loading
-        ctx.lineWidth = 14;
-        ctx.strokeStyle = '#D4AF37';
-        ctx.strokeRect(30, 30, w - 60, h - 60);
-
-        ctx.fillStyle = 'rgba(12, 12, 16, 0.85)';
-        ctx.fillRect(50, h - 140, w - 100, 90);
-        ctx.strokeStyle = '#D4AF37';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(50, h - 140, w - 100, 90);
-
-        ctx.fillStyle = '#F3E5AB';
-        ctx.font = 'bold 30px "Playfair Display", serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(evName, w / 2, h - 95);
-
-        ctx.fillStyle = '#D4AF37';
-        ctx.font = '18px "Plus Jakarta Sans", sans-serif';
-        ctx.fillText(`${hashtag} • ${dateStr}`, w / 2, h - 65);
+        return;
       }
-    } else if (STATE.customFrameImgObj && STATE.customFrameImgObj.complete) {
-      ctx.drawImage(STATE.customFrameImgObj, 0, 0, w, h);
     }
+
+    if (STATE.customFrameImgObj && (STATE.customFrameImgObj.complete || STATE.customFrameImgObj.naturalWidth > 0)) {
+      ctx.drawImage(STATE.customFrameImgObj, 0, 0, w, h);
+      return;
+    }
+
+    // Fallback Border Emas jika gambar gagal dimuat
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = '#D4AF37';
+    ctx.strokeRect(30, 30, w - 60, h - 60);
+
+    ctx.fillStyle = 'rgba(12, 12, 16, 0.85)';
+    ctx.fillRect(50, h - 140, w - 100, 90);
+    ctx.strokeStyle = '#D4AF37';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(50, h - 140, w - 100, 90);
+
+    ctx.fillStyle = '#F3E5AB';
+    ctx.font = 'bold 30px "Playfair Display", serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(evName, w / 2, h - 95);
+
+    ctx.fillStyle = '#D4AF37';
+    ctx.font = '18px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(`${hashtag} • ${dateStr}`, w / 2, h - 65);
   }
 }
 
@@ -1749,7 +1816,23 @@ function generateSimulatedPartySnapshot() {
   return offCanvas;
 }
 
-// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG LIVE KE GOOGLE DRIVE & GALERI) ---
+// Helper Unduh Langsung ke Galeri / Memori Perangkat Pengguna
+function downloadPhotoToDevice(dataUrl, photoId) {
+  try {
+    const evName = (STATE.activeEvent?.namaEvent || "SnapEvent").replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${evName}_${photoId || Date.now()}.jpg`;
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (err) {
+    console.warn("Auto-download foto ke galeri perangkat gagal:", err);
+  }
+}
+
+// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG LIVE KE GOOGLE DRIVE & GALERI MASING-MASING) ---
 async function handleSavePhotoToDrive() {
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
@@ -1813,7 +1896,10 @@ async function handleSavePhotoToDrive() {
           createdAt: "Baru Saja"
         };
 
-        // Masukkan foto cloud ke daftar foto terdepan
+        // 1. Simpan salinan kualitas HD langsung ke galeri / penyimpanan ponsel tamu
+        downloadPhotoToDevice(STATE.currentCapturedDataUrl, cloudPhoto.idFoto);
+
+        // 2. Masukkan foto cloud ke daftar foto terdepan
         STATE.photos = [cloudPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== cloudPhoto.idFoto)];
         saveEventPhotos(targetEventId);
 
@@ -1824,7 +1910,7 @@ async function handleSavePhotoToDrive() {
         updateRemainingQuotaDisplay();
         updateGuestIdentityUI();
 
-        showToast("✅ Foto berhasil diunggah langsung ke Rol Google Drive!", "success");
+        showToast("✅ Foto tersimpan di Galeri HP & berhasil diunggah ke Google Drive!", "success");
 
         // Sinkronkan galeri dengan cloud database
         loadGallery();
@@ -1853,6 +1939,9 @@ async function handleSavePhotoToDrive() {
       createdAt: "Baru Saja"
     };
 
+    // Simpan salinan kualitas HD ke galeri ponsel
+    downloadPhotoToDevice(STATE.currentCapturedDataUrl, localPhotoId);
+
     STATE.photos = [newPhoto, ...(STATE.photos || [])];
     saveEventPhotos(targetEventId);
 
@@ -1861,7 +1950,7 @@ async function handleSavePhotoToDrive() {
     renderGallery();
     updateRemainingQuotaDisplay();
     updateGuestIdentityUI();
-    showToast("Foto tersimpan di HP (Mode lokal offline)", "info");
+    showToast("✅ Foto tersimpan di Galeri HP (Mode offline)", "info");
 
   } catch (err) {
     console.error("Upload Google Drive error:", err);
@@ -3373,8 +3462,8 @@ function bindEvents() {
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
-        img.onload = () => {
-          processPhotoWithFrameAndFilter(img);
+        img.onload = async () => {
+          await processPhotoWithFrameAndFilter(img);
           galleryInput.value = ''; // Reset input agar foto yang sama dapat dipilih kembali jika diinginkan
         };
         img.src = event.target.result;
@@ -3390,7 +3479,7 @@ function bindEvents() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
-      img.onload = () => processPhotoWithFrameAndFilter(img);
+      img.onload = async () => await processPhotoWithFrameAndFilter(img);
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
@@ -3419,11 +3508,11 @@ function bindEvents() {
   });
 
   // Review Frame Selector Pills (Pilih Bingkai Pasca-Foto)
-  document.getElementById('reviewFrameListContainer')?.addEventListener('click', (e) => {
+  document.getElementById('reviewFrameListContainer')?.addEventListener('click', async (e) => {
     const pill = e.target.closest('.rev-frame-pill');
     if (!pill || !STATE.rawCapturedImageObj) return;
     const chosenFrame = pill.getAttribute('data-frame');
-    processPhotoWithFrameAndFilter(STATE.rawCapturedImageObj, chosenFrame);
+    await processPhotoWithFrameAndFilter(STATE.rawCapturedImageObj, chosenFrame);
   });
 
   // Contact Modal Buttons
@@ -3805,17 +3894,32 @@ function bindEvents() {
   });
 }
 
-function triggerCameraShutter() {
+async function triggerCameraShutter() {
   // Flash Animation
   const flash = document.getElementById('flashOverlay');
-  flash.classList.remove('flash-anim');
-  void flash.offsetWidth; // Trigger reflow
-  flash.classList.add('flash-anim');
+  if (flash) {
+    flash.classList.remove('flash-anim');
+    void flash.offsetWidth; // Trigger reflow
+    flash.classList.add('flash-anim');
+  }
 
   const video = document.getElementById('cameraVideo');
   // Cek apakah live video stream sudah aktif dan memiliki frame riil
   if (STATE.mediaStream && video && video.readyState >= 2 && video.videoWidth > 0) {
-    processPhotoWithFrameAndFilter(video);
+    const videoTrack = STATE.mediaStream.getVideoTracks()[0];
+    // Tangkap gambar kualitas HD sensor penuh jika ImageCapture didukung browser perangkat
+    if (window.ImageCapture && videoTrack && videoTrack.readyState === 'live') {
+      try {
+        const imageCapture = new ImageCapture(videoTrack);
+        const blob = await imageCapture.takePhoto();
+        const bitmap = await createImageBitmap(blob);
+        await processPhotoWithFrameAndFilter(bitmap);
+        return;
+      } catch (errCapture) {
+        console.warn("ImageCapture takePhoto fallback to video frame:", errCapture);
+      }
+    }
+    await processPhotoWithFrameAndFilter(video);
   } else {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     if (isMobile) {
@@ -3823,7 +3927,7 @@ function triggerCameraShutter() {
     } else {
       // Pada desktop/laptop tanpa webcam, buat snapshot demo pesta beresolusi tinggi agar tidak layar hitam
       const simulated = generateSimulatedPartySnapshot();
-      processPhotoWithFrameAndFilter(simulated);
+      await processPhotoWithFrameAndFilter(simulated);
     }
   }
 }
