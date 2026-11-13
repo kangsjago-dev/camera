@@ -136,22 +136,10 @@ function loadEventPhotos(eventId) {
     if (raw) {
       STATE.photos = JSON.parse(raw);
     } else {
-      // Migrasi atau fallback ke mock data sample jika event default demo
-      const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
-      if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
-        if (legacy.length > 0) {
-          STATE.photos = legacy;
-        } else {
-          STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
-        }
-        localStorage.setItem(key, JSON.stringify(STATE.photos));
-      } else {
-        STATE.photos = [];
-      }
+      STATE.photos = [];
     }
   } catch (e) {
-    STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
+    STATE.photos = [];
   }
 }
 
@@ -1081,18 +1069,13 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Pertahankan foto lokal pending yang belum sempat terunggah ke Drive (Zero Data Loss)
+      // Pertahankan hanya foto lokal yang sedang dalam proses unggah latar belakang (isUploading === true)
       const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !String(p.idFoto).startsWith('FTO-DEMO-')
+        p && p.isUploading === true && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')
       );
 
-      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
+      // Gabungkan: foto lokal yang sedang diunggah tetap tampil di depan, disusul seluruh foto resmi server
       let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
-
-      // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
-      if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
-        finalPhotos = [...MOCK_DATA.samplePhotos];
-      }
 
       STATE.photos = finalPhotos;
       STATE.votedPhotoIds = res.votedPhotoIds || [];
@@ -1505,8 +1488,17 @@ function preloadFrameImage(dataUrl) {
       resolve(img);
     };
     img.onerror = () => {
-      console.warn("Preload custom frame image error:", dataUrl);
-      resolve(null);
+      // Fallback tanpa anonymous crossOrigin jika URL gambar dari Google Drive CDN
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => {
+        FRAME_IMG_CACHE.set(dataUrl, fallbackImg);
+        resolve(fallbackImg);
+      };
+      fallbackImg.onerror = () => {
+        console.warn("Preload custom frame image error:", dataUrl);
+        resolve(null);
+      };
+      fallbackImg.src = dataUrl;
     };
     img.src = dataUrl;
   });
@@ -1531,19 +1523,20 @@ async function startCameraStream() {
 
     let stream;
     try {
-      // 1. Prioritaskan Mode Kualitas HD / Full HD Sensor (1080p - 4K ideal)
+      // 1. Prioritaskan Mode Kualitas Full HD Sensor (1080p - 4K ideal, responsif orientasi ponsel)
+      const isPortrait = window.innerHeight >= window.innerWidth;
       const hdConstraints = {
         video: {
           facingMode: { ideal: STATE.facingMode },
-          width: { min: 1280, ideal: 1920, max: 3840 },
-          height: { min: 720, ideal: 1080, max: 2160 }
+          width: { ideal: isPortrait ? 1080 : 1920, max: 3840 },
+          height: { ideal: isPortrait ? 1920 : 1080, max: 3840 }
         },
         audio: false
       };
       stream = await navigator.mediaDevices.getUserMedia(hdConstraints);
     } catch (eHD) {
-      console.warn("HD stream constraints not supported, fallback to standard resolution:", eHD.message);
-      // Fallback ramah jika ponsel tidak mendukung batas min HD
+      console.warn("HD stream primary constraints fallback:", eHD.message);
+      // Fallback ramah jika ponsel membutuhkan parameter standar
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: STATE.facingMode },
@@ -1601,19 +1594,73 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1920;
   const isLandscape = srcWidth > srcHeight;
 
-  // Standar Resolusi Full HD (1080p / 1920 x 1080 piksel): 1080 x 1920 Portrait / 1920 x 1080 Landscape
-  if (isLandscape) {
-    canvas.width = 1920;
-    canvas.height = 1080;
-  } else {
-    canvas.width = 1080;
-    canvas.height = 1920;
+  // 1. Tentukan bingkai resmi yang aktif
+  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
+  }
+  STATE.activeFrame = frameToUse;
+
+  // 2. Preload bingkai kustom PNG untuk mendeteksi rasio aspek aslinya (Cegah Gambar Gepeng)
+  let customFrameImg = null;
+  let customFrameRatio = null;
+
+  if (frameToUse !== 'NONE' && frameToUse !== 'GOLD_DECO' && frameToUse !== 'POLAROID' && frameToUse !== 'MINIMAL') {
+    const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameToUse) : null;
+    let dataUrl = customObj ? customObj.dataUrl : null;
+    if (!dataUrl) {
+      dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+    }
+    if (dataUrl) {
+      customFrameImg = await preloadFrameImage(dataUrl);
+      if (customFrameImg && (customFrameImg.naturalWidth > 0 || customFrameImg.width > 0)) {
+        const fw = customFrameImg.naturalWidth || customFrameImg.width;
+        const fh = customFrameImg.naturalHeight || customFrameImg.height;
+        if (fw > 0 && fh > 0) {
+          customFrameRatio = fw / fh;
+        }
+      }
+    }
+    if (!customFrameImg && STATE.customFrameImgObj && (STATE.customFrameImgObj.complete || STATE.customFrameImgObj.naturalWidth > 0)) {
+      const fw = STATE.customFrameImgObj.naturalWidth || STATE.customFrameImgObj.width;
+      const fh = STATE.customFrameImgObj.naturalHeight || STATE.customFrameImgObj.height;
+      if (fw > 0 && fh > 0) {
+        customFrameImg = STATE.customFrameImgObj;
+        customFrameRatio = fw / fh;
+      }
+    }
   }
 
-  // Optimasi Rendering HD: Smoothing Tajam & Kualitas Maksimal
+  // 3. Konfigurasi Dimensi Canvas Full HD (1080p Standard)
+  // Menyesuaikan rasio bingkai kustom agar proporsi wajah & teks 100% presisi (Anti-Gepeng)
+  if (customFrameRatio) {
+    if (customFrameRatio < 1) {
+      // Bingkai Vertikal / Portrait (e.g. 3:4, 4:5, 9:16)
+      // Tinggi Full HD 1920px, Lebar mengikuti rasio aspek asli bingkai
+      canvas.height = 1920;
+      canvas.width = Math.round(1920 * customFrameRatio);
+    } else {
+      // Bingkai Horizontal / Landscape (e.g. 16:9, 4:3)
+      // Lebar Full HD 1920px, Tinggi mengikuti rasio aspek asli bingkai
+      canvas.width = 1920;
+      canvas.height = Math.round(1920 / customFrameRatio);
+    }
+  } else {
+    // Bingkai Bawaan Built-in (Gold Deco, Polaroid, Minimal, None)
+    if (isLandscape) {
+      canvas.width = 1920;
+      canvas.height = 1080;
+    } else {
+      canvas.width = 1080;
+      canvas.height = 1920;
+    }
+  }
+
+  // 4. Optimasi Rendering HD: Smoothing Tajam & Kualitas Maksimal
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
+  // 5. Render Foto Kamera (Center Crop - Cover)
   const imgRatio = srcWidth / srcHeight;
   const targetRatio = canvas.width / canvas.height;
   let renderW, renderH, offsetX, offsetY;
@@ -1632,18 +1679,13 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
 
   ctx.drawImage(imgSource, offsetX, offsetY, renderW, renderH);
 
-  // 2. Apply Vintage / Analog Filter Grading
+  // 6. Terapkan Filter Warna Analog
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
-  // 3. Render Selected Custom Frame & Hashtag
-  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
-  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
-    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
-  }
-  STATE.activeFrame = frameToUse;
-  await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
+  // 7. Render Bingkai (Preservasi Rasio Gambar Tanpa Distorsi)
+  await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse, customFrameImg);
 
-  // Tampilkan ke elemen <img> pratinjau dengan kualitas Full HD (Sekitar 1 MB hingga 3 MB, JPEG 0.98)
+  // 8. Ekspor ke DataURL Full HD Kualitas Maksimal (1080p, Sekitar 1 MB hingga 3 MB, JPEG 0.98)
   const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
   STATE.currentCapturedDataUrl = dataUrl;
 
@@ -1727,7 +1769,7 @@ function applyColorFilter(ctx, w, h, filterName) {
   }
 }
 
-async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
+async function renderCustomFrameOverlay(ctx, w, h, frameStyle, preloadedFrameImg) {
   const evName = STATE.activeEvent?.namaEvent || "The Wedding of Sarah & Kevin";
   const hashtag = STATE.activeEvent?.hashtagEvent || "#SarahKevinEverAfter";
   const dateStr = STATE.activeEvent?.tanggalEvent || "20.11.2026";
@@ -1801,22 +1843,43 @@ async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
 
   } else if (frameStyle !== 'NONE') {
     // Custom PNG Overlay (Global / Event / Multi-Frame / Single Lock)
-    const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameStyle) : null;
-    let dataUrl = customObj ? customObj.dataUrl : null;
-    if (!dataUrl) {
-      dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
-    }
+    let frameImg = preloadedFrameImg;
+    if (!frameImg) {
+      const customObj = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameStyle) : null;
+      let dataUrl = customObj ? customObj.dataUrl : null;
+      if (!dataUrl) {
+        dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+      }
 
-    if (dataUrl) {
-      const frameImg = await preloadFrameImage(dataUrl);
-      if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
-        ctx.drawImage(frameImg, 0, 0, w, h);
-        return;
+      if (dataUrl) {
+        frameImg = await preloadFrameImage(dataUrl);
       }
     }
 
-    if (STATE.customFrameImgObj && (STATE.customFrameImgObj.complete || STATE.customFrameImgObj.naturalWidth > 0)) {
-      ctx.drawImage(STATE.customFrameImgObj, 0, 0, w, h);
+    if (!frameImg && STATE.customFrameImgObj && (STATE.customFrameImgObj.complete || STATE.customFrameImgObj.naturalWidth > 0)) {
+      frameImg = STATE.customFrameImgObj;
+    }
+
+    if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
+      const fw = frameImg.naturalWidth || frameImg.width;
+      const fh = frameImg.naturalHeight || frameImg.height;
+      const fRatio = fw / fh;
+      const cRatio = w / h;
+
+      // Preservasi Rasio Gambar Asli (Zero Distortion - Tidak Gepeng)
+      let dx = 0, dy = 0, dw = w, dh = h;
+      if (Math.abs(fRatio - cRatio) > 0.01) {
+        if (fRatio > cRatio) {
+          dw = w;
+          dh = w / fRatio;
+          dy = (h - dh) / 2;
+        } else {
+          dh = h;
+          dw = h * fRatio;
+          dx = (w - dw) / 2;
+        }
+      }
+      ctx.drawImage(frameImg, dx, dy, dw, dh);
       return;
     }
 
@@ -2222,7 +2285,7 @@ function renderGallery() {
 
       card.innerHTML = `
         <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
-          <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+          <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
           <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
             <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
           </div>
@@ -2238,6 +2301,19 @@ function renderGallery() {
           </button>
         </div>
       `;
+
+      const imgEl = card.querySelector('img');
+      if (imgEl) {
+        imgEl.onerror = () => {
+          // File tidak ditemukan atau telah dihapus di server Drive: hapus kartu seketika
+          card.remove();
+          STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photo.idFoto);
+          saveEventPhotos(STATE.activeEventId);
+          const remaining = grid.querySelectorAll('.group[data-id]').length;
+          if (countBadge) countBadge.textContent = `${remaining} Foto`;
+          if (remaining === 0 && empty) empty.classList.remove('hidden');
+        };
+      }
 
       card.querySelector('.img-click-zone')?.addEventListener('click', () => {
         openPhotoZoom(photo);
@@ -3464,6 +3540,16 @@ async function saveAdminEventForm() {
   // Sinkronisasi ke Backend GAS dengan AWAIT (Pastikan Google Sheets selesai menulis sebelum F5)
   if (STATE.gasApiUrl) {
     try {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `
+          <div class="flex items-center justify-center gap-2">
+            <div class="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+            <span>Mengunggah Pengaturan & Bingkai ke Cloud...</span>
+          </div>
+        `;
+      }
+
       const resp = await fetch(STATE.gasApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -3494,13 +3580,17 @@ async function saveAdminEventForm() {
       if (res && res.status === 'success') {
         if (res.customFrameUrl) {
           savedEvent.customFrameUrl = res.customFrameUrl;
+          savedEvent.customFrameData = res.customFrameUrl;
           if (STATE.activeEvent && STATE.activeEvent.idEvent === savedEvent.idEvent) {
             STATE.activeEvent.customFrameUrl = res.customFrameUrl;
+            STATE.activeEvent.customFrameData = res.customFrameUrl;
           }
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
         }
+        showToast("☁️ Bingkai Kustom & Pengaturan Acara Sukses Diunggah ke Cloud Server!", "success");
       } else if (res && res.status === 'error') {
         console.warn("GAS simpan peringatan:", res.message);
+        showToast("Peringatan GAS: " + res.message, "warning");
       }
     } catch (err) {
       console.warn("Sinkronisasi GAS warn:", err.message);
@@ -3972,23 +4062,54 @@ function bindEvents() {
     });
   });
 
-  // Custom Frame File Upload
+  // Custom Frame File Upload (Optimasi PNG Otomatis Maks 1920px agar Cepat & Lolos Kuota POST GAS)
   document.getElementById('formEventCustomFrame').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    showToast("Mengoptimalkan resolusi bingkai kustom...", "info");
+
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      STATE.tempCustomFrameData = dataUrl;
-      document.getElementById('customFramePreviewImg').src = dataUrl;
-      document.getElementById('customFramePreviewBox').classList.remove('hidden');
-      document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
+      const rawDataUrl = ev.target.result;
+      const img = new Image();
+      img.onload = () => {
+        let targetW = img.naturalWidth || img.width;
+        let targetH = img.naturalHeight || img.height;
+        const maxDimension = 1920;
 
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-      renderAdminFrameSettings(currentEv);
+        if (targetW > maxDimension || targetH > maxDimension) {
+          if (targetW >= targetH) {
+            targetH = Math.round((targetH * maxDimension) / targetW);
+            targetW = maxDimension;
+          } else {
+            targetW = Math.round((targetW * maxDimension) / targetH);
+            targetH = maxDimension;
+          }
+        }
 
-      showToast("Bingkai kustom PNG berhasil diunggah dan masuk ke daftar pilihan!", "info");
+        const optCanvas = document.createElement('canvas');
+        optCanvas.width = targetW;
+        optCanvas.height = targetH;
+        const optCtx = optCanvas.getContext('2d');
+        optCtx.imageSmoothingEnabled = true;
+        optCtx.imageSmoothingQuality = 'high';
+        optCtx.drawImage(img, 0, 0, targetW, targetH);
+
+        const optimizedDataUrl = optCanvas.toDataURL('image/png');
+        STATE.tempCustomFrameData = optimizedDataUrl;
+
+        document.getElementById('customFramePreviewImg').src = optimizedDataUrl;
+        document.getElementById('customFramePreviewBox').classList.remove('hidden');
+        document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
+
+        const targetEventId = document.getElementById('formEventId')?.value;
+        const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+        renderAdminFrameSettings(currentEv);
+
+        showToast("✨ Bingkai kustom PNG siap disimpan & diunggah ke Cloud!", "success");
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   });
@@ -3999,11 +4120,15 @@ function bindEvents() {
     document.getElementById('customFramePreviewBox').classList.add('hidden');
     document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
     if (STATE.activeEvent) {
-      STATE.activeEvent.customFrameData = null;
+      STATE.activeEvent.customFrameData = '';
       STATE.activeEvent.customFrameUrl = '';
     }
     const targetEventId = document.getElementById('formEventId')?.value;
     const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+    if (currentEv) {
+      currentEv.customFrameData = '';
+      currentEv.customFrameUrl = '';
+    }
     renderAdminFrameSettings(currentEv);
     showToast("Bingkai kustom dihapus.", "info");
   });

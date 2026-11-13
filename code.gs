@@ -184,6 +184,10 @@ function doPost(e) {
       return createJsonResponse(handleAdminUpdateGlobalConfig(payload));
     }
 
+    if (action === "adminCleanDeletedPhotos") {
+      return createJsonResponse(handleAdminCleanDeletedPhotos(payload));
+    }
+
     return createJsonResponse({
       status: "error",
       message: "Action POST '" + action + "' tidak dikenali."
@@ -512,6 +516,25 @@ function handleGetGallery(eventId, guestId) {
       const fEvtId = fr[COL_FOTO.ID_EVENT];
       if (fEvtId === resolvedEventId || fEvtId === eventId) {
         const curPhotoId = fr[COL_FOTO.ID];
+        const gdriveId = fr[COL_FOTO.GDRIVE_FILE_ID];
+
+        // Validasi Defensif: Lewati foto jika file telah dihapus dari Google Drive
+        let fileExists = true;
+        if (gdriveId) {
+          try {
+            const driveFile = DriveApp.getFileById(gdriveId);
+            if (driveFile.isTrashed()) {
+              fileExists = false;
+            }
+          } catch (fileErr) {
+            // File telah dihapus permanen di Google Drive
+            fileExists = false;
+          }
+        }
+        if (!fileExists) {
+          continue; // Jangan kembalikan foto yang sudah terhapus di server
+        }
+
         const catLikes = photoCatLikes[curPhotoId] || {};
         photos.push({
           idFoto: curPhotoId,
@@ -1012,6 +1035,20 @@ function handleAdminGetSummary(pin) {
   if (eventSheet && totalEvents > 0) {
     const rows = eventSheet.getRange(2, 1, totalEvents, 17).getDisplayValues();
     rows.forEach(function(r) {
+      const rawFrames = parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+      let evMode = "multi";
+      let evLocked = "GOLD_DECO";
+      let evFramesList = ["GOLD_DECO", "POLAROID", "MINIMAL"];
+      if (rawFrames && typeof rawFrames === "object" && !Array.isArray(rawFrames)) {
+        evMode = rawFrames.mode || "single";
+        evLocked = rawFrames.locked || "GOLD_DECO";
+        evFramesList = Array.isArray(rawFrames.frames) ? rawFrames.frames : [evLocked];
+      } else if (Array.isArray(rawFrames)) {
+        evFramesList = rawFrames;
+        evMode = rawFrames.length === 1 ? "single" : "multi";
+        evLocked = rawFrames[0] || "GOLD_DECO";
+      }
+
       events.push({
         idEvent: r[COL_EVENT.ID],
         namaEvent: r[COL_EVENT.NAMA],
@@ -1024,9 +1061,14 @@ function handleAdminGetSummary(pin) {
         isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
         likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
+        activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
+        activeFrames: evFramesList,
+        frameLockMode: evMode,
+        singleLockedFrame: evLocked,
         gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID],
         statusEvent: r[COL_EVENT.STATUS],
-        createdAt: r[COL_EVENT.CREATED_AT]
+        createdAt: r[COL_EVENT.CREATED_AT],
+        customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
       });
     });
   }
@@ -1433,5 +1475,47 @@ function extractDriveFolderId(input) {
   const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (idMatch && idMatch[1]) return idMatch[1];
   return str;
+}
+
+/**
+ * Pembersih Foto Terhapus (Admin Tool):
+ * Memeriksa sheet DataFoto dan menghapus baris yang file fisiknya sudah terhapus di Drive
+ */
+function handleAdminCleanDeletedPhotos(payload) {
+  const pin = payload.pin || "";
+  const loginCheck = handleAdminLogin({ pin: pin });
+  if (loginCheck.status !== "success") return loginCheck;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
+  if (!fotoSheet || fotoSheet.getLastRow() <= 1) {
+    return { status: "success", message: "Tidak ada baris foto di sheet DataFoto.", cleanedCount: 0 };
+  }
+
+  let cleanedCount = 0;
+  const lastRow = fotoSheet.getLastRow();
+  for (let r = lastRow; r >= 2; r--) {
+    const rowVals = fotoSheet.getRange(r, 1, 1, 12).getDisplayValues()[0];
+    const gdriveId = rowVals[COL_FOTO.GDRIVE_FILE_ID];
+    if (gdriveId) {
+      let isDead = false;
+      try {
+        const file = DriveApp.getFileById(gdriveId);
+        if (file.isTrashed()) isDead = true;
+      } catch (err) {
+        isDead = true;
+      }
+      if (isDead) {
+        fotoSheet.deleteRow(r);
+        cleanedCount++;
+      }
+    }
+  }
+
+  return {
+    status: "success",
+    message: "Berhasil membersihkan " + cleanedCount + " baris foto yang telah dihapus di Drive.",
+    cleanedCount: cleanedCount
+  };
 }
 

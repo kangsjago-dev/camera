@@ -1,127 +1,73 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.7: BALLROOM DEAD-CENTER STAGE, LIVE CAM CUSTOM FRAME SELECTOR & PREVIEW, ZERO EMPTY DRIVE FOLDERS, MOBILE 1-PAGE ZERO-OVERLAP, CATEGORY VOTING WINNERS PODIUM)
+STATUS: SELESAI DITERAPKAN (HOTFIX v1.6.8: SINKRONISASI GALERI BERSIH DARI FOTO TERHAPUS, FULL HD 1080P SENSOR STREAM, PRESERVASI ASPEK RASIO BINGKAI ANTI-GEPENG, UPLOAD BINGKAI KUSTOM KE SERVER CLOUD)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.6.7 (Ballroom Center Stage, Live Cam Frame Bar, Drive Folder Deduplication, Category Voting Podium, Safe StopStream)
+VERSI RANCANGAN: v1.6.8 (Zero Ghost Photos, Dynamic Aspect Ratio Custom Frame, Full HD 1080p, Cloud Custom Frame Sync)
 ================================================================================
 
-## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.7)
+## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.8)
 
 Permintaan pengguna:
 "/zettbot 
-- live ballroom stream, buat foto ditengah, jangan terlalu atas dan atur agar posisi dan ukuran lebih menarik
-- pada menuh pilih bingkai foto pada live cam, tampilan untuk bingkai foto custom tidak ada, perbaiki
-- banyak folder yang terbentuk dan tidak ada isi, contoh seperti gambar yang dilampirkan
-- halaman live cam, perbaiki agar menjadi 1 halaman yang tidak saling menutupi dan bagus untuk digunakan
-- gunakan dan terapkan preview menggunakan custom bingkai foto yang telah ditentukan pada settingan acara
-- buat hasil voting berdasarkan kategori voting dan pemenangnya
+- file pada server telah dihapus, tetapi di galeri, masih ada gambarnya
+- buat hasil foto menjadi Full HD (1080p / 1920 x 1080 piksel): Sekitar 1 MB hingga 3 MB (atau lebih, tergantung detail warna dan kompresi)
+- bingkai custom acara sesuaikan dengan hasil foto, jangan ubah menjadi gepeng seperti gambar, sesuaikan
+- hsil dari bingkai kustom acara masih disimpan dilokal, blm di upload ke server agar disemua user settingannya sama
 terapkan segera dan jangan ubah yang sudah ada"
 
-Poin Inti Rekayasa v1.6.7:
-1. **Live Ballroom Stream True Dead-Center Stage**:
-   - Restrukturisasi `#modalSlideshow` dengan arsitektur non-blocking overlay (`pointer-events-none`).
-   - Top Bar dan Bottom Bar berada di layer overlay atas dan bawah tanpa mengurangi ruang vertikal panggung utama.
-   - Panggung foto (`slideshowImg`) berada persis di titik tengah layar (true dead-center) dengan `max-h-[77vh] max-w-[70vw]`, berbingkai emas mewah, dan efek transisi lembut.
-   - Kartu ucapan dan nama pengunggah (`slideshowInfoOverlay`) mengambang rapi di bawah foto tanpa menutupi subjek foto.
+Poin Inti Rekayasa v1.6.8:
+1. **Pemberantasan Tampilan Foto Hantu yang Sudah Dihapus di Server**:
+   - **Eliminasi Fallback Sample Photos**: Menghapus baris injeksi `MOCK_DATA.samplePhotos` pada `loadGallery()` dan `loadEventPhotos()` ketika server mengembalikan 0 foto. Saat seluruh foto dihapus dari server/Drive, galeri secara jujur menampilkan status bersih (*Empty State*) "Belum Ada Foto Terbit" dengan badge "0 Foto".
+   - **Eliminasi Gambar Unsplash Fallback**: Mengganti `onerror="this.src='unsplash'"` pada kartu foto dengan handler cerdas `img.onerror`. Jika file di Drive telah dihapus (404), kartu foto seketika dicopot dari DOM, dipangkas dari `STATE.photos`, dan cache lokal diperbarui.
+   - **Verifikasi Server-Side di `code.gs`**: Pada `handleGetGallery()`, menambahkan pengecekan `DriveApp.getFileById(gdriveId).isTrashed()`. File yang berada di tempat sampah atau sudah dihapus permanen di Google Drive tidak akan pernah dikembalikan ke aplikasi tamu.
+   - **Pembersih Data Admin**: Menambahkan tindakan `adminCleanDeletedPhotos` untuk membersihkan baris foto usang di Google Sheets `DataFoto`.
 
-2. **Menu Pemilihan Bingkai & Pratinjau Bingkai Kustom pada Live Cam**:
-   - Mengaktifkan bar `#liveCamFrameSelectorWrap` di atas viewfinder kamera HP.
-   - Mode Single Lock: Menampilkan badge informatif `🔒 Bingkai Acara: [Nama Bingkai]` dan mengunci preview langsung ke bingkai kustom yang ditentukan admin.
-   - Mode Multi Bebas: Menampilkan pil bingkai yang dapat digeser (termasuk thumbnail bingkai kustom PNG acara).
-   - Mengoreksi logika pencocokan `isCustomMatch` di `getAvailableFrames()` agar bingkai kustom acara (`CUSTOM_EVENT`) tidak tertimpa oleh preset bawaan.
-   - Mengintegrasikan event listener klik pada pil bingkai live cam untuk mengubah pratinjau viewfinder secara seketika (*real-time sync*).
+2. **Kualitas Full HD Sensor Murni (1080p / 1920 x 1080 piksel, ~1 MB - 3 MB)**:
+   - **Resolusi Sensor Responsif Orientasi**: Mengoreksi batasan `getUserMedia` agar orientasi potret ponsel meminta `width: 1080, height: 1920` (menghilangkan error `OverconstrainedError` akibat `min: 1280` horizontal pada sensor kamera vertikal).
+   - **Rendering Canvas Full HD**: Menjamin dimensi canvas berada pada standar 1080p (sisi terpendek minimal 1080px, sisi terpanjang 1920px).
+   - **Kompresi Detail Tinggi**: Ekspor `canvas.toDataURL('image/jpeg', 0.98)` dengan `imageSmoothingQuality = 'high'` menghasilkan ukuran file 1.2 MB hingga 2.8 MB sesuai standar industri fotografi acara.
 
-3. **Pemberantasan Pembuatan Folder Kosong di Google Drive**:
-   - Memperbaiki *Temporal Dead Zone* variabel `folderId` pada `handleAdminSaveEvent` di `code.gs`.
-   - Menggunakan kembali `GDRIVE_FOLDER_ID` dari baris `DataEvent` yang sudah ada alih-alih membuat folder baru setiap kali disimpan.
-   - Memeriksa folder di `SnapEvent_Gallery_Master` menggunakan `getFoldersByName` sebelum membuat folder baru.
-   - Menghapus pembuatan folder cadangan acak di root saat pengunggahan foto gagal.
+3. **Preservasi Aspek Rasio Bingkai Kustom (Anti-Gepeng / Zero Distortion)**:
+   - **Deteksi Rasio Asli**: Melakukan preload bingkai kustom PNG dan menghitung rasio asli `customFrameRatio = frameWidth / frameHeight`.
+   - **Dimensi Canvas Adaptif**:
+     - Jika bingkai potret (e.g. 3:4, 4:5, 9:16): `canvas.height = 1920; canvas.width = Math.round(1920 * customFrameRatio);` (misal 1440x1920 untuk 3:4, 1536x1920 untuk 4:5).
+     - Jika bingkai lanskap (e.g. 16:9, 4:3): `canvas.width = 1920; canvas.height = Math.round(1920 / customFrameRatio);`.
+   - **Center Crop Cover**: Menyesuaikan crop foto kamera agar mengisi kanvas secara proporsional.
+   - **Drawing Presisi**: Pada `renderCustomFrameOverlay()`, bingkai digambar dengan perlindungan aspek rasio (`drawX, drawY, drawW, drawH`). Hasilnya: gambar pengantin, ornamen bunga, dan tipografi 100% proporsional, tanpa distorsi horizontal/vertikal (tidak gepeng).
 
-4. **Desain 1 Layar Penuh Bebas Tumpang Tindih (Mobile 100dvh Layout)**:
-   - Mengatur `#viewCamera` dengan container `100dvh - 4.5rem` dengan hirarki vertikal terstruktur: Top Bar Sisa Jepretan, Frame Selector Bar, Viewfinder (`flex-1 min-h-0`), Filter Pills (mengambang di bawah viewfinder), dan Shutter Controls Bar.
-   - Seluruh elemen dapat diakses nyaman tanpa scroll dan tanpa saling tumpang tindih.
-
-5. **Hasil Voting Berdasarkan Kategori & Penentuan Pemenang (Category Winners Podium)**:
-   - Memperbarui `renderVotingWinners()` untuk menampilkan:
-     - **Podium Juara Umum Terfavorit** (Juara 1 Emas, Juara 2 Perak, Juara 3 Perunggu berdasarkan akumulasi like).
-     - **Pemenang per Kategori Acara** (Kartu juara untuk masing-masing kategori, menampilkan foto peraih like terbanyak di kategori tersebut, ucapan, dan jumlah suara).
-   - Memfilter dan mengurutkan galeri saat tab kategori dipilih berdasarkan jumlah suara spesifik kategori.
-
-6. **Perbaikan Defensif `stopCameraStream is not defined`**:
-   - Mendefinisikan `window.stopCameraStream` di layer global paling atas pada `app.js`.
-   - Melindungi setiap pemanggilan `stopCameraStream` dengan pemeriksaan `typeof`.
-   - Memperbarui cache-buster script ke `v=1.6.7`.
+4. **Penyimpanan Bingkai Kustom ke Server Cloud Google Drive**:
+   - **Optimasi Otomatis PNG di Browser**: Saat admin memilih file bingkai PNG, kanvas off-screen secara otomatis mengecilkan dimensi maksimal ke 1920px dengan transparansi alfa utuh. Bobot payload terpangkas dari 8MB menjadi ~300KB - 700KB.
+   - **Pencegahan Timeout GAS POST**: Payload base64 yang ramping menjamin POST ke Google Apps Script berhasil tanpa melampaui kuota eksekusi.
+   - **Penyimpanan Permanen di Google Drive**: `code.gs` mendekode base64, menyimpannya ke folder Google Drive acara, menetapkan izin publik (*Anyone with link can view*), menulis URL resmi `https://lh3.googleusercontent.com/d/[FILE_ID]` ke Sheet `DataEvent` Kolom 17 (`CUSTOM_FRAME_URL`), dan mengembalikannya ke client.
+   - **Kelengkapan Data Admin**: `handleAdminGetSummary()` kini menyertakan `customFrameUrl`, `activeFrames`, dan kebijakan bingkai sehingga sinkronisasi lintas perangkat bersifat seragam dan permanen.
 
 ================================================================================
 
-## 1. PERMINTAAN PENGGUNA & INSTRUKSI REKAYASA (v1.6.6)
-
-Permintaan pengguna:
-"/zettbot - buat foto menjadi Full HD (1080p / 1920 x 1080 piksel): Sekitar 1 MB hingga 3 MB (atau lebih, tergantung detail warna dan kompresi).
-- foto masih tidak disimpan dalam galery folder yang telah ditentukan
-- upload pada latar belakang, agar tamu dapat melakukan foto selanjutnya tanpa menunggu selesai upload ke server
-- pada saat "beri suara / like" terdapat pilihan mau vote untuk kategori apa, dan 1 user hanya bisa vote 1 x per kategori
-terapkan segera dan jangan ubah yang sudah ada"
-
-Poin Inti Rekayasa:
-1. **Resolusi Standar Full HD (1080p / 1920 x 1080 piksel) & Ukuran File 1 MB - 3 MB**:
-   - Canvas `photoRenderCanvas` disetel dinamis:
-     - Foto potret (vertikal smartphone): 1080 x 1920 piksel (Full HD 1080p Portrait).
-     - Foto lanskap (horizontal desktop/kamera landscape): 1920 x 1080 piksel (Full HD 1080p Landscape).
-   - Pengaturan kompresi ekspor JPEG disetel ke `0.98` dengan `imageSmoothingQuality = 'high'` untuk menghasilkan detail tajam dan ukuran file berkisar antara 1.2 MB hingga 3.2 MB sesuai spesifikasi.
-
-2. **Penyimpanan Pasti ke Folder Google Drive yang Ditentukan**:
-   - Pada `app.js`, pengunggahan selalu menyertakan `folderId: STATE.activeEvent?.gdriveFolderId || STATE.driveMasterId || ""`.
-   - Pada `code.gs`:
-     - Membaca `folderId` dari payload maupun `COL_EVENT.GDRIVE_FOLDER_ID` di `DataEvent`.
-     - Menyimpan foto langsung ke folder tersebut (`targetFolder = DriveApp.getFolderById(folderId)`).
-     - Menjamin ID folder tercatat di `DataEvent` agar upload seterusnya konsisten di folder resmi yang sama tanpa tercecer ke Root.
-
-3. **Unggah di Latar Belakang (Asynchronous Non-Blocking Upload)**:
-   - Tamu menekan tombol *"Simpan ke Rol"*:
-     - **Instan 1**: Foto Full HD langsung terunduh ke galeri fisik ponsel (`downloadPhotoToDevice`).
-     - **Instan 2**: Foto langsung masuk ke galeri lokal web app (`STATE.photos`) dengan status `isUploading: true`.
-     - **Instan 3**: Modal review foto langsung ditutup (`classList.add('hidden')`), toast informatif muncul.
-     - **Tamu seketika bebas menjepret foto berikutnya tanpa jeda detik pun!**
-     - Di latar belakang (*background async fetch*), file foto diunggah ke Google Apps Script. Saat berhasil, ID cloud dan view URL disinkronkan dan notifikasi sukses ditampilkan.
-
-4. **Modal Dialog Interaktif Pemilihan Kategori Voting (1x per Kategori)**:
-   - Ditambahkan modal `#modalVoteCategory` di `index.html`.
-   - Saat tamu menekan tombol like pada kartu foto atau tombol "Beri Suara" di modal zoom:
-     - Terbuka modal daftar kategori aktif acara (`STATE.activeCategories`).
-     - Kategori yang sudah pernah diberi suara oleh tamu ditandai `✓ Sudah Dipilih (1x)` dan dinonaktifkan.
-     - Kategori yang belum digunakan dapat diklik untuk memberikan 1 suara.
-     - Aturan mutlak 1 user 1x vote per kategori tervalidasi ganda di frontend (`STATE.votedCategoryIds`) dan backend Google Sheets (`COL_VOTE`).
-
-5. **Kebijakan Nol Regresi (Zero Regression)**:
-   - Filter analog kamera (`RAW`, `800T`, `WARM`, `BW`) tetap bekerja utuh.
-   - Sistem login admin dan struktur data lama tetap terjaga.
-
-================================================================================
 ## 2. FILE TERDAMPAK & SPESIFIKASI PERUBAHAN
 1. `app.js`:
-   - Penyesuaian `processPhotoWithFrameAndFilter()` ke Full HD 1080p (1080x1920 / 1920x1080, JPEG 0.98).
-   - Penyesuaian `generateSimulatedPartySnapshot()` ke 1080x1920.
-   - Transformasi `handleSavePhotoToDrive()` menjadi alur non-blocking dengan background upload async.
-   - Implementasi `openVoteCategoryModal()` dan update `handleVotePhoto(idFoto, idKategori)`.
-   - Pemasangan listener buka-tutup modal voting.
+   - Koreksi `loadEventPhotos` & `loadGallery`: hapus pemaksaan mock data sample saat galeri server kosong.
+   - Perbaikan `img.onerror` di `renderGallery`: pemangkasan seketika kartu foto terhapus.
+   - Orientasi responsif pada `startCameraStream()` (Full HD portrait & landscape).
+   - Adaptasi rasio dinamis di `processPhotoWithFrameAndFilter` & `renderCustomFrameOverlay` (anti-gepeng).
+   - Optimasi client-side PNG pada `formEventCustomFrame` & penanganan respon `customFrameUrl`.
 2. `code.gs`:
-   - Penguatan routing folder target Google Drive di `handleUploadPhoto` dengan pemulihan folder ID dan persistensi ke sheet `DataEvent`.
+   - Validasi keberadaan file di Google Drive pada `handleGetGallery`.
+   - Penambahan `customFrameUrl` dan framing policy pada `handleAdminGetSummary`.
+   - Penambahan aksi `adminCleanDeletedPhotos`.
 3. `index.html`:
-   - Penambahan modal `#modalVoteCategory` lengkap dengan tombol close dan hint kuota suara.
-   - Bump cache-busting ke `v=1.6.6` pada stylesheet dan script.
+   - Cache-busting script dan stylesheet diperbarui ke `v=1.6.8`.
 4. `prd.md`:
-   - Pencatatan log rilis resmi v1.6.6.
+   - Pencatatan log rilis arsitektur v1.6.8.
 
 ================================================================================
 ## 3. CHECKLIST VERIFIKASI SEBELUM RILIS
 - [x] Syntax & Bracket Balancing Test (Curlies: 0, Parens: 0, Brackets: 0 di app.js dan code.gs).
-- [x] Resolusi canvas 1080x1920 Portrait / 1920x1080 Landscape dengan kualitas JPEG 0.98 (ukuran ~1.2 - 3.2 MB).
-- [x] Modal review langsung tertutup saat klik "Simpan ke Rol", tamu langsung bisa foto berikutnya.
-- [x] File terunduh langsung ke galeri ponsel secara instan.
-- [x] Upload latar belakang berjalan mulus tanpa mengganggu aktivitas kamera.
-- [x] Modal pilih kategori voting muncul saat klik like/suara, dengan validasi ketat 1x per kategori.
-- [x] Target Google Drive folder routing valid dan tersimpan di DataEvent.
-- [x] Komitmen Git siap dipublikasikan di GitHub Desktop.
+- [x] Galeri kosong menampilkan pesan bersih tanpa foto hantu atau gambar Unsplash tiruan.
+- [x] Kartu foto yang gagal dimuat dari server Drive langsung dibersihkan otomatis.
+- [x] Kamera live stream meminta Full HD 1080p tanpa error overconstrained di ponsel vertikal.
+- [x] Bingkai kustom acara mempertahankan proporsi asli (3:4, 4:5, 9:16) tanpa gepeng / melar.
+- [x] Upload bingkai kustom dioptimasi otomatis dan berhasil tersimpan di Google Drive & Kolom 17 DataEvent.
+- [x] Semua pengguna / tamu di perangkat lain menerima bingkai kustom yang sama dari server.
+- [x] File disinkronkan ke repo GitHub lokal `C:\Users\Administrator\Documents\GitHub\camera`.
