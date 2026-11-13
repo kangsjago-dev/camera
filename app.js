@@ -1001,10 +1001,7 @@ async function loadGallery() {
 
       // Pertahankan foto lokal pending yang belum sempat terunggah ke Drive (Zero Data Loss)
       const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.gdriveViewUrl && (
-          p.gdriveViewUrl.startsWith('data:') || 
-          (p.idFoto && p.idFoto.startsWith('FTO-') && !serverIds.has(p.idFoto))
-        )
+        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !String(p.idFoto).startsWith('FTO-DEMO-')
       );
 
       // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
@@ -1363,6 +1360,25 @@ async function startCameraStream() {
   }
 }
 
+function stopCameraStream() {
+  if (STATE.mediaStream) {
+    try {
+      STATE.mediaStream.getTracks().forEach(track => {
+        try { track.stop(); } catch(e) {}
+      });
+    } catch (err) {
+      console.warn("stopCameraStream error:", err);
+    }
+    STATE.mediaStream = null;
+  }
+  const video = document.getElementById('cameraVideo');
+  if (video) {
+    try {
+      video.srcObject = null;
+    } catch(e) {}
+  }
+}
+
 function triggerNativeCamera() {
   const input = document.getElementById('nativeCameraInput');
   input.click();
@@ -1665,7 +1681,7 @@ function generateSimulatedPartySnapshot() {
   return offCanvas;
 }
 
-// --- 6. UPLOAD PHOTO (SIMPAN KE GALERI & GOOGLE DRIVE) ---
+// --- 6. UPLOAD PHOTO (SIMPAN LANGSUNG LIVE KE GOOGLE DRIVE & GALERI) ---
 async function handleSavePhotoToDrive() {
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
@@ -1687,85 +1703,101 @@ async function handleSavePhotoToDrive() {
   }
 
   btn.disabled = true;
-  btnText.textContent = "Menyimpan...";
+  btnText.textContent = "Mengunggah ke Drive...";
 
   try {
-    // 1. Buat object foto seketika agar langsung tampil di Galeri Acara tanpa delay
+    const targetEventId = getResolvedEventId(STATE.activeEventId);
+
+    // 1. JIKA API GAS TERSEDIA: UPLOAD LANGSUNG LIVE KE DRIVE & SHEETS
+    if (STATE.gasApiUrl) {
+      const payload = {
+        action: "uploadPhoto",
+        eventId: targetEventId,
+        guestId: STATE.guestId,
+        guestNama: STATE.guestNama || "Tamu",
+        caption: caption || "Momen seru!",
+        cameraStyle: STATE.activeFilter || "RAW",
+        frameStyle: STATE.activeFrame || "POLAROID",
+        imageBase64: STATE.currentCapturedDataUrl
+      };
+
+      const resp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+      const res = await resp.json();
+
+      if (res && res.status === 'success') {
+        const cloudPhoto = {
+          idFoto: res.idFoto || ("FTO-" + Date.now()),
+          eventId: targetEventId,
+          guestId: STATE.guestId,
+          guestNama: STATE.guestNama || "Tamu",
+          caption: caption || "Momen seru!",
+          cameraStyle: STATE.activeFilter || "RAW",
+          frameStyle: STATE.activeFrame || "POLAROID",
+          gdriveViewUrl: res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : STATE.currentCapturedDataUrl),
+          totalLikes: 0,
+          isFeatured: false,
+          createdAt: "Baru Saja"
+        };
+
+        // Masukkan foto cloud ke daftar foto terdepan
+        STATE.photos = [cloudPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== cloudPhoto.idFoto)];
+        saveEventPhotos(targetEventId);
+
+        // Tutup modal review foto dan alihkan ke galeri
+        document.getElementById('modalReviewPhoto').classList.add('hidden');
+        showView('viewGallery');
+        renderGallery();
+        updateRemainingQuotaDisplay();
+        updateGuestIdentityUI();
+
+        showToast("✅ Foto berhasil diunggah langsung ke Rol Google Drive!", "success");
+
+        // Sinkronkan galeri dengan cloud database
+        loadGallery();
+        return;
+      } else if (res && res.status === 'limit_reached') {
+        showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+        return;
+      } else {
+        throw new Error((res && res.message) || "Gagal mengunggah foto ke Google Drive.");
+      }
+    }
+
+    // 2. FALLBACK OFFLINE (Hanya jika belum ada GAS API)
     const localPhotoId = "FTO-" + Date.now();
     const newPhoto = {
       idFoto: localPhotoId,
-      eventId: STATE.activeEventId,
+      eventId: targetEventId,
       guestId: STATE.guestId,
       guestNama: STATE.guestNama || "Tamu",
       caption: caption || "Momen seru!",
-      cameraStyle: STATE.activeFilter,
-      frameStyle: STATE.activeFrame,
+      cameraStyle: STATE.activeFilter || "RAW",
+      frameStyle: STATE.activeFrame || "POLAROID",
       gdriveViewUrl: STATE.currentCapturedDataUrl,
       totalLikes: 0,
       isFeatured: false,
       createdAt: "Baru Saja"
     };
 
-    // Tambahkan foto ke urutan terdepan daftar foto
-    STATE.photos.unshift(newPhoto);
+    STATE.photos = [newPhoto, ...(STATE.photos || [])];
+    saveEventPhotos(targetEventId);
 
-    // Backup ke localStorage terisolasi per event agar foto tetap aman saat offline maupun refresh
-    saveEventPhotos(STATE.activeEventId);
-
-    // Segera tutup modal review dan tampilkan galeri dengan foto baru
     document.getElementById('modalReviewPhoto').classList.add('hidden');
-    renderGallery();
     showView('viewGallery');
+    renderGallery();
     updateRemainingQuotaDisplay();
-  updateGuestIdentityUI();
+    updateGuestIdentityUI();
+    showToast("Foto tersimpan di HP (Mode lokal offline)", "info");
 
-    // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
-    if (STATE.gasApiUrl) {
-      const payload = {
-        action: "uploadPhoto",
-        eventId: getResolvedEventId(STATE.activeEventId),
-        guestId: STATE.guestId,
-        guestNama: STATE.guestNama || "Tamu",
-        caption: caption,
-        cameraStyle: STATE.activeFilter,
-        frameStyle: STATE.activeFrame,
-        imageBase64: STATE.currentCapturedDataUrl
-      };
-
-      try {
-        const resp = await fetch(STATE.gasApiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8'
-          },
-          body: JSON.stringify(payload)
-        });
-        const res = await resp.json();
-
-        if (res.status === 'success') {
-          if (res.idFoto) newPhoto.idFoto = res.idFoto;
-          if (res.viewUrl) newPhoto.gdriveViewUrl = res.viewUrl;
-          if (res.photo?.idFoto) newPhoto.idFoto = res.photo.idFoto;
-          if (res.photo?.gdriveViewUrl) newPhoto.gdriveViewUrl = res.photo.gdriveViewUrl;
-          saveEventPhotos(STATE.activeEventId);
-          showToast("✅ Foto berhasil disimpan ke Galeri & Google Drive!", "success");
-          renderGallery();
-          // Muat ulang galeri cloud agar foto langsung tersinkronkan ke seluruh perangkat
-          loadGallery();
-        } else if (res.status === 'limit_reached') {
-          showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
-        } else {
-          showToast("⚠️ Foto tersimpan di HP: " + (res.message || "Sinkronisasi Drive tertunda"), "warning");
-        }
-      } catch (uploadErr) {
-        console.warn("Upload Google Drive background error:", uploadErr);
-        showToast("⚠️ Foto tersimpan di HP, gagal upload ke Drive: " + uploadErr.message, "error");
-      }
-    } else {
-      showToast("Foto tersimpan di HP! (URL GAS belum terpasang untuk Drive)", "info");
-    }
   } catch (err) {
-    showToast("Terjadi kesalahan: " + err.message, "error");
+    console.error("Upload Google Drive error:", err);
+    showToast("⚠️ Gagal upload: " + err.message, "error");
   } finally {
     btn.disabled = false;
     btnText.textContent = "Simpan ke Rol";
