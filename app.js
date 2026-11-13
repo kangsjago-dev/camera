@@ -1087,6 +1087,10 @@ async function loadGallery() {
       // Gabungkan: foto lokal yang baru diambil tetap tampil di depan, disusul seluruh foto resmi server
       let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
 
+      // Bandingkan signature foto & like untuk mencegah flicker DOM saat auto-refresh
+      const oldSignature = (STATE.photos || []).map(p => `${p.idFoto}:${p.totalLikes || 0}:${p.isUploading}`).join('|');
+      const newSignature = finalPhotos.map(p => `${p.idFoto}:${p.totalLikes || 0}:${p.isUploading}`).join('|');
+
       STATE.photos = finalPhotos;
       STATE.votedPhotoIds = res.votedPhotoIds || [];
       if (Array.isArray(res.categories) && res.categories.length > 0) {
@@ -1094,7 +1098,11 @@ async function loadGallery() {
         applyEventToUI();
       }
       saveEventPhotos(targetId);
-      renderGallery();
+
+      // Re-render otomatis jika ada foto baru, perubahan status unggah, atau perolehan like bertambah
+      if (oldSignature !== newSignature || !grid || !grid.children.length) {
+        renderGallery();
+      }
 
       // Unggah otomatis di background untuk foto lokal pending jika belum pernah dimulai
       if (pendingLocalPhotos.length > 0) {
@@ -2464,12 +2472,7 @@ function renderVotingWinners() {
             <span class="text-lg">🌟</span>
             <h4 class="font-bold text-xs uppercase tracking-widest text-brand-gold">Podium Juara Umum Pesta</h4>
           </div>
-          <div class="flex items-center gap-2">
-            <button type="button" id="btnEditPodiumTitlesInline" class="text-[10px] px-2.5 py-1 rounded-xl bg-brand-gold/15 border border-brand-gold/30 text-brand-gold hover:bg-brand-gold/25 font-bold transition flex items-center gap-1 shadow-sm">
-              <span>✏️</span> Edit Kata Gelar
-            </button>
-            <span class="text-[10px] text-zinc-400">Total Akumulasi Suka</span>
-          </div>
+          <span class="text-[10px] text-zinc-400">Total Akumulasi Suka</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <!-- Juara 1 Emas (Custom Golden Laurel Grand Champion) -->
@@ -2612,14 +2615,6 @@ function renderVotingWinners() {
   podium.innerHTML = podiumHtml;
 
   // Pasang Event Listener Edit Kata-kata Gelar Juara Inline
-  const btnEditTitles = podium.querySelector('#btnEditPodiumTitlesInline');
-  if (btnEditTitles) {
-    btnEditTitles.addEventListener('click', (e) => {
-      e.stopPropagation();
-      promptEditPodiumTitles();
-    });
-  }
-
   // Pasang Event Listener Tombol Filter Pilihan Tampilan
   podium.querySelectorAll('.winner-filter-pill').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3546,7 +3541,7 @@ function populateEditEventForm(ev) {
     previewImg.src = frameData;
     previewBox.classList.remove('hidden');
     btnRemove.classList.remove('hidden');
-    STATE.tempCustomFrameData = frameData;
+    STATE.tempCustomFrameData = null; // Reset: bingkai ini adalah data tersimpan eksisting, bukan upload file baru
   } else {
     previewBox.classList.add('hidden');
     btnRemove.classList.add('hidden');
@@ -3654,16 +3649,61 @@ async function saveAdminEventForm() {
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
 
   // Prioritaskan file bingkai baru yang baru saja dipilih di browser
-  // Jika tidak ada file baru, kirim URL cloud HTTP eksisting agar tidak mengirim string base64 raksasa (>50.000 karakter)
+  // Jika ada file baru bertipe data: (Base64), unggah dulu ke Google Drive agar GAS hanya menerima URL pendek
   let customFrameToSend = '';
-  if (STATE.tempCustomFrameData) {
-    customFrameToSend = STATE.tempCustomFrameData;
-  } else if (existingEv && existingEv.customFrameUrl && existingEv.customFrameUrl.startsWith('http')) {
-    customFrameToSend = existingEv.customFrameUrl;
-  } else if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && STATE.activeEvent.customFrameUrl.startsWith('http')) {
-    customFrameToSend = STATE.activeEvent.customFrameUrl;
-  } else if (existingEv && existingEv.customFrameUrl && !existingEv.customFrameUrl.startsWith('data:')) {
-    customFrameToSend = existingEv.customFrameUrl;
+  if (STATE.tempCustomFrameData && typeof STATE.tempCustomFrameData === 'string' && STATE.tempCustomFrameData.startsWith('data:image/') && STATE.gasApiUrl) {
+    try {
+      if (submitBtn) {
+        submitBtn.innerHTML = `
+          <div class="flex items-center justify-center gap-2">
+            <div class="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+            <span>Mengunggah Bingkai Kustom ke Cloud Drive...</span>
+          </div>
+        `;
+      }
+      const frameUploadResp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadPhoto',
+          eventId: targetEventId,
+          folderId: driveFolder || STATE.activeEvent?.gdriveFolderId || "",
+          guestId: 'SYSTEM_FRAME',
+          guestNama: 'Bingkai Acara',
+          caption: 'Custom Frame ' + nama,
+          cameraStyle: 'FRAME',
+          frameStyle: 'CUSTOM',
+          imageBase64: STATE.tempCustomFrameData
+        })
+      });
+      const frameUploadRes = await frameUploadResp.json();
+      if (frameUploadRes && (frameUploadRes.viewUrl || frameUploadRes.fileId)) {
+        const cloudUrl = frameUploadRes.viewUrl || ('https://lh3.googleusercontent.com/d/' + frameUploadRes.fileId);
+        customFrameToSend = cloudUrl;
+        STATE.tempCustomFrameData = cloudUrl;
+      }
+    } catch (fErr) {
+      console.warn("Upload bingkai kustom via uploadPhoto fallback:", fErr.message);
+    }
+  }
+
+  if (!customFrameToSend) {
+    if (STATE.tempCustomFrameData && STATE.tempCustomFrameData.startsWith('http')) {
+      customFrameToSend = STATE.tempCustomFrameData;
+    } else if (existingEv && existingEv.customFrameUrl && existingEv.customFrameUrl.startsWith('http')) {
+      customFrameToSend = existingEv.customFrameUrl;
+    } else if (STATE.activeEvent && STATE.activeEvent.customFrameUrl && STATE.activeEvent.customFrameUrl.startsWith('http')) {
+      customFrameToSend = STATE.activeEvent.customFrameUrl;
+    }
+  }
+
+  // PROTEKSI MUTLAK GAS 50.000 KARAKTER:
+  // Jangan pernah mengirimkan string base64 (>500 karakter) ke endpoint adminSaveEvent!
+  if (customFrameToSend && (customFrameToSend.startsWith('data:') || customFrameToSend.length > 500)) {
+    console.warn("Mencegah error Google Sheets 50.000 karakter: URL bingkai dinetralkan.");
+    customFrameToSend = (existingEv && existingEv.customFrameUrl && existingEv.customFrameUrl.startsWith('http'))
+      ? existingEv.customFrameUrl
+      : '';
   }
   const customFrameData = customFrameToSend;
 
@@ -3902,8 +3942,12 @@ async function purgeAllOfflineDataAndResync() {
   if (STATE.gasApiUrl) {
     try {
       showToast("☁️ Mengunduh data terbaru dari Cloud Server...", "info");
-      await fetchEventDetails();
+      await loadEventData();
       await loadGallery();
+      applyEventToUI();
+      applyGlobalConfigToUI();
+      renderGallery();
+      renderAdminDashboard();
       showToast("✅ Sinkronisasi tuntas! Semua data kini 100% identik dengan server cloud.", "success");
     } catch (err) {
       console.warn("Purge resync warning:", err.message);
@@ -3915,12 +3959,17 @@ async function purgeAllOfflineDataAndResync() {
   }
 }
 
+// Global Alias agar tidak pernah memicu 'fetchEventDetails is not defined'
+window.fetchEventDetails = loadEventData;
+
 // --- 11. BIND ALL EVENT LISTENERS ---
 function bindEvents() {
   // Tombol Uji Koneksi & Sinkronisasi GAS
   document.getElementById('btnTestGasConnection')?.addEventListener('click', testGasConnection);
   // Tombol Bersihkan Cache Offline & Sync Ulang
   document.getElementById('btnAdminPurgeOfflineCache')?.addEventListener('click', purgeAllOfflineDataAndResync);
+  // Tombol Edit Kata Gelar Juara Khusus Halaman Admin
+  document.getElementById('btnAdminEditPodiumTitles')?.addEventListener('click', promptEditPodiumTitles);
   // Welcome View Guest Name Submit (MANDATORY GATE)
   document.getElementById('btnStartCamera').addEventListener('click', () => {
     const nameInput = document.getElementById('inputGuestName');
@@ -4604,18 +4653,30 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// --- 9. REALTIME CLOUD HEARTBEAT (OMNI-DEVICE AUTO-SYNC) ---
-// Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
-// dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
+// --- 9. REALTIME CLOUD HEARTBEAT & LIVE GALLERY AUTO-REFRESH (OMNI-DEVICE AUTO-SYNC) ---
+// Polling otomatis setiap 5 detik saat membuka Galeri atau Slideshow Proyektor
+// agar foto terbaru dari seluruh tamu langsung muncul seketika tanpa refresh manual (F5).
 setInterval(() => {
-  if (STATE.gasApiUrl && !document.hidden) {
-    loadEventData();
+  if (!STATE.gasApiUrl || document.hidden || STATE.isSavingPhotoToDrive) return;
+  const isGalleryOpen = !document.getElementById('viewGallery')?.classList.contains('hidden');
+  const isSlideshowOpen = !document.getElementById('modalSlideshow')?.classList.contains('hidden');
+  if (isGalleryOpen || isSlideshowOpen) {
+    loadGallery().catch(err => console.warn("Live gallery auto-refresh note:", err));
   }
-}, 45000);
+}, 5000);
 
+// Heartbeat pengaturan event setiap 30 detik
+setInterval(() => {
+  if (STATE.gasApiUrl && !document.hidden && !STATE.isSavingPhotoToDrive) {
+    loadEventData().catch(err => console.warn("Cloud heartbeat note:", err));
+  }
+}, 30000);
+
+// Saat tamu kembali ke tab browser, sinkronkan seketika
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && STATE.gasApiUrl) {
     loadEventData();
+    loadGallery();
   }
 });
 

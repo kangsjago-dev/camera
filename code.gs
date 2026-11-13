@@ -1466,15 +1466,17 @@ function handleAdminUpdateGlobalConfig(payload) {
 
   Object.keys(updates).forEach(function(key) {
     let found = false;
+    const safeVal = sanitizeCellValue(updates[key], 49000);
+    const safeKey = sanitizeCellValue(key, 500);
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][COL_CONFIG.KEY] === key) {
-        configSheet.getRange(i + 2, COL_CONFIG.VAL + 1).setValue(updates[key]);
+      if (rows[i][COL_CONFIG.KEY] === safeKey) {
+        configSheet.getRange(i + 2, COL_CONFIG.VAL + 1).setValue(safeVal);
         found = true;
         break;
       }
     }
     if (!found) {
-      configSheet.appendRow([key, updates[key], "Kustom Config"]);
+      configSheet.appendRow([safeKey, safeVal, "Kustom Config"]);
     }
   });
 
