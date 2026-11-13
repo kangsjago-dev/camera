@@ -68,10 +68,24 @@ function getResolvedEventId(idOrSlug) {
   const target = String(idOrSlug || STATE.activeEventId || '').trim();
   if (!target) return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
   if (/^EVT-\d+/i.test(target)) return target;
-  const ev = (STATE.events || []).find(e => 
+
+  const lower = target.toLowerCase();
+  // Alias langsung untuk event default Sarah & Kevin agar kebal terhadap variasi slug/parameter
+  if (
+    lower === 'the-wedding-of-sarah-and-kevin' ||
+    lower === 'the-wedding-of-sarah-&-kevin' ||
+    lower === 'sarah-kevin' ||
+    lower === 'sarahkevineverafter' ||
+    (lower.includes('sarah') && lower.includes('kevin'))
+  ) {
+    return 'EVT-202611-001';
+  }
+
+  const allKnown = [...(STATE.events || []), ...(MOCK_DATA.events || [])];
+  const ev = allKnown.find(e => 
     e.idEvent === target || 
-    (e.slugEvent && e.slugEvent.toLowerCase() === target.toLowerCase()) ||
-    (e.namaEvent && e.namaEvent.toLowerCase() === target.toLowerCase())
+    (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
+    (e.namaEvent && e.namaEvent.toLowerCase() === lower)
   );
   if (ev && ev.idEvent) return ev.idEvent;
   if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
@@ -92,7 +106,8 @@ function getEventVotedCategoriesKey(eventId) {
 
 function loadEventPhotos(eventId) {
   const id = eventId || STATE.activeEventId || 'EVT-202611-001';
-  const key = getEventPhotosKey(id);
+  const resolvedId = getResolvedEventId(id);
+  const key = getEventPhotosKey(resolvedId);
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
@@ -101,7 +116,7 @@ function loadEventPhotos(eventId) {
       // Migrasi atau fallback ke mock data sample jika event default demo
       const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
       const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
-      if (id === 'EVT-202611-001' || id === defaultMockId) {
+      if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
         if (legacy.length > 0) {
           STATE.photos = legacy;
         } else {
@@ -118,9 +133,9 @@ function loadEventPhotos(eventId) {
 }
 
 function saveEventPhotos(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
   try {
-    localStorage.setItem(getEventPhotosKey(id), JSON.stringify(STATE.photos.slice(0, 100)));
+    localStorage.setItem(getEventPhotosKey(id), JSON.stringify((STATE.photos || []).slice(0, 100)));
   } catch (e) {
     console.warn("Penyimpanan foto penuh / error:", e);
   }
@@ -300,8 +315,8 @@ const MOCK_DATA = {
   events: [
     {
       idEvent: "EVT-202611-001",
-      namaEvent: "The Wedding of Sarah & Kevin",
-      slugEvent: "sarah-kevin",
+      namaEvent: "The Wedding of Sarah and Kevin",
+      slugEvent: "the-wedding-of-sarah-and-kevin",
       tanggalEvent: "2026-11-20",
       hashtagEvent: "#SarahKevinEverAfter",
       maxFotoPerGuest: 10,
@@ -311,9 +326,9 @@ const MOCK_DATA = {
       likeEnabled: true,
       publicVisible: true,
       activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "multi",
+      frameLockMode: "single",
       singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
+      activeFrames: ["GOLD_DECO"],
       gdriveFolderId: "",
       statusEvent: "AKTIF",
       customFrameUrl: ""
@@ -497,15 +512,13 @@ async function initApp() {
   // Tentukan event aktif saat ini (Dukungan URL QR Code & Event Switching)
   const requestedEvent = urlParams.get('event');
   if (requestedEvent) {
-    const matched = (STATE.events || []).find(e => 
-      e.idEvent === requestedEvent || 
-      (e.slugEvent && e.slugEvent.toLowerCase() === requestedEvent.toLowerCase())
-    );
+    const resolvedReqId = getResolvedEventId(requestedEvent);
+    STATE.activeEventId = resolvedReqId;
+    const matched = (STATE.events || []).find(e => e.idEvent === resolvedReqId);
     if (matched) {
-      STATE.activeEventId = matched.idEvent;
       STATE.activeEvent = matched;
-      localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
     }
+    localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
   }
 
   if (!STATE.activeEvent) {
@@ -582,12 +595,22 @@ async function revalidateFromBackend() {
   isRevalidating = true;
 
   try {
-    // Both functions now have smart DOM diffing built-in to prevent lag
     await Promise.allSettled([
       loadEventData(),
       loadGallery()
     ]);
-    
+
+    // Update UI secara halus (silent reactive update) setelah data GAS tiba
+    applyGlobalConfigToUI();
+    applyEventToUI();
+    if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+      renderAdminDashboard();
+    }
+    const currentView = sessionStorage.getItem('snapevent_current_view');
+    const isGalleryActive = currentView === 'viewGallery' || (!document.getElementById('viewGallery')?.classList.contains('hidden'));
+    if (isGalleryActive) {
+      renderGallery();
+    }
     updateRemainingQuotaDisplay();
   } catch (err) {
     console.warn("Background revalidation note:", err);
@@ -619,7 +642,7 @@ async function loadEventData() {
         const inferredLocked = res.event.singleLockedFrame 
           || (inferredMode === 'single' && Array.isArray(res.event.activeFrames) ? res.event.activeFrames[0] : (localActive?.singleLockedFrame || 'GOLD_DECO'));
 
-        const newActiveEvent = {
+        STATE.activeEvent = {
           ...localActive,
           ...res.event,
           frameLockMode: inferredMode,
@@ -630,29 +653,16 @@ async function loadEventData() {
           customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
           customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
         };
-        
-        let shouldUpdateUI = false;
-        
-        if (JSON.stringify(STATE.activeEvent) !== JSON.stringify(newActiveEvent)) {
-          STATE.activeEvent = newActiveEvent;
-          shouldUpdateUI = true;
-        }
+        STATE.activeCategories = res.categories || [];
 
-        const newCategories = res.categories || [];
-        if (JSON.stringify(STATE.activeCategories) !== JSON.stringify(newCategories)) {
-          STATE.activeCategories = newCategories;
-          shouldUpdateUI = true;
-        }
-
-        if (res.metrics && JSON.stringify(STATE.metrics) !== JSON.stringify(res.metrics)) {
+        if (res.metrics) {
           STATE.metrics = res.metrics;
           localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
-          shouldUpdateUI = true;
         }
 
         // Sinkronkan seluruh event secara defensif (Pertahankan frame settings lokal jika server belum update)
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
-          const newEventsList = res.allEvents.map(serverEv => {
+          STATE.events = res.allEvents.map(serverEv => {
             const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
             const evInferredMode = serverEv.frameLockMode 
               || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
@@ -671,78 +681,56 @@ async function loadEventData() {
               customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
             };
           });
-          
-          if (JSON.stringify(STATE.events) !== JSON.stringify(newEventsList)) {
-            STATE.events = newEventsList;
-            localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-            shouldUpdateUI = true;
-          }
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
         }
 
         if (res.globalConfig) {
-          const conf = res.globalConfig;
-          if (conf.master_drive_folder_id && STATE.driveMasterId !== conf.master_drive_folder_id) {
-            STATE.driveMasterId = conf.master_drive_folder_id;
+          if (res.globalConfig.master_drive_folder_id) {
+            STATE.driveMasterId = res.globalConfig.master_drive_folder_id;
             localStorage.setItem('snapevent_drive_master_id', STATE.driveMasterId);
-            shouldUpdateUI = true;
           }
-          if (conf.app_title && STATE.appTitle !== conf.app_title) {
-            STATE.appTitle = conf.app_title;
+          if (res.globalConfig.app_title) {
+            STATE.appTitle = res.globalConfig.app_title;
             localStorage.setItem('snapevent_app_title', STATE.appTitle);
-            shouldUpdateUI = true;
           }
-          if (conf.app_logo_url && STATE.appLogoUrl !== conf.app_logo_url) {
-            STATE.appLogoUrl = conf.app_logo_url;
+          if (res.globalConfig.app_logo_url) {
+            STATE.appLogoUrl = res.globalConfig.app_logo_url;
             localStorage.setItem('snapevent_app_logo_url', STATE.appLogoUrl);
-            shouldUpdateUI = true;
           }
-          if (conf.app_phone && STATE.appPhone !== conf.app_phone) {
-            STATE.appPhone = conf.app_phone;
+          if (res.globalConfig.app_phone) {
+            STATE.appPhone = res.globalConfig.app_phone;
             localStorage.setItem('snapevent_app_phone', STATE.appPhone);
-            shouldUpdateUI = true;
           }
-          if (conf.app_instagram && STATE.appInstagram !== conf.app_instagram) {
-            STATE.appInstagram = conf.app_instagram;
+          if (res.globalConfig.app_instagram) {
+            STATE.appInstagram = res.globalConfig.app_instagram;
             localStorage.setItem('snapevent_app_instagram', STATE.appInstagram);
-            shouldUpdateUI = true;
           }
-          if (conf.admin_user && STATE.adminUser !== conf.admin_user) {
-            STATE.adminUser = conf.admin_user;
+          if (res.globalConfig.admin_user) {
+            STATE.adminUser = res.globalConfig.admin_user;
             localStorage.setItem('snapevent_admin_user', STATE.adminUser);
           }
-          if (conf.admin_pass && STATE.adminPass !== conf.admin_pass) {
-            STATE.adminPass = conf.admin_pass;
+          if (res.globalConfig.admin_pass) {
+            STATE.adminPass = res.globalConfig.admin_pass;
             localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
           }
-          if (conf.user_accounts) {
+          if (res.globalConfig.user_accounts) {
             try {
-              const parsedAccounts = JSON.parse(conf.user_accounts);
-              if (JSON.stringify(STATE.userAccounts) !== JSON.stringify(parsedAccounts)) {
-                STATE.userAccounts = parsedAccounts;
-                localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
-                shouldUpdateUI = true;
-              }
+              STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts);
+              localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
             } catch (e) { }
           }
         }
 
         if (res.guestStats && res.guestStats.guestVotesMap) {
           const votedList = Object.keys(res.guestStats.guestVotesMap).filter(k => res.guestStats.guestVotesMap[k] > 0);
-          const newVotedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
-          if (JSON.stringify(STATE.votedCategoryIds) !== JSON.stringify(newVotedCategoryIds)) {
-            STATE.votedCategoryIds = newVotedCategoryIds;
-            saveEventVotes(STATE.activeEventId);
-            shouldUpdateUI = true;
-          }
+          STATE.votedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
+          saveEventVotes(STATE.activeEventId);
         }
 
-        // Hanya update DOM jika terjadi perubahan data (Zero Lag Policy)
-        if (shouldUpdateUI) {
-          applyGlobalConfigToUI();
-          applyEventToUI();
-          if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-            renderAdminDashboard();
-          }
+        applyGlobalConfigToUI();
+        applyEventToUI();
+        if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+          renderAdminDashboard();
         }
         return res;
       } else if (res.status === 'inactive') {
@@ -756,15 +744,13 @@ async function loadEventData() {
     }
   }
 
-  // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara) jika tidak ada API
-  if (!STATE.gasApiUrl) {
-    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
-    STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
-    loadEventPhotos(STATE.activeEventId);
-    applyGlobalConfigToUI();
-    applyEventToUI();
-    renderGallery();
-  }
+  // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara)
+  STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
+  STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
+  loadEventPhotos(STATE.activeEventId);
+  applyGlobalConfigToUI();
+  applyEventToUI();
+  renderGallery();
 }
 
 function activateEvent(idEvent) {
@@ -986,7 +972,10 @@ async function syncEventsFromBackend(showToastNotice = false) {
 }
 
 async function loadGallery() {
-  if (!STATE.gasApiUrl) return;
+  if (!STATE.gasApiUrl) {
+    renderGallery();
+    return;
+  }
   const grid = document.getElementById('galleryPhotoGrid');
   const countBadge = document.getElementById('galleryPhotoCountBadge');
   const empty = document.getElementById('galleryEmptyNotice');
@@ -1018,21 +1007,18 @@ async function loadGallery() {
         )
       );
 
-      const newPhotos = [...pendingLocalPhotos, ...serverPhotos];
-      const newVoted = res.votedPhotoIds || [];
-      
-      let changed = false;
-      if (JSON.stringify(STATE.photos) !== JSON.stringify(newPhotos)) changed = true;
-      if (JSON.stringify(STATE.votedPhotoIds) !== JSON.stringify(newVoted)) changed = true;
+      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
+      let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
 
-      STATE.photos = newPhotos;
-      STATE.votedPhotoIds = newVoted;
-      saveEventPhotos(targetId);
-
-      // Hanya re-render DOM jika ada penambahan/perubahan foto (Zero UI Lag Policy)
-      if (changed) {
-        renderGallery();
+      // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
+      if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
+        finalPhotos = [...MOCK_DATA.samplePhotos];
       }
+
+      STATE.photos = finalPhotos;
+      STATE.votedPhotoIds = res.votedPhotoIds || [];
+      saveEventPhotos(targetId);
+      renderGallery();
 
       // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
       if (pendingLocalPhotos.length > 0) {
@@ -1048,9 +1034,7 @@ async function loadGallery() {
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
-    if (!STATE.photos || STATE.photos.length === 0) {
-        renderGallery();
-    }
+    renderGallery();
   }
 }
 
@@ -1338,13 +1322,6 @@ function cyclePrevFrame() {
   const prevIdx = (idx - 1 + frames.length) % frames.length;
   applyActiveFrame(frames[prevIdx].id);
   showToast(`Bingkai: ${frames[prevIdx].name}`, 'info');
-}
-
-function stopCameraStream() {
-  if (STATE.mediaStream) {
-    STATE.mediaStream.getTracks().forEach(t => t.stop());
-    STATE.mediaStream = null;
-  }
 }
 
 // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
@@ -1740,7 +1717,7 @@ async function handleSavePhotoToDrive() {
     renderGallery();
     showView('viewGallery');
     updateRemainingQuotaDisplay();
-    updateGuestIdentityUI();
+  updateGuestIdentityUI();
 
     // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
     if (STATE.gasApiUrl) {
@@ -1772,8 +1749,8 @@ async function handleSavePhotoToDrive() {
           if (res.photo?.gdriveViewUrl) newPhoto.gdriveViewUrl = res.photo.gdriveViewUrl;
           saveEventPhotos(STATE.activeEventId);
           showToast("✅ Foto berhasil disimpan ke Galeri & Google Drive!", "success");
-          
-          // Background sync silently ensures everything matches cloud state
+          renderGallery();
+          // Muat ulang galeri cloud agar foto langsung tersinkronkan ke seluruh perangkat
           loadGallery();
         } else if (res.status === 'limit_reached') {
           showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
@@ -1879,59 +1856,63 @@ function renderGallery() {
   if (winnersContainer) winnersContainer.classList.add('hidden');
   if (grid) grid.classList.remove('hidden');
 
-  let filtered = [...STATE.photos];
+  let filtered = Array.isArray(STATE.photos) ? [...STATE.photos] : [];
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   }
 
-  countBadge.textContent = `${filtered.length} Foto`;
+  if (countBadge) {
+    countBadge.textContent = `${filtered.length} Foto`;
+  }
 
   if (filtered.length === 0) {
-    grid.innerHTML = '';
-    empty.classList.remove('hidden');
+    if (grid) grid.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
     return;
   }
 
-  empty.classList.add('hidden');
-  grid.innerHTML = '';
+  if (empty) empty.classList.add('hidden');
+  if (grid) {
+    grid.innerHTML = '';
 
-  filtered.forEach(photo => {
-    const isVoted = STATE.votedPhotoIds.includes(photo.idFoto);
-    const card = document.createElement('div');
-    card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
-    card.setAttribute('data-id', photo.idFoto);
+    filtered.forEach(photo => {
+      const isVoted = Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(photo.idFoto);
+      const card = document.createElement('div');
+      card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
+      card.setAttribute('data-id', photo.idFoto);
 
-    card.innerHTML = `
-      <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
-        <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
-        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
-          <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama}</span>
+      card.innerHTML = `
+        <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
+          <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
+            <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
+          </div>
         </div>
-      </div>
-      <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
-        <div class="truncate pr-1">
-          <div class="text-[11px] font-bold text-white truncate">${photo.guestNama}</div>
-          <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+        <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
+          <div class="truncate pr-1">
+            <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
+            <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+          </div>
+          <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
+            <span>${isVoted ? '❤️' : '🤍'}</span>
+            <span>${photo.totalLikes || 0}</span>
+          </button>
         </div>
-        <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
-          <span>${isVoted ? '❤️' : '🤍'}</span>
-          <span>${photo.totalLikes || 0}</span>
-        </button>
-      </div>
-    `;
+      `;
 
-    card.querySelector('.img-click-zone').addEventListener('click', () => {
-      openPhotoZoom(photo);
+      card.querySelector('.img-click-zone')?.addEventListener('click', () => {
+        openPhotoZoom(photo);
+      });
+
+      card.querySelector('.btn-like-photo')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleVotePhoto(photo.idFoto);
+      });
+
+      grid.appendChild(card);
     });
-
-    card.querySelector('.btn-like-photo').addEventListener('click', (e) => {
-      e.stopPropagation();
-      handleVotePhoto(photo.idFoto);
-    });
-
-    grid.appendChild(card);
-  });
+  }
 }
 
 function renderVotingWinners() {
@@ -3776,17 +3757,18 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// --- 13. REALTIME CLOUD HEARTBEAT (SMART AUTO-SYNC) ---
-// Meningkatkan frekuensi sync menjadi 15 detik untuk respons realtime yang lebih baik,
-// dikunci dengan smart DOM diffing agar tidak menyebabkan lag pada layar UI tamu.
+// --- 9. REALTIME CLOUD HEARTBEAT (OMNI-DEVICE AUTO-SYNC) ---
+// Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
+// dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
 setInterval(() => {
   if (STATE.gasApiUrl && !document.hidden) {
-    revalidateFromBackend();
+    loadEventData();
   }
-}, 15000); 
+}, 45000);
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && STATE.gasApiUrl) {
-    revalidateFromBackend();
+    loadEventData();
   }
 });
+
