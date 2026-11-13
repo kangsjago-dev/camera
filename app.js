@@ -575,27 +575,24 @@ async function initApp() {
   revalidateFromBackend();
 }
 
+let isRevalidating = false;
+
 async function revalidateFromBackend() {
-  if (!STATE.gasApiUrl) return;
+  if (!STATE.gasApiUrl || isRevalidating) return;
+  isRevalidating = true;
 
   try {
+    // Both functions now have smart DOM diffing built-in to prevent lag
     await Promise.allSettled([
       loadEventData(),
       loadGallery()
     ]);
-
-    // Update UI secara halus (silent reactive update) setelah data GAS tiba
-    applyEventToUI();
-    if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-      renderAdminDashboard();
-    }
-    const currentView = sessionStorage.getItem('snapevent_current_view');
-    if (currentView === 'viewGallery') {
-      renderGallery();
-    }
+    
     updateRemainingQuotaDisplay();
   } catch (err) {
     console.warn("Background revalidation note:", err);
+  } finally {
+    isRevalidating = false;
   }
 }
 
@@ -622,7 +619,7 @@ async function loadEventData() {
         const inferredLocked = res.event.singleLockedFrame 
           || (inferredMode === 'single' && Array.isArray(res.event.activeFrames) ? res.event.activeFrames[0] : (localActive?.singleLockedFrame || 'GOLD_DECO'));
 
-        STATE.activeEvent = {
+        const newActiveEvent = {
           ...localActive,
           ...res.event,
           frameLockMode: inferredMode,
@@ -633,16 +630,29 @@ async function loadEventData() {
           customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
           customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
         };
-        STATE.activeCategories = res.categories || [];
+        
+        let shouldUpdateUI = false;
+        
+        if (JSON.stringify(STATE.activeEvent) !== JSON.stringify(newActiveEvent)) {
+          STATE.activeEvent = newActiveEvent;
+          shouldUpdateUI = true;
+        }
 
-        if (res.metrics) {
+        const newCategories = res.categories || [];
+        if (JSON.stringify(STATE.activeCategories) !== JSON.stringify(newCategories)) {
+          STATE.activeCategories = newCategories;
+          shouldUpdateUI = true;
+        }
+
+        if (res.metrics && JSON.stringify(STATE.metrics) !== JSON.stringify(res.metrics)) {
           STATE.metrics = res.metrics;
           localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
+          shouldUpdateUI = true;
         }
 
         // Sinkronkan seluruh event secara defensif (Pertahankan frame settings lokal jika server belum update)
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
-          STATE.events = res.allEvents.map(serverEv => {
+          const newEventsList = res.allEvents.map(serverEv => {
             const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
             const evInferredMode = serverEv.frameLockMode 
               || (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length === 1 && serverEv.activeFrames[0] !== 'CUSTOM_EVENT' ? 'single' : (localEv?.frameLockMode || 'multi'));
@@ -661,56 +671,78 @@ async function loadEventData() {
               customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
             };
           });
-          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+          
+          if (JSON.stringify(STATE.events) !== JSON.stringify(newEventsList)) {
+            STATE.events = newEventsList;
+            localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+            shouldUpdateUI = true;
+          }
         }
 
         if (res.globalConfig) {
-          if (res.globalConfig.master_drive_folder_id) {
-            STATE.driveMasterId = res.globalConfig.master_drive_folder_id;
+          const conf = res.globalConfig;
+          if (conf.master_drive_folder_id && STATE.driveMasterId !== conf.master_drive_folder_id) {
+            STATE.driveMasterId = conf.master_drive_folder_id;
             localStorage.setItem('snapevent_drive_master_id', STATE.driveMasterId);
+            shouldUpdateUI = true;
           }
-          if (res.globalConfig.app_title) {
-            STATE.appTitle = res.globalConfig.app_title;
+          if (conf.app_title && STATE.appTitle !== conf.app_title) {
+            STATE.appTitle = conf.app_title;
             localStorage.setItem('snapevent_app_title', STATE.appTitle);
+            shouldUpdateUI = true;
           }
-          if (res.globalConfig.app_logo_url) {
-            STATE.appLogoUrl = res.globalConfig.app_logo_url;
+          if (conf.app_logo_url && STATE.appLogoUrl !== conf.app_logo_url) {
+            STATE.appLogoUrl = conf.app_logo_url;
             localStorage.setItem('snapevent_app_logo_url', STATE.appLogoUrl);
+            shouldUpdateUI = true;
           }
-          if (res.globalConfig.app_phone) {
-            STATE.appPhone = res.globalConfig.app_phone;
+          if (conf.app_phone && STATE.appPhone !== conf.app_phone) {
+            STATE.appPhone = conf.app_phone;
             localStorage.setItem('snapevent_app_phone', STATE.appPhone);
+            shouldUpdateUI = true;
           }
-          if (res.globalConfig.app_instagram) {
-            STATE.appInstagram = res.globalConfig.app_instagram;
+          if (conf.app_instagram && STATE.appInstagram !== conf.app_instagram) {
+            STATE.appInstagram = conf.app_instagram;
             localStorage.setItem('snapevent_app_instagram', STATE.appInstagram);
+            shouldUpdateUI = true;
           }
-          if (res.globalConfig.admin_user) {
-            STATE.adminUser = res.globalConfig.admin_user;
+          if (conf.admin_user && STATE.adminUser !== conf.admin_user) {
+            STATE.adminUser = conf.admin_user;
             localStorage.setItem('snapevent_admin_user', STATE.adminUser);
           }
-          if (res.globalConfig.admin_pass) {
-            STATE.adminPass = res.globalConfig.admin_pass;
+          if (conf.admin_pass && STATE.adminPass !== conf.admin_pass) {
+            STATE.adminPass = conf.admin_pass;
             localStorage.setItem('snapevent_admin_pass', STATE.adminPass);
           }
-          if (res.globalConfig.user_accounts) {
+          if (conf.user_accounts) {
             try {
-              STATE.userAccounts = JSON.parse(res.globalConfig.user_accounts);
-              localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+              const parsedAccounts = JSON.parse(conf.user_accounts);
+              if (JSON.stringify(STATE.userAccounts) !== JSON.stringify(parsedAccounts)) {
+                STATE.userAccounts = parsedAccounts;
+                localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
+                shouldUpdateUI = true;
+              }
             } catch (e) { }
           }
         }
 
         if (res.guestStats && res.guestStats.guestVotesMap) {
           const votedList = Object.keys(res.guestStats.guestVotesMap).filter(k => res.guestStats.guestVotesMap[k] > 0);
-          STATE.votedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
-          saveEventVotes(STATE.activeEventId);
+          const newVotedCategoryIds = Array.from(new Set([...STATE.votedCategoryIds, ...votedList]));
+          if (JSON.stringify(STATE.votedCategoryIds) !== JSON.stringify(newVotedCategoryIds)) {
+            STATE.votedCategoryIds = newVotedCategoryIds;
+            saveEventVotes(STATE.activeEventId);
+            shouldUpdateUI = true;
+          }
         }
 
-        applyGlobalConfigToUI();
-        applyEventToUI();
-        if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
-          renderAdminDashboard();
+        // Hanya update DOM jika terjadi perubahan data (Zero Lag Policy)
+        if (shouldUpdateUI) {
+          applyGlobalConfigToUI();
+          applyEventToUI();
+          if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+            renderAdminDashboard();
+          }
         }
         return res;
       } else if (res.status === 'inactive') {
@@ -724,13 +756,15 @@ async function loadEventData() {
     }
   }
 
-  // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara)
-  STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
-  STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
-  loadEventPhotos(STATE.activeEventId);
-  applyGlobalConfigToUI();
-  applyEventToUI();
-  renderGallery();
+  // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara) jika tidak ada API
+  if (!STATE.gasApiUrl) {
+    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
+    STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
+    loadEventPhotos(STATE.activeEventId);
+    applyGlobalConfigToUI();
+    applyEventToUI();
+    renderGallery();
+  }
 }
 
 function activateEvent(idEvent) {
@@ -984,11 +1018,21 @@ async function loadGallery() {
         )
       );
 
-      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
-      STATE.photos = [...pendingLocalPhotos, ...serverPhotos];
-      STATE.votedPhotoIds = res.votedPhotoIds || [];
+      const newPhotos = [...pendingLocalPhotos, ...serverPhotos];
+      const newVoted = res.votedPhotoIds || [];
+      
+      let changed = false;
+      if (JSON.stringify(STATE.photos) !== JSON.stringify(newPhotos)) changed = true;
+      if (JSON.stringify(STATE.votedPhotoIds) !== JSON.stringify(newVoted)) changed = true;
+
+      STATE.photos = newPhotos;
+      STATE.votedPhotoIds = newVoted;
       saveEventPhotos(targetId);
-      renderGallery();
+
+      // Hanya re-render DOM jika ada penambahan/perubahan foto (Zero UI Lag Policy)
+      if (changed) {
+        renderGallery();
+      }
 
       // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
       if (pendingLocalPhotos.length > 0) {
@@ -1004,7 +1048,9 @@ async function loadGallery() {
     }
   } catch (e) {
     console.warn("Gagal memuat galeri GAS:", e.message);
-    renderGallery();
+    if (!STATE.photos || STATE.photos.length === 0) {
+        renderGallery();
+    }
   }
 }
 
@@ -1292,6 +1338,13 @@ function cyclePrevFrame() {
   const prevIdx = (idx - 1 + frames.length) % frames.length;
   applyActiveFrame(frames[prevIdx].id);
   showToast(`Bingkai: ${frames[prevIdx].name}`, 'info');
+}
+
+function stopCameraStream() {
+  if (STATE.mediaStream) {
+    STATE.mediaStream.getTracks().forEach(t => t.stop());
+    STATE.mediaStream = null;
+  }
 }
 
 // --- 5. CAMERA & CANVAS FRAME PROCESSING ---
@@ -1687,7 +1740,7 @@ async function handleSavePhotoToDrive() {
     renderGallery();
     showView('viewGallery');
     updateRemainingQuotaDisplay();
-  updateGuestIdentityUI();
+    updateGuestIdentityUI();
 
     // 2. Unggah ke Google Drive (jika API backend GAS dikonfigurasi)
     if (STATE.gasApiUrl) {
@@ -1719,8 +1772,8 @@ async function handleSavePhotoToDrive() {
           if (res.photo?.gdriveViewUrl) newPhoto.gdriveViewUrl = res.photo.gdriveViewUrl;
           saveEventPhotos(STATE.activeEventId);
           showToast("✅ Foto berhasil disimpan ke Galeri & Google Drive!", "success");
-          renderGallery();
-          // Muat ulang galeri cloud agar foto langsung tersinkronkan ke seluruh perangkat
+          
+          // Background sync silently ensures everything matches cloud state
           loadGallery();
         } else if (res.status === 'limit_reached') {
           showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
@@ -3723,18 +3776,17 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// --- 9. REALTIME CLOUD HEARTBEAT (OMNI-DEVICE AUTO-SYNC) ---
-// Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
-// dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
+// --- 13. REALTIME CLOUD HEARTBEAT (SMART AUTO-SYNC) ---
+// Meningkatkan frekuensi sync menjadi 15 detik untuk respons realtime yang lebih baik,
+// dikunci dengan smart DOM diffing agar tidak menyebabkan lag pada layar UI tamu.
 setInterval(() => {
   if (STATE.gasApiUrl && !document.hidden) {
-    loadEventData();
+    revalidateFromBackend();
   }
-}, 45000);
+}, 15000); 
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && STATE.gasApiUrl) {
-    loadEventData();
+    revalidateFromBackend();
   }
 });
-
