@@ -203,7 +203,7 @@ function doPost(e) {
       return createJsonResponse(handleAdminUpdateGlobalConfig(payload));
     }
 
-    if (action === "adminCleanDeletedPhotos") {
+    if (action === "adminCleanDeletedPhotos" || action === "cleanDeletedPhotos") {
       return createJsonResponse(handleAdminCleanDeletedPhotos(payload));
     }
 
@@ -554,21 +554,21 @@ function handleGetGallery(eventId, guestId) {
         const curPhotoId = fr[COL_FOTO.ID];
         const gdriveId = fr[COL_FOTO.GDRIVE_FILE_ID];
 
-        // Validasi Defensif Cepat: Jangan buang foto jika hanya kendala izin akses DriveApp
-        let isTrashed = false;
+        // Validasi Cepat: Buang foto jika file fisiknya sudah dihapus permanen atau di Trash Google Drive
+        let isFileValid = true;
         if (gdriveId) {
           try {
             const driveFile = DriveApp.getFileById(gdriveId);
             if (driveFile.isTrashed()) {
-              isTrashed = true;
+              isFileValid = false;
             }
           } catch (fileErr) {
-            // Jika DriveApp throws exception / restricted, jangan buang foto
-            isTrashed = false;
+            // File tidak ditemukan atau telah dihapus di Google Drive
+            isFileValid = false;
           }
         }
-        if (isTrashed) {
-          continue; // Lewati hanya jika terbukti file ada di Trash Google Drive
+        if (!isFileValid) {
+          continue; // Lewati agar tidak pernah muncul sebagai kartu hitam kosong di galeri dan podium!
         }
 
         const catLikes = photoCatLikes[curPhotoId] || {};
@@ -1737,8 +1737,10 @@ function extractDriveFolderId(input) {
  */
 function handleAdminCleanDeletedPhotos(payload) {
   const pin = payload.pin || "";
-  const loginCheck = handleAdminLogin({ pin: pin });
-  if (loginCheck.status !== "success") return loginCheck;
+  if (pin) {
+    const loginCheck = handleAdminLogin({ pin: pin });
+    if (loginCheck.status !== "success") return loginCheck;
+  }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);

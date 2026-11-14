@@ -127,6 +127,31 @@ function getResolvedEventId(idOrSlug) {
   return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
 }
 
+
+
+// Pengelola ID Foto Terhapus / Rusak (Mencegah Kartu Hitam & Error Image di Layar)
+function getDeadPhotoIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('snapevent_dead_photos') || '[]');
+    const set = new Set(Array.isArray(raw) ? raw : []);
+    // Daftarkan ID foto yang telah dihapus di Google Drive agar langsung lenyap dari galeri & podium
+    set.add('FTO-20261114-024');
+    set.add('FTO-20261114-023');
+    return set;
+  } catch (e) {
+    return new Set(['FTO-20261114-024', 'FTO-20261114-023']);
+  }
+}
+
+function markPhotoAsDead(photoId) {
+  if (!photoId) return;
+  const dead = getDeadPhotoIds();
+  dead.add(photoId);
+  try {
+    localStorage.setItem('snapevent_dead_photos', JSON.stringify([...dead]));
+  } catch (e) {}
+}
+
 function getEventPhotosKey(eventId) {
   return 'snapevent_photos_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
@@ -146,7 +171,9 @@ function loadEventPhotos(eventId) {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
-      STATE.photos = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      const deadIds = getDeadPhotoIds();
+      STATE.photos = (Array.isArray(parsed) ? parsed : []).filter(p => p && p.idFoto && !deadIds.has(p.idFoto));
     } else {
       STATE.photos = [];
     }
@@ -1085,6 +1112,8 @@ async function syncEventsFromBackend(showToastNotice = false) {
   }
 }
 
+
+
 async function loadGallery() {
   if (!STATE.gasApiUrl) {
     renderGallery();
@@ -1127,11 +1156,13 @@ async function loadGallery() {
         );
       });
 
-      // Gabungkan dan deduplikasi ID secara unik
+      // Gabungkan dan deduplikasi ID secara unik + saring foto yang file Drive-nya sudah terhapus
+      const deadIds = getDeadPhotoIds();
       let finalPhotos = [...filteredPending, ...serverPhotos];
       const seenPhotoIds = new Set();
       finalPhotos = finalPhotos.filter(p => {
         if (!p || !p.idFoto) return false;
+        if (deadIds.has(p.idFoto)) return false;
         if (seenPhotoIds.has(p.idFoto)) return false;
         seenPhotoIds.add(p.idFoto);
         return true;
@@ -2478,8 +2509,13 @@ function renderGallery() {
               return;
             }
           }
-          // Jika gambar masih gagal setelah fallback, berikan indikator visual tanpa menghapus data lokal
-          card.classList.add('opacity-40');
+          // File fisik telah terhapus di Google Drive: bersihkan kartu dan catat sebagai dead photo
+          console.warn("Foto terhapus di Google Drive terdeteksi:", photo.idFoto);
+          markPhotoAsDead(photo.idFoto);
+          card.remove();
+          STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photo.idFoto);
+          saveEventPhotos(STATE.activeEventId);
+          renderVotingWinners();
         };
       }
 
@@ -2718,6 +2754,32 @@ function renderVotingWinners() {
       const photoObj = STATE.photos.find(p => p.idFoto === pId);
       if (photoObj) openPhotoZoom(photoObj);
     });
+  });
+
+  // Pasang Event Listener Error Handler pada Seluruh Gambar Podium & Pemenang
+  podium.querySelectorAll('img').forEach(winnerImg => {
+    winnerImg.onerror = () => {
+      const card = winnerImg.closest('.winner-podium-card') || winnerImg.closest('[data-photo-id]');
+      const photoId = card?.getAttribute('data-photo-id');
+      if (photoId) {
+        // Fallback ke thumbnail Drive terlebih dahulu
+        if (winnerImg.src.includes('lh3.googleusercontent.com/d/') && !winnerImg._hasTriedFallback) {
+          winnerImg._hasTriedFallback = true;
+          const fileId = winnerImg.src.split('/d/')[1]?.split('?')[0];
+          if (fileId) {
+            winnerImg.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1080`;
+            return;
+          }
+        }
+        // Jika file fisik benar-benar terhapus di Google Drive: diskualifikasi dan re-render podium seketika
+        console.warn("Foto pemenang podium terhapus di Google Drive:", photoId);
+        markPhotoAsDead(photoId);
+        STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photoId);
+        saveEventPhotos(STATE.activeEventId);
+        renderVotingWinners();
+        renderGallery();
+      }
+    };
   });
 }
 
@@ -4018,7 +4080,7 @@ async function purgeAllOfflineDataAndResync() {
   const keysToRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && (k.startsWith('snapevent_photos') || k.startsWith('snapevent_votes') || k.startsWith('snapevent_voted'))) {
+    if (k && (k.startsWith('snapevent_photos') || k.startsWith('snapevent_votes') || k.startsWith('snapevent_voted') || k.startsWith('snapevent_dead'))) {
       keysToRemove.push(k);
     }
   }
@@ -4032,7 +4094,14 @@ async function purgeAllOfflineDataAndResync() {
   // Sinkronkan ulang dari Google Apps Script
   if (STATE.gasApiUrl) {
     try {
-      showToast("☁️ Mengunduh data terbaru dari Cloud Server...", "info");
+      showToast("☁️ Mengunduh data terbaru & membersihkan foto usang...", "info");
+      try {
+        await fetch(STATE.gasApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'cleanDeletedPhotos' })
+        });
+      } catch(cErr) {}
       await loadEventData();
       await loadGallery();
       applyEventToUI();
