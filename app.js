@@ -147,7 +147,10 @@ function loadEventPhotos(eventId) {
 function saveEventPhotos(eventId) {
   const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
   try {
-    localStorage.setItem(getEventPhotosKey(id), JSON.stringify((STATE.photos || []).slice(0, 100)));
+    const cleanPhotos = (STATE.photos || [])
+      .filter(p => p && p.gdriveViewUrl && !p.gdriveViewUrl.startsWith('data:'))
+      .slice(0, 100);
+    localStorage.setItem(getEventPhotosKey(id), JSON.stringify(cleanPhotos));
   } catch (e) {
     console.warn("Penyimpanan foto penuh / error:", e);
   }
@@ -178,6 +181,96 @@ function extractDriveFolderId(input) {
   const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (idMatch && idMatch[1]) return idMatch[1];
   return str;
+}
+
+// Resilient Google Drive 3-Tier Image Mirror Resolver (Anti-Black Screen)
+function getDriveImageUrls(rawUrl) {
+  if (!rawUrl) return [];
+  const str = String(rawUrl).trim();
+  if (str.startsWith('data:')) return [str];
+
+  let fileId = '';
+  const dMatch = str.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (dMatch && dMatch[1]) {
+    fileId = dMatch[1];
+  } else if (idMatch && idMatch[1]) {
+    fileId = idMatch[1];
+  }
+
+  if (!fileId) return [str];
+
+  // Mirror 1: Google Drive Official Thumbnail API (Instan tanpa jeda CDN lh3)
+  // Mirror 2: Google usercontent CDN (lh3)
+  // Mirror 3: Direct Export Stream (uc?export=view)
+  return [
+    `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`,
+    `https://lh3.googleusercontent.com/d/${fileId}`,
+    `https://drive.google.com/uc?export=view&id=${fileId}`
+  ];
+}
+
+function handleGalleryImgError(img) {
+  if (!img) return;
+  const step = parseInt(img.getAttribute('data-step') || '0', 10);
+  const secondary = img.getAttribute('data-secondary');
+  const tertiary = img.getAttribute('data-tertiary');
+
+  if (step === 0 && secondary && secondary !== img.src) {
+    img.setAttribute('data-step', '1');
+    img.src = secondary;
+    return;
+  }
+  if (step <= 1 && tertiary && tertiary !== img.src) {
+    img.setAttribute('data-step', '2');
+    img.src = tertiary;
+    return;
+  }
+  // Semua mirror gagal / file sudah dihapus di Drive -> hapus kartu secara rapi tanpa layar hitam
+  img.closest('.group')?.remove();
+}
+
+function handlePodiumImgError(img) {
+  if (!img) return;
+  const step = parseInt(img.getAttribute('data-step') || '0', 10);
+  const secondary = img.getAttribute('data-secondary');
+  const tertiary = img.getAttribute('data-tertiary');
+
+  if (step === 0 && secondary && secondary !== img.src) {
+    img.setAttribute('data-step', '1');
+    img.src = secondary;
+    return;
+  }
+  if (step <= 1 && tertiary && tertiary !== img.src) {
+    img.setAttribute('data-step', '2');
+    img.src = tertiary;
+    return;
+  }
+  img.onerror = null;
+  img.src = 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';
+  img.classList.remove('opacity-0');
+}
+
+function isCanvasPureBlack(ctx, w, h) {
+  try {
+    const sampleW = Math.max(10, Math.floor(w * 0.6));
+    const sampleH = Math.max(10, Math.floor(h * 0.6));
+    const startX = Math.floor(w * 0.2);
+    const startY = Math.floor(h * 0.2);
+    const imgData = ctx.getImageData(startX, startY, sampleW, sampleH);
+    const data = imgData.data;
+    let totalLuma = 0;
+    const step = 4 * 16;
+    let count = 0;
+    for (let i = 0; i < data.length; i += step) {
+      totalLuma += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      count++;
+    }
+    const avgLuma = count > 0 ? (totalLuma / count) : 0;
+    return avgLuma < 2.5;
+  } catch (e) {
+    return false;
+  }
 }
 
 function getEventShareUrl(eventId) {
@@ -1084,9 +1177,9 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Pertahankan foto lokal pending yang belum sempat terunggah ke Drive (Zero Data Loss)
+      // Pertahankan foto lokal pending yang sedang aktif diunggah di latar belakang saja
       const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !String(p.idFoto).startsWith('FTO-DEMO-')
+        p && p.isUploading && IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)
       );
 
       // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
@@ -1326,6 +1419,7 @@ function showView(viewId) {
   });
 
   if (viewId === 'viewCamera') {
+    document.body.classList.add('camera-lock-scroll');
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
     const avail = getAvailableFrames();
@@ -1340,6 +1434,7 @@ function showView(viewId) {
       startCameraStream();
     }
   } else {
+    document.body.classList.remove('camera-lock-scroll');
     // Matikan stream kamera saat di luar layar kamera untuk hemat baterai
     stopCameraStream();
 
@@ -1517,6 +1612,11 @@ async function startCameraStream() {
 
     STATE.mediaStream = stream;
     video.srcObject = stream;
+    try {
+      await video.play();
+    } catch (ePlay) {
+      console.warn("video.play() auto-resume:", ePlay);
+    }
     standby.classList.add('hidden');
     updateLiveCameraFilter();
   } catch (err) {
@@ -1655,6 +1755,21 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   }
 
   ctx.drawImage(imgSource, offsetX, offsetY, renderW, renderH);
+
+  // Black frame detection check (Mencegah frame hitam tertangkap pada browser Android/Samsung)
+  if (isCanvasPureBlack(ctx, canvas.width, canvas.height)) {
+    console.warn("Detected dark/black frame, attempting video frame re-read...");
+    const liveVideo = document.getElementById('cameraVideo');
+    if (liveVideo && liveVideo.readyState >= 2 && liveVideo.videoWidth > 0) {
+      try { await liveVideo.play(); } catch(e){}
+      await new Promise(r => setTimeout(r, 120));
+      ctx.drawImage(liveVideo, offsetX, offsetY, renderW, renderH);
+    }
+    if (isCanvasPureBlack(ctx, canvas.width, canvas.height)) {
+      console.warn("Frame is still pure black after retry!");
+      showToast("Tangkapan kamera terlalu gelap. Pastikan pencahayaan cukup atau gunakan tombol upload galeri.", "warning");
+    }
+  }
 
   // 2. Apply Vintage / Analog Filter Grading
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
@@ -2275,16 +2390,28 @@ function renderGallery() {
       card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
       card.setAttribute('data-id', photo.idFoto);
 
+      const urls = getDriveImageUrls(photo.gdriveViewUrl);
+      const primaryUrl = urls[0] || photo.gdriveViewUrl;
+      const secondaryUrl = urls[1] || '';
+      const tertiaryUrl = urls[2] || '';
+
       card.innerHTML = `
-        <div class="relative w-full aspect-[4/5] bg-black overflow-hidden cursor-pointer img-click-zone">
-          <img src="${photo.gdriveViewUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="this.closest('.group')?.remove();" />
+        <div class="relative w-full aspect-[4/5] bg-[#161622] flex items-center justify-center overflow-hidden cursor-pointer img-click-zone">
+          <div class="absolute inset-0 flex flex-col items-center justify-center text-zinc-600 gap-1 pointer-events-none">
+            <svg class="w-6 h-6 opacity-30 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+          <img src="${primaryUrl}" data-secondary="${secondaryUrl}" data-tertiary="${tertiaryUrl}" data-step="0" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300 opacity-0" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handleGalleryImgError(this);" />
           ${isUploading ? `
-            <div class="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center">
+            <div class="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center z-10">
               <div class="w-6 h-6 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mb-2"></div>
               <span class="text-[10px] text-amber-300 font-bold">Mengunggah ke Drive...</span>
             </div>
           ` : ''}
-          <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5">
+          <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5 z-10">
             <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
           </div>
         </div>
@@ -2353,6 +2480,10 @@ function renderVotingWinners() {
     const p2 = sorted.length > 1 ? sorted[1] : null;
     const p3 = sorted.length > 2 ? sorted[2] : null;
 
+    const p1Urls = p1 ? getDriveImageUrls(p1.gdriveViewUrl) : [];
+    const p2Urls = p2 ? getDriveImageUrls(p2.gdriveViewUrl) : [];
+    const p3Urls = p3 ? getDriveImageUrls(p3.gdriveViewUrl) : [];
+
     podiumHtml += `
       <div class="mb-4">
         <div class="flex items-center gap-2 mb-3">
@@ -2364,8 +2495,11 @@ function renderVotingWinners() {
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-gold text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
               <span>${p1Title}</span>
             </div>
-            <div class="w-36 h-44 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-brand-gold/70 shadow-xl">
-              <img src="${p1.gdriveViewUrl}" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+            <div class="w-36 h-44 rounded-xl overflow-hidden bg-[#161622] mb-2.5 border-2 border-brand-gold/70 shadow-xl flex items-center justify-center relative">
+              <div class="absolute inset-0 flex items-center justify-center text-zinc-600 pointer-events-none">
+                <span class="text-[10px] text-zinc-500 font-medium">Memuat foto...</span>
+              </div>
+              <img src="${p1Urls[0] || p1.gdriveViewUrl}" data-secondary="${p1Urls[1] || ''}" data-tertiary="${p1Urls[2] || ''}" data-step="0" alt="${p1.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300 opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handlePodiumImgError(this);" />
             </div>
             <h4 class="font-bold text-sm text-white">${p1.guestNama}</h4>
             <p class="text-xs text-zinc-300 italic truncate max-w-[220px] mb-2">"${p1.caption || 'Momen seru!'}"</p>
@@ -2384,8 +2518,11 @@ function renderVotingWinners() {
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-300 text-black text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
               <span>${p2Title}</span>
             </div>
-            <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-zinc-300/70 shadow-lg">
-              <img src="${p2.gdriveViewUrl}" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+            <div class="w-32 h-40 rounded-xl overflow-hidden bg-[#161622] mb-2.5 border-2 border-zinc-300/70 shadow-lg flex items-center justify-center relative">
+              <div class="absolute inset-0 flex items-center justify-center text-zinc-600 pointer-events-none">
+                <span class="text-[10px] text-zinc-500 font-medium">Memuat foto...</span>
+              </div>
+              <img src="${p2Urls[0] || p2.gdriveViewUrl}" data-secondary="${p2Urls[1] || ''}" data-tertiary="${p2Urls[2] || ''}" data-step="0" alt="${p2.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300 opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handlePodiumImgError(this);" />
             </div>
             <h4 class="font-bold text-sm text-white">${p2.guestNama}</h4>
             <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p2.caption || 'Momen seru!'}"</p>
@@ -2405,8 +2542,11 @@ function renderVotingWinners() {
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-700 text-white text-xs font-bold uppercase tracking-wider mb-2 shadow-md">
               <span>${p3Title}</span>
             </div>
-            <div class="w-32 h-40 rounded-xl overflow-hidden bg-black mb-2.5 border-2 border-amber-600/70 shadow-lg">
-              <img src="${p3.gdriveViewUrl}" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+            <div class="w-32 h-40 rounded-xl overflow-hidden bg-[#161622] mb-2.5 border-2 border-amber-600/70 shadow-lg flex items-center justify-center relative">
+              <div class="absolute inset-0 flex items-center justify-center text-zinc-600 pointer-events-none">
+                <span class="text-[10px] text-zinc-500 font-medium">Memuat foto...</span>
+              </div>
+              <img src="${p3Urls[0] || p3.gdriveViewUrl}" data-secondary="${p3Urls[1] || ''}" data-tertiary="${p3Urls[2] || ''}" data-step="0" alt="${p3.guestNama}" class="w-full h-full object-cover hover:scale-105 transition duration-300 opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handlePodiumImgError(this);" />
             </div>
             <h4 class="font-bold text-sm text-white">${p3.guestNama}</h4>
             <p class="text-xs text-zinc-300 italic truncate max-w-[200px] mb-2">"${p3.caption || 'Momen seru!'}"</p>
@@ -2447,10 +2587,14 @@ function renderVotingWinners() {
       if (catPhotos.length > 0) {
         const winner = catPhotos[0];
         const winnerLikes = (winner.categoryLikes && winner.categoryLikes[cat.idKategori]) || 0;
+        const winUrls = getDriveImageUrls(winner.gdriveViewUrl);
         catWinnerCards += `
           <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-3.5 flex items-center gap-3.5 shadow-md">
-            <div class="w-20 h-24 rounded-xl overflow-hidden bg-black shrink-0 border border-white/10">
-              <img src="${winner.gdriveViewUrl}" alt="${winner.guestNama}" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80';" />
+            <div class="w-20 h-24 rounded-xl overflow-hidden bg-[#161622] shrink-0 border border-white/10 flex items-center justify-center relative">
+              <div class="absolute inset-0 flex items-center justify-center text-zinc-600 pointer-events-none">
+                <span class="text-[9px] text-zinc-500 font-medium">Memuat...</span>
+              </div>
+              <img src="${winUrls[0] || winner.gdriveViewUrl}" data-secondary="${winUrls[1] || ''}" data-tertiary="${winUrls[2] || ''}" data-step="0" alt="${winner.guestNama}" class="w-full h-full object-cover opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handlePodiumImgError(this);" />
             </div>
             <div class="flex-1 min-w-0">
               <div class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30 mb-1">
@@ -2493,7 +2637,16 @@ function renderVotingWinners() {
 }
 
 function openPhotoZoom(photo) {
-  document.getElementById('zoomImg').src = photo.gdriveViewUrl;
+  const urls = getDriveImageUrls(photo.gdriveViewUrl);
+  const zoomImg = document.getElementById('zoomImg');
+  zoomImg.src = urls[0] || photo.gdriveViewUrl;
+  zoomImg.onerror = function() {
+    if (urls[1] && this.src !== urls[1]) {
+      this.src = urls[1];
+    } else if (urls[2] && this.src !== urls[2]) {
+      this.src = urls[2];
+    }
+  };
   document.getElementById('zoomGuestNama').textContent = `Oleh: ${photo.guestNama}`;
   document.getElementById('zoomTime').textContent = photo.createdAt || 'Baru Saja';
   document.getElementById('zoomCaption').textContent = photo.caption ? `"${photo.caption}"` : '';
@@ -2508,7 +2661,7 @@ function openPhotoZoom(photo) {
   const btnDl = document.getElementById('btnZoomDownload');
   btnDl.onclick = () => {
     const a = document.createElement('a');
-    a.href = photo.gdriveViewUrl;
+    a.href = urls[0] || photo.gdriveViewUrl;
     a.download = `SnapEvent_${photo.idFoto}.jpg`;
     a.target = '_blank';
     a.click();
@@ -4261,19 +4414,9 @@ async function triggerCameraShutter() {
   const video = document.getElementById('cameraVideo');
   // Cek apakah live video stream sudah aktif dan memiliki frame riil
   if (STATE.mediaStream && video && video.readyState >= 2 && video.videoWidth > 0) {
-    const videoTrack = STATE.mediaStream.getVideoTracks()[0];
-    // Tangkap gambar kualitas HD sensor penuh jika ImageCapture didukung browser perangkat
-    if (window.ImageCapture && videoTrack && videoTrack.readyState === 'live') {
-      try {
-        const imageCapture = new ImageCapture(videoTrack);
-        const blob = await imageCapture.takePhoto();
-        const bitmap = await createImageBitmap(blob);
-        await processPhotoWithFrameAndFilter(bitmap);
-        return;
-      } catch (errCapture) {
-        console.warn("ImageCapture takePhoto fallback to video frame:", errCapture);
-      }
-    }
+    try {
+      if (video.paused) await video.play();
+    } catch (e) {}
     await processPhotoWithFrameAndFilter(video);
   } else {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);

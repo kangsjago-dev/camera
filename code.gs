@@ -498,6 +498,7 @@ function handleGetGallery(eventId, guestId) {
   const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
   const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
 
+  let canonicalEventId = eventId;
   let isRevealed = true;
   let revealMode = "SEGERA";
   let folderId = "";
@@ -508,6 +509,7 @@ function handleGetGallery(eventId, guestId) {
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+        canonicalEventId = evRows[i][COL_EVENT.ID];
         revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
         const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
         isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
@@ -567,7 +569,8 @@ function handleGetGallery(eventId, guestId) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === eventId) {
+      const rowEventId = fr[COL_FOTO.ID_EVENT];
+      if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
         const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
         if (fileId && fileId.trim() !== "") {
           try {
@@ -654,7 +657,8 @@ function handleGetGallery(eventId, guestId) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === eventId) {
+      const rowEventId = fr[COL_FOTO.ID_EVENT];
+      if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
         photos.push({
           idFoto: fr[COL_FOTO.ID],
           guestNama: fr[COL_FOTO.GUEST_NAMA],
