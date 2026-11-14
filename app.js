@@ -575,7 +575,7 @@ const MOCK_DATA = {
       tanggalEvent: "2026-11-20",
       hashtagEvent: "#SarahKevinEverAfter",
       maxFotoPerGuest: 10,
-      maxVotePerGuest: 3,
+      maxVotePerGuest: 2,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -595,7 +595,7 @@ const MOCK_DATA = {
       tanggalEvent: "2026-11-25",
       hashtagEvent: "#Hans&Yurike",
       maxFotoPerGuest: 5,
-      maxVotePerGuest: 3,
+      maxVotePerGuest: 2,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -636,7 +636,7 @@ const MOCK_DATA = {
       tanggalEvent: "2026-12-28",
       hashtagEvent: "#ClarissaSweet17",
       maxFotoPerGuest: 12,
-      maxVotePerGuest: 3,
+      maxVotePerGuest: 2,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -656,7 +656,7 @@ const MOCK_DATA = {
       tanggalEvent: "2027-01-10",
       hashtagEvent: "#Smansa16Reunited",
       maxFotoPerGuest: 15,
-      maxVotePerGuest: 5,
+      maxVotePerGuest: 2,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -676,7 +676,7 @@ const MOCK_DATA = {
       tanggalEvent: "2026-11-13",
       hashtagEvent: "#ilhamsherwin",
       maxFotoPerGuest: 10,
-      maxVotePerGuest: 3,
+      maxVotePerGuest: 2,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -698,7 +698,7 @@ const MOCK_DATA = {
     tanggalEvent: "2026-11-20",
     hashtagEvent: "#SarahKevinEverAfter",
     maxFotoPerGuest: 10,
-    maxVotePerGuest: 3,
+    maxVotePerGuest: 2,
     revealMode: "SEGERA",
     isRevealed: true,
     likeEnabled: true,
@@ -2660,10 +2660,23 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
 let CURRENT_VOTE_TARGET_PHOTO_ID = null;
 
 function openVoteCategoryModal(idFoto) {
+  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 2;
+  const currentVotesCount = Array.isArray(STATE.votedCategoryIds) ? STATE.votedCategoryIds.length : 0;
+  if (currentVotesCount >= maxVotesAllowed) {
+    showToast(`Kuota voting Anda sudah habis (Maksimal ${maxVotesAllowed}x voting per tamu)!`, "warning");
+    return;
+  }
+
   CURRENT_VOTE_TARGET_PHOTO_ID = idFoto;
   const modal = document.getElementById('modalVoteCategory');
   const container = document.getElementById('voteCategoryListContainer');
   if (!modal || !container) return;
+
+  const descEl = document.getElementById('voteModalDesc') || modal.querySelector('p.text-xs.text-zinc-400');
+  const remaining = Math.max(0, maxVotesAllowed - currentVotesCount);
+  if (descEl) {
+    descEl.textContent = `Pilih kategori penghargaan untuk foto ini (Maks. ${maxVotesAllowed}x vote per tamu • Tersisa: ${remaining} suara):`;
+  }
 
   const categories = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
     ? STATE.activeCategories
@@ -2702,6 +2715,13 @@ async function handleConfirmVoteCategory() {
 async function handleVotePhoto(idFoto, idKategori = '') {
   if (!idKategori) {
     openVoteCategoryModal(idFoto);
+    return;
+  }
+
+  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 2;
+  const currentVotesCount = Array.isArray(STATE.votedCategoryIds) ? STATE.votedCategoryIds.length : 0;
+  if (currentVotesCount >= maxVotesAllowed) {
+    showToast(`Batas maksimal ${maxVotesAllowed}x voting per tamu telah tercapai!`, "warning");
     return;
   }
 
@@ -3920,7 +3940,7 @@ function resetCreateEventForm() {
   document.getElementById('formEventHashtag').value = "";
   document.getElementById('formEventTanggal').value = d.toISOString().split('T')[0];
   document.getElementById('formEventMaxFoto').value = "10";
-  document.getElementById('formEventMaxVote').value = "3";
+  document.getElementById('formEventMaxVote').value = "2";
   document.getElementById('formEventDriveFolder').value = "";
   document.getElementById('formEventFrameName').value = "";
 
@@ -4611,7 +4631,7 @@ async function saveAdminEventForm() {
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const tanggal = document.getElementById('formEventTanggal').value;
   const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
-  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 1;
+  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 2;
   const driveFolder = extractDriveFolderId(document.getElementById('formEventDriveFolder').value.trim());
 
   let revealMode = 'SEGERA';

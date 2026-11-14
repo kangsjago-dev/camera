@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.1.3" defer></script>
+  <script src="app.js?v=2.1.4" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -505,7 +505,7 @@
               </div>
               <div>
                 <label class="block text-xs font-semibold text-zinc-300 mb-1">Maks. Vote per Tamu</label>
-                <input type="number" id="formEventMaxVote" min="1" max="20" value="3" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
+                <input type="number" id="formEventMaxVote" min="1" max="20" value="2" class="w-full bg-[#111116] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-brand-gold outline-none" />
               </div>
             </div>
 
@@ -1144,7 +1144,7 @@
         </svg>
       </div>
       <h3 class="font-serif text-lg font-bold text-white mb-1">Beri Suara / Like</h3>
-      <p class="text-xs text-zinc-400 mb-4">Pilih kategori penghargaan untuk foto ini (1 suara per kategori):</p>
+      <p id="voteModalDesc" class="text-xs text-zinc-400 mb-4">Pilih kategori penghargaan untuk foto ini (Maks. 2x vote per tamu):</p>
 
       <div id="voteCategoryListContainer" class="space-y-2 mb-4 text-left">
         <!-- Diinjeksi dinamis oleh app.js -->

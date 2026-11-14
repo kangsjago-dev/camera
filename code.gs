@@ -490,7 +490,7 @@ function handleGetAllEvents() {
           tanggalEvent: r[COL_EVENT.TANGGAL] || "",
           hashtagEvent: r[COL_EVENT.HASHTAG] || "",
           maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-          maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
+          maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 2,
           revealMode: r[COL_EVENT.REVEAL_MODE] || "SEGERA",
           isRevealed: isRev,
           likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
@@ -612,7 +612,7 @@ function handleGetEventDetails(eventId, guestId) {
     tanggalEvent: r[COL_EVENT.TANGGAL],
     hashtagEvent: r[COL_EVENT.HASHTAG],
     maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-    maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
+    maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 2,
     revealMode: r[COL_EVENT.REVEAL_MODE],
     isRevealed: isRev,
     likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
@@ -1399,19 +1399,28 @@ function handleSubmitVote(payload) {
     const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
     const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
 
-    // Cek apakah tamu sudah memilih kategori ini sebelumnya (1x per kategori)
+    // Cek apakah tamu sudah memilih kategori ini sebelumnya (1x per kategori) & kuota maksimal 2x vote
     let alreadyVotedCat = false;
+    let totalGuestVotes = 0;
     if (voteSheet && voteSheet.getLastRow() > 1) {
       const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
       for (let j = 0; j < vRows.length; j++) {
         const vr = vRows[j];
         if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
+          totalGuestVotes++;
           if (idKategori && vr[COL_VOTE.ID_KAT] === idKategori) {
             alreadyVotedCat = true;
             break;
           }
         }
       }
+    }
+
+    if (totalGuestVotes >= 2) {
+      return {
+        status: "already_voted",
+        message: "Anda sudah mencapai batas kuota maksimal 2 kali voting."
+      };
     }
 
     if (alreadyVotedCat) {
@@ -1539,7 +1548,7 @@ function handleAdminSaveEvent(payload) {
     const tanggalEvent = String(payload.tanggalEvent || "").trim();
     const hashtagEvent = String(payload.hashtagEvent || "").trim();
     const maxFoto = Number(payload.maxFotoPerGuest) || 10;
-    const maxVote = Number(payload.maxVotePerGuest) || 3;
+    const maxVote = Number(payload.maxVotePerGuest) || 2;
     const revealMode = payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA";
     const isRevealed = payload.isRevealed !== undefined 
       ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
@@ -1648,7 +1657,7 @@ function handleAdminSaveEvent(payload) {
         const finalMaxFoto = (payload.maxFotoPerGuest !== undefined && payload.maxFotoPerGuest !== null && payload.maxFotoPerGuest !== "")
           ? Number(payload.maxFotoPerGuest) : (Number(curVals[COL_EVENT.MAX_FOTO]) || 10);
         const finalMaxVote = (payload.maxVotePerGuest !== undefined && payload.maxVotePerGuest !== null && payload.maxVotePerGuest !== "")
-          ? Number(payload.maxVotePerGuest) : (Number(curVals[COL_EVENT.MAX_VOTE]) || 3);
+          ? Number(payload.maxVotePerGuest) : (Number(curVals[COL_EVENT.MAX_VOTE]) || 2);
         const finalRevealMode = payload.revealMode ? (payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA") : (curVals[COL_EVENT.REVEAL_MODE] || "SEGERA");
         const finalIsRevealed = payload.isRevealed !== undefined 
           ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
