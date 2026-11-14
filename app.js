@@ -231,6 +231,27 @@ function loadEventPhotos(eventId) {
   } catch (e) {
     STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
   }
+
+  // Auto-synthesize categoryLikes jika ada likes namun belum terpetakan ke kategori acara
+  const availableCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+    ? STATE.activeCategories
+    : (Array.isArray(MOCK_DATA.categories) ? MOCK_DATA.categories : []);
+  if (Array.isArray(STATE.photos)) {
+    STATE.photos.forEach(p => {
+      if (p && (p.totalLikes || 0) > 0 && (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0)) {
+        p.categoryLikes = {};
+        if (availableCats.length > 0) {
+          const firstCat = availableCats[0];
+          p.categoryLikes[firstCat.idKategori] = p.totalLikes;
+          p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
+          if (!p.idKategori) p.idKategori = firstCat.idKategori;
+          if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+        } else {
+          p.categoryLikes['DEFAULT'] = p.totalLikes;
+        }
+      }
+    });
+  }
 }
 
 function saveEventPhotos(eventId) {
@@ -1492,6 +1513,10 @@ async function loadGallery() {
       }
 
       // Pertahankan like, kategori penghargaan, dan riwayat vote lokal secara pintar
+      const availableCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+        ? STATE.activeCategories
+        : (Array.isArray(MOCK_DATA.categories) ? MOCK_DATA.categories : []);
+
       const existingPhotoMap = new Map();
       (STATE.photos || []).forEach(p => { if (p && p.idFoto) existingPhotoMap.set(p.idFoto, p); });
       finalPhotos.forEach(p => {
@@ -1501,6 +1526,22 @@ async function loadGallery() {
           p.totalLikes = Math.max(oldP.totalLikes || 0, p.totalLikes || 0);
           if (oldP.idKategori && !p.idKategori) p.idKategori = oldP.idKategori;
           if (oldP.namaKategori && !p.namaKategori) p.namaKategori = oldP.namaKategori;
+        }
+
+        // Auto-synthesize categoryLikes jika ada likes namun belum terinci dari server
+        if ((p.totalLikes || 0) > 0) {
+          if (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0) {
+            p.categoryLikes = {};
+            if (availableCats.length > 0) {
+              const firstCat = availableCats[0];
+              p.categoryLikes[firstCat.idKategori] = p.totalLikes;
+              p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
+              if (!p.idKategori) p.idKategori = firstCat.idKategori;
+              if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+            } else {
+              p.categoryLikes['DEFAULT'] = p.totalLikes;
+            }
+          }
         }
       });
 
@@ -2918,16 +2959,39 @@ function renderGallery() {
     filtered = filtered.filter(p => p.isVisible !== false && p.photoStatus !== 'SEMBUNYI');
   }
 
+  const allEligiblePhotos = [...filtered];
+
+  // Auto-synthesize categoryLikes jika ada likes namun belum terinci dari server
+  const availableCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+    ? STATE.activeCategories
+    : (Array.isArray(MOCK_DATA.categories) ? MOCK_DATA.categories : []);
+
+  filtered.forEach(p => {
+    if (p && (p.totalLikes || 0) > 0 && (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0)) {
+      p.categoryLikes = {};
+      if (availableCats.length > 0) {
+        const firstCat = availableCats[0];
+        p.categoryLikes[firstCat.idKategori] = p.totalLikes;
+        p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
+        if (!p.idKategori) p.idKategori = firstCat.idKategori;
+        if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+      } else {
+        p.categoryLikes['DEFAULT'] = p.totalLikes;
+      }
+    }
+  });
+
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   } else if (STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'WINNERS') {
     // Filter foto yang mendapatkan suara di kategori ini (Pencarian fleksibel ID dan Nama Kategori)
     const catId = STATE.activeGalleryFilter;
-    const activeCatObj = (STATE.activeCategories || []).find(c => c.idKategori === catId || c.namaKategori === catId);
+    const activeCatObj = availableCats.find(c => c.idKategori === catId || c.namaKategori === catId);
     const targetCatId = activeCatObj ? activeCatObj.idKategori : catId;
     const targetCatName = activeCatObj ? activeCatObj.namaKategori.toLowerCase().trim() : (catId ? catId.toLowerCase().trim() : '');
+    const isSingleCat = (availableCats.length <= 1);
 
-    filtered = filtered.filter(p => {
+    const catSpecific = filtered.filter(p => {
       if (!p) return false;
       // 1. Direct assignment match
       if (p.idKategori === targetCatId || p.idKategori === catId) return true;
@@ -2944,19 +3008,38 @@ function renderGallery() {
           }
         }
       }
+
+      // 3. Fallback cerdas: Jika acara hanya memiliki 1 kategori poling (seperti "Best Picture")
+      // atau belum ada pembagian categoryLikes dari server, foto dengan totalLikes > 0 adalah suara di kategori ini!
+      if ((isSingleCat || !p.categoryLikes || Object.keys(p.categoryLikes).length === 0) && (p.totalLikes || 0) > 0) {
+        return true;
+      }
+
       return false;
     });
 
+    if (catSpecific.length > 0) {
+      filtered = catSpecific;
+    } else {
+      // Jika belum ada foto yang divote khusus di kategori ini, tetap tampilkan foto acara yang ada
+      // agar tamu undangan dapat melihat foto dan memberikan voting, galeri tidak pernah kosong!
+      filtered = [...allEligiblePhotos];
+    }
+
+    // Urutkan berdasarkan suara terbanyak
     filtered.sort((a, b) => {
       const getLikes = (photo) => {
-        if (!photo.categoryLikes) return 0;
-        let cnt = (photo.categoryLikes[targetCatId] || 0) || (photo.categoryLikes[catId] || 0);
-        if (targetCatName) {
-          for (const k in photo.categoryLikes) {
-            if (k.toLowerCase().trim() === targetCatName) cnt = Math.max(cnt, photo.categoryLikes[k]);
+        if (!photo) return 0;
+        if (photo.categoryLikes) {
+          let cnt = (photo.categoryLikes[targetCatId] || 0) || (photo.categoryLikes[catId] || 0);
+          if (targetCatName) {
+            for (const k in photo.categoryLikes) {
+              if (k.toLowerCase().trim() === targetCatName) cnt = Math.max(cnt, photo.categoryLikes[k]);
+            }
           }
+          if (cnt > 0) return cnt;
         }
-        return cnt;
+        return photo.totalLikes || 0;
       };
       return getLikes(b) - getLikes(a);
     });
