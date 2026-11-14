@@ -77,8 +77,12 @@ const STATE = {
 
 // --- DATA ISOLATION HELPERS PER EVENT ---
 function getResolvedEventId(idOrSlug) {
-  const target = String(idOrSlug || STATE.activeEventId || '').trim();
-  if (!target) return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+  // Jika STATE.activeEvent sudah aktif tersinkron dari server, utamakan ID aktif tersebut jika target adalah default
+  if ((!idOrSlug || idOrSlug === 'EVT-202611-001' || idOrSlug === 'DEFAULT') && STATE.activeEvent && STATE.activeEvent.idEvent) {
+    return STATE.activeEvent.idEvent;
+  }
+  const target = String(idOrSlug || (STATE.activeEvent && STATE.activeEvent.idEvent) || STATE.activeEventId || '').trim();
+  if (!target) return (STATE.activeEvent && STATE.activeEvent.idEvent) || (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
   if (/^EVT-\d+/i.test(target)) return target;
 
   const lower = target.toLowerCase();
@@ -226,15 +230,31 @@ function handleGalleryImgError(img) {
     img.src = tertiary;
     return;
   }
-  // Semua mirror gagal / file fisik sudah dihapus di Google Drive -> hapus kartu secara rapi dan update cache
-  const card = img.closest('.group');
-  if (card) {
-    const photoId = card.getAttribute('data-id');
-    if (photoId) {
-      STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photoId);
-      saveEventPhotos(STATE.activeEventId);
-    }
-    card.remove();
+  // Pertahankan foto di galeri dan jangan pernah menghapus data dari STATE.photos saat thumbnail sedang diproses cloud
+  img.onerror = null;
+  img.classList.remove('opacity-0');
+  const container = img.parentElement;
+  if (container && !container.querySelector('.img-retry-badge')) {
+    const badge = document.createElement('div');
+    badge.className = 'img-retry-badge absolute inset-0 bg-zinc-900/90 flex flex-col items-center justify-center p-2 text-center z-15';
+    badge.innerHTML = `
+      <svg class="w-6 h-6 text-brand-gold opacity-80 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      <span class="text-[10px] text-zinc-300 font-medium">Memuat dari Cloud...</span>
+      <button type="button" class="mt-1 px-2 py-0.5 text-[9px] bg-brand-gold/20 text-brand-gold border border-brand-gold/30 rounded font-bold hover:bg-brand-gold/30 transition">Segarkan</button>
+    `;
+    badge.querySelector('button')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      badge.remove();
+      img.setAttribute('data-step', '0');
+      const card = img.closest('.group');
+      const photoId = card?.getAttribute('data-id');
+      const p = (STATE.photos || []).find(item => item.idFoto === photoId);
+      if (p) {
+        const urls = getDriveImageUrls(p.gdriveViewUrl);
+        img.src = urls[0] || p.gdriveViewUrl;
+      }
+    });
+    container.appendChild(badge);
   }
 }
 
@@ -1193,10 +1213,22 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Pertahankan foto lokal pending yang sedang aktif diunggah di latar belakang saja
-      const pendingLocalPhotos = (STATE.photos || []).filter(p => 
-        p && p.isUploading && IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)
-      );
+      // Kumpulkan ID foto yang sudah ada di server
+      const serverIds = new Set(serverPhotos.map(p => p.idFoto));
+
+      // Pertahankan foto lokal terkini yang belum muncul di respons server agar tidak hilang saat polling
+      const now = Date.now();
+      const pendingLocalPhotos = (STATE.photos || []).filter(p => {
+        if (!p) return false;
+        if (serverIds.has(p.idFoto)) return false;
+        if (p.isUploading || IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) return true;
+        const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
+        if (tsMatch && tsMatch[1]) {
+          return (now - parseInt(tsMatch[1], 10)) < 120000;
+        }
+        return false;
+      });
 
       // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
       let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
@@ -1211,9 +1243,12 @@ async function loadGallery() {
       saveEventPhotos(targetId);
       renderGallery();
 
-      // Unggah otomatis di background untuk foto lokal pending agar foto dari HP Tamu langsung tersinkronkan
-      if (pendingLocalPhotos.length > 0) {
-        autoUploadPendingPhotos(pendingLocalPhotos);
+      // Unggah otomatis HANYA untuk foto offline murni (data: URL yang belum pernah mulai diunggah)
+      const offlineUnstarted = pendingLocalPhotos.filter(p => 
+        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto) && !p.isUploading
+      );
+      if (offlineUnstarted.length > 0) {
+        autoUploadPendingPhotos(offlineUnstarted);
       }
     } else if (res && res.status === 'locked') {
       document.getElementById('galleryLockedNotice')?.classList.remove('hidden');

@@ -166,6 +166,62 @@ function generateIncrementalId(sheet, prefix, colIndex) {
 }
 
 /**
+ * GENERATOR ID FOTO SEKUENSIAL MONOTONIK DENGAN ANTI-COLLISION MUTLAK
+ * Memeriksa DataFoto, PropertiesService, dan file fisik Google Drive agar nomor ID tidak pernah bertabrakan
+ */
+function generateIncrementalPhotoId(sheet, dateCompact, targetFolder) {
+  const prefix = "FTO-" + dateCompact + "-";
+  let maxNum = 0;
+
+  // 1. Cek dari Spreadsheet DataFoto
+  if (sheet && sheet.getLastRow() > 1) {
+    const vals = sheet.getRange(2, COL_FOTO.ID + 1, sheet.getLastRow() - 1, 1).getDisplayValues();
+    vals.forEach(function(r) {
+      const val = String(r[0] || "");
+      if (val.indexOf(prefix) === 0) {
+        const rawNum = val.replace(prefix, "").split("_")[0].split("-")[0];
+        const numPart = parseInt(rawNum, 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+  }
+
+  // 2. Cek dari PropertiesService (Monotonic counter yang tidak pernah berkurang)
+  const scriptProps = PropertiesService.getScriptProperties();
+  const propKey = "SEQ_FTO_" + dateCompact;
+  const propVal = parseInt(scriptProps.getProperty(propKey) || "0", 10);
+  if (!isNaN(propVal) && propVal > maxNum) {
+    maxNum = propVal;
+  }
+
+  // 3. Cek dari Google Drive folder fisik acara
+  if (targetFolder) {
+    try {
+      const fIter = targetFolder.getFiles();
+      while (fIter.hasNext()) {
+        const f = fIter.next();
+        if (f.isTrashed()) continue;
+        const fname = f.getName();
+        if (fname.indexOf(prefix) === 0) {
+          const rawNum = fname.replace(prefix, "").split("_")[0].split("-")[0];
+          const numPart = parseInt(rawNum, 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      }
+    } catch(eDrive) {}
+  }
+
+  const nextNum = maxNum + 1;
+  scriptProps.setProperty(propKey, String(nextNum));
+  const padded = ("000" + nextNum).slice(-3);
+  return prefix + padded;
+}
+
+/**
  * Smart Folder Discovery & Reuse (Eliminasi Folder Kosong Dobel di Google Drive)
  */
 function getOrCreateEventSubFolder(parentFolder, eventId, eventSlug, eventName) {
@@ -654,11 +710,13 @@ function handleGetGallery(eventId, guestId) {
     } catch (e) {}
   }
 
-  // 1. Sinkronisasi Mutlak Google Drive & Spreadsheet DataFoto:
+  // 1. Sinkronisasi Google Drive & Spreadsheet DataFoto:
   // - Kumpulkan seluruh file yang aktif (bukan trashed) di folder acara Google Drive
-  // - Hapus baris di DataFoto jika file fisiknya sudah dihapus di Google Drive
+  // - Deteksi dan bersihkan file kembar identik fisik di Google Drive
   // - Otomatis tambahkan file yang ada di Google Drive ke DataFoto jika belum tercatat
   const liveDriveFilesMap = new Map();
+  const seenDriveSignatures = new Map(); // [nama_ukuran] -> fId
+
   candidateFolders.forEach(function(targetF) {
     try {
       const filesIter = targetF.getFiles();
@@ -669,10 +727,19 @@ function handleGetGallery(eventId, guestId) {
         const fName = file.getName();
         const lower = fName.toLowerCase();
         if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp') || fName.indexOf('FTO-') === 0) {
+          const fSize = file.getSize();
+          const signature = fName + "_" + fSize;
+          // Jika ada file kembar identik dengan nama & ukuran sama persis di folder Drive, bersihkan salinan kedua
+          if (seenDriveSignatures.has(signature)) {
+            try { file.setTrashed(true); } catch(eTrash) {}
+            continue;
+          }
+          seenDriveSignatures.set(signature, fId);
           liveDriveFilesMap.set(fId, {
             id: fId,
             name: fName,
-            created: file.getDateCreated()
+            created: file.getDateCreated(),
+            size: fSize
           });
         }
       }
@@ -681,7 +748,7 @@ function handleGetGallery(eventId, guestId) {
 
   const photos = [];
   const existingFileIds = new Set();
-  const rowsToDelete = [];
+  const seenPhotoIds = new Set();
   const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
   const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
 
@@ -692,7 +759,7 @@ function handleGetGallery(eventId, guestId) {
       const rowEventId = fr[COL_FOTO.ID_EVENT];
       if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
         const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
-        let fileExists = false;
+        let fileExists = true;
 
         if (fileId) {
           if (liveDriveFilesMap.has(fileId)) {
@@ -701,8 +768,8 @@ function handleGetGallery(eventId, guestId) {
             // Verifikasi langsung ke Drive jika file berada di luar subfolder kandidat
             try {
               const checkF = DriveApp.getFileById(fileId);
-              if (checkF && !checkF.isTrashed()) {
-                fileExists = true;
+              if (!checkF || checkF.isTrashed()) {
+                fileExists = false;
               }
             } catch (dErr) {
               fileExists = false;
@@ -712,21 +779,25 @@ function handleGetGallery(eventId, guestId) {
 
         if (fileExists) {
           existingFileIds.add(fileId);
+          let uniqueId = fr[COL_FOTO.ID];
+          if (seenPhotoIds.has(uniqueId)) {
+            uniqueId = uniqueId + "-" + (fileId ? fileId.slice(-4) : (j + 1));
+          }
+          seenPhotoIds.add(uniqueId);
+
           photos.push({
-            idFoto: fr[COL_FOTO.ID],
-            guestNama: fr[COL_FOTO.GUEST_NAMA],
-            caption: fr[COL_FOTO.CAPTION],
-            cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
-            frameStyle: fr[COL_FOTO.FRAME_STYLE],
-            gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
+            idFoto: uniqueId,
+            guestNama: fr[COL_FOTO.GUEST_NAMA] || "Tamu",
+            caption: fr[COL_FOTO.CAPTION] || "Momen seru!",
+            cameraStyle: fr[COL_FOTO.CAMERA_STYLE] || "RAW",
+            frameStyle: fr[COL_FOTO.FRAME_STYLE] || "POLAROID",
+            gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || (fileId ? ("https://lh3.googleusercontent.com/d/" + fileId) : ""),
             totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
             isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
-            createdAt: fr[COL_FOTO.CREATED_AT]
+            createdAt: fr[COL_FOTO.CREATED_AT] || nowStr
           });
-        } else {
-          // File fisik di Google Drive sudah tidak ada / telah dihapus -> hapus dari DataFoto!
-          rowsToDelete.push(j + 2);
         }
+        // File yang sudah terhapus di Drive diabaikan tanpa operasi deleteRow destruktif pada GET polling
       }
     }
   }
@@ -741,9 +812,15 @@ function handleGetGallery(eventId, guestId) {
 
       const directUrl = "https://lh3.googleusercontent.com/d/" + fId;
       const parts = dfInfo.name.split("_");
-      const photoIdCandidate = (parts[0] && parts[0].indexOf("FTO-") === 0) ? parts[0] : ("FTO-" + Date.now());
+      let photoIdCandidate = (parts[0] && parts[0].indexOf("FTO-") === 0) ? parts[0] : ("FTO-" + Date.now());
       const guestCandidate = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
       const createdDateStr = dfInfo.created ? Utilities.formatDate(dfInfo.created, timeZone, "yyyy-MM-dd HH:mm:ss") : nowStr;
+
+      // JAMIN KEUNIKAN ID: Cegah bentrokan ID jika terdapat foto tamu lain dengan nomor sama (misal 033)
+      if (seenPhotoIds.has(photoIdCandidate)) {
+        photoIdCandidate = photoIdCandidate + "-" + fId.slice(-4);
+      }
+      seenPhotoIds.add(photoIdCandidate);
 
       if (fotoSheet) {
         fotoSheet.appendRow([
@@ -776,17 +853,6 @@ function handleGetGallery(eventId, guestId) {
       existingFileIds.add(fId);
     }
   });
-
-  // 3. Eksekusi penghapusan baris yang filenya sudah terhapus di Drive (dari bawah ke atas)
-  if (fotoSheet && rowsToDelete.length > 0) {
-    for (let d = rowsToDelete.length - 1; d >= 0; d--) {
-      try {
-        fotoSheet.deleteRow(rowsToDelete[d]);
-      } catch (delErr) {}
-    }
-  }
-
-  SpreadsheetApp.flush();
 
   photos.reverse();
 
@@ -880,9 +946,9 @@ function handleCleanDeletedPhotos(eventId) {
 function handleUploadPhoto(payload) {
   const lock = LockService.getScriptLock();
   try {
-    lock.waitLock(15000);
+    lock.waitLock(20000);
   } catch (lockErr) {
-    return { status: "error", message: "Server sibuk, silakan coba upload lagi." };
+    return { status: "error", message: "Server sedang sibuk memproses antrean foto, silakan coba sesaat lagi." };
   }
 
   try {
@@ -894,8 +960,8 @@ function handleUploadPhoto(payload) {
     const frameStyle = String(payload.frameStyle || "POLAROID").trim();
     const imageBase64 = payload.imageBase64 || "";
 
-    if (!eventId || !guestId || !imageBase64) {
-      return { status: "error", message: "Parameter eventId, guestId, dan gambar wajib diisi." };
+    if (!guestId || !imageBase64) {
+      return { status: "error", message: "Parameter guestId dan gambar wajib diisi." };
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -906,51 +972,56 @@ function handleUploadPhoto(payload) {
       return { status: "error", message: "Tabel database belum siap." };
     }
 
-    // 1. Cek Metadata Event & Batas Kuota
+    if (eventSheet.getLastRow() <= 1) {
+      return { status: "error", message: "Belum ada data event yang terdaftar." };
+    }
+
+    // 1. Cek Metadata Event & Resolusi Acara Aktif secara Defensif
     let targetEventRow = -1;
     let maxFoto = 10;
     let folderId = "";
     let namaEvent = "Event";
     let slugEvent = "";
-
-    if (eventSheet.getLastRow() <= 1) {
-      return { status: "error", message: "Belum ada data event yang terdaftar." };
-    }
-
     let canonicalEventId = eventId;
+
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-    for (let i = 0; i < evRows.length; i++) {
-      if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
-        canonicalEventId = evRows[i][COL_EVENT.ID];
-        targetEventRow = i + 2;
-        maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
-        folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
-        namaEvent = evRows[i][COL_EVENT.NAMA];
-        slugEvent = evRows[i][COL_EVENT.SLUG];
-        break;
+    if (eventId && eventId !== "DEFAULT" && eventId !== "ACTIVE") {
+      for (let i = 0; i < evRows.length; i++) {
+        if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+          canonicalEventId = evRows[i][COL_EVENT.ID];
+          targetEventRow = i + 2;
+          maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
+          folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          namaEvent = evRows[i][COL_EVENT.NAMA];
+          slugEvent = evRows[i][COL_EVENT.SLUG];
+          break;
+        }
       }
     }
 
+    // Fallback ke event berstatus AKTIF jika ID tidak cocok atau masih default client
     if (targetEventRow === -1) {
-      return { status: "error", message: "Event tidak valid atau belum terdaftar." };
-    }
-
-    // 2. Validasi Kuota Foto Tamu
-    let currentGuestUploads = 0;
-    if (fotoSheet.getLastRow() > 1) {
-      const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
-      fRows.forEach(function(fr) {
-        if ((fr[COL_FOTO.ID_EVENT] === eventId || fr[COL_FOTO.ID_EVENT] === canonicalEventId || fr[COL_FOTO.ID_EVENT] === slugEvent) && fr[COL_FOTO.GUEST_ID] === guestId) {
-          currentGuestUploads++;
+      for (let i = 0; i < evRows.length; i++) {
+        if (evRows[i][COL_EVENT.STATUS] === "AKTIF") {
+          canonicalEventId = evRows[i][COL_EVENT.ID];
+          targetEventRow = i + 2;
+          maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
+          folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          namaEvent = evRows[i][COL_EVENT.NAMA];
+          slugEvent = evRows[i][COL_EVENT.SLUG];
+          break;
         }
-      });
+      }
     }
 
-    if (currentGuestUploads >= maxFoto) {
-      return {
-        status: "limit_reached",
-        message: "Rol kamera Anda untuk event ini sudah penuh (" + maxFoto + " foto). Nikmati pestanya!"
-      };
+    // Fallback pamungkas ke baris event pertama
+    if (targetEventRow === -1 && evRows.length > 0) {
+      canonicalEventId = evRows[0][COL_EVENT.ID];
+      targetEventRow = 2;
+      maxFoto = Number(evRows[0][COL_EVENT.MAX_FOTO]) || 10;
+      folderId = extractDriveFolderId(evRows[0][COL_EVENT.GDRIVE_FOLDER_ID]);
+      namaEvent = evRows[0][COL_EVENT.NAMA];
+      slugEvent = evRows[0][COL_EVENT.SLUG];
     }
 
     // Ekstraksi Base64 Data
@@ -971,6 +1042,48 @@ function handleUploadPhoto(payload) {
       try {
         return JSON.parse(cachedResponse);
       } catch(e) {}
+    }
+
+    // 2. Validasi Kuota Foto Tamu & Deteksi Duplikasi Riwayat Upload Baru
+    let currentGuestUploads = 0;
+    if (fotoSheet.getLastRow() > 1) {
+      const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
+      const nowMs = Date.now();
+      for (let frIdx = 0; frIdx < fRows.length; frIdx++) {
+        const fr = fRows[frIdx];
+        const matchEv = (fr[COL_FOTO.ID_EVENT] === eventId || fr[COL_FOTO.ID_EVENT] === canonicalEventId || fr[COL_FOTO.ID_EVENT] === slugEvent);
+        if (matchEv && fr[COL_FOTO.GUEST_ID] === guestId) {
+          currentGuestUploads++;
+          // Cek apakah tamu ini baru saja upload foto dengan caption sama dalam 3 menit terakhir
+          const createdMs = fr[COL_FOTO.CREATED_AT] ? new Date(fr[COL_FOTO.CREATED_AT]).getTime() : 0;
+          if (createdMs && Math.abs(nowMs - createdMs) < 180000 && fr[COL_FOTO.CAPTION] === caption) {
+            const existingFileId = fr[COL_FOTO.GDRIVE_FILE_ID];
+            if (existingFileId) {
+              try {
+                const existingFile = DriveApp.getFileById(existingFileId);
+                if (existingFile && !existingFile.isTrashed()) {
+                  const reuseRes = {
+                    status: "success",
+                    message: "Foto sudah tersimpan sebelumnya di rol acara!",
+                    idFoto: fr[COL_FOTO.ID],
+                    viewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + existingFileId),
+                    remainingPhotos: Math.max(0, maxFoto - currentGuestUploads)
+                  };
+                  try { cache.put(imgFingerprint, JSON.stringify(reuseRes), 180); } catch(cErr) {}
+                  return reuseRes;
+                }
+              } catch(eCheck) {}
+            }
+          }
+        }
+      }
+    }
+
+    if (currentGuestUploads >= maxFoto) {
+      return {
+        status: "limit_reached",
+        message: "Rol kamera Anda untuk event ini sudah penuh (" + maxFoto + " foto). Nikmati pestanya!"
+      };
     }
 
     // 3. Simpan File ke Google Drive (Dengan Smart Reuse, Mencegah Folder Kosong Dobel)
@@ -1004,14 +1117,23 @@ function handleUploadPhoto(payload) {
     const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
     const dateCompact = Utilities.formatDate(new Date(), timeZone, "yyyyMMdd");
 
-    // Generator ID Foto Incremental
-    const newIdFoto = generateIncrementalId(fotoSheet, "FTO-" + dateCompact + "-", COL_FOTO.ID);
+    // Generator ID Foto Incremental Sekuensial Monotonik (Bebas Bentrokan ID)
+    const newIdFoto = generateIncrementalPhotoId(fotoSheet, dateCompact, targetFolder);
     const cleanGuestName = guestNama.replace(/[^a-zA-Z0-9]/g, "") || "Tamu";
     const fileName = newIdFoto + "_" + cleanGuestName + ".jpg";
 
-    const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
-    const driveFile = targetFolder.createFile(blob);
-    driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    // Cek apakah targetFolder sudah memiliki file dengan nama yang sama (Anti Double File Drive)
+    let driveFile = null;
+    const sameNamedFiles = targetFolder.getFilesByName(fileName);
+    if (sameNamedFiles.hasNext()) {
+      driveFile = sameNamedFiles.next();
+    } else {
+      const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
+      driveFile = targetFolder.createFile(blob);
+      try {
+        driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      } catch(eShare) {}
+    }
 
     const fileId = driveFile.getId();
     const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
@@ -1043,7 +1165,7 @@ function handleUploadPhoto(payload) {
     };
 
     try {
-      cache.put(imgFingerprint, JSON.stringify(resultSuccess), 120);
+      cache.put(imgFingerprint, JSON.stringify(resultSuccess), 180);
     } catch(eCache) {}
 
     return resultSuccess;
