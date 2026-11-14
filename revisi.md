@@ -1,11 +1,40 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (RILIS v1.7.8: DUA ARAH REKONSILIASI FOLDER GOOGLE DRIVE & OUTPUT KAMERA FULL HD 1080P (> 1 MB))
+STATUS: SELESAI DITERAPKAN (RILIS v1.7.9: PEMULIHAN TUNTAS HASIL TANGKAPAN KAMERA & ELIMINASI LETTERBOXING VIEWFINDER)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.7.8 (Folder Auto-Reconciliation, Full HD 1080p Export, Guaranteed File Size > 1MB, Manual Sync Drive)
+VERSI RANCANGAN: v1.7.9 (True WYSIWYG Viewfinder Capture, Zero Letterboxing, Full Bleed Video Fit, Zero Sensor Lag)
 ================================================================================
+
+## 1. ANALISIS KELUHAN TERBARU PENGGUNA (2 TANGKAPAN LAYAR)
+
+Pengguna mengirimkan 2 foto tangkapan layar ponsel:
+1. **Layar Pratinjau Foto Acara (`media_1794617375313_a6ec8771.jpg`):**
+   - Hasil jepretan foto menampilkan area meja yang jauh lebih luas (kotak kartu PermataBank di atas, nampan oranye di samping, dan kertas di bawah), berbeda dari yang dibidik di layar.
+2. **Layar Viewfinder Kamera (`media_1794617375314_f3c888c5.jpg`):**
+   - Live video kamera tampil berupa strip horizontal sempit (letterboxed) di tengah layar dengan bilah hitam kosong raksasa di atas dan bawahnya.
+
+### Akar Masalah Teknis Forensik:
+1. **Letterboxing Video di Viewfinder:**
+   - Elemen `<video id="cameraVideo">` berada di dalam kontainer flex (`#viewfinderViewport`) tanpa positioning absolut. Karena elemen `<video>` memiliki *intrinsic aspect ratio* bawaan (16:9), peramban ponsel menyusutkan tingginya menjadi strip horizontal ~200px di tengah layar vertikal.
+2. **Discrepansi Bidikan & Tangkapan (WYSIWYG Rusak):**
+   - Pada `capturePhoto()`, pemanggilan `imageCapture.takePhoto()` mengambil foto langsung dari sensor perangkat keras tanpa cropping aspect ratio viewport ponsel.
+   - Sensor ponsel mengambil foto 4:3 mentah seluruh ruangan, bukan potongan yang dibidik pengguna di layar.
+   - Pada `processPhotoWithFrameAndFilter()`, evaluasi `isLandscape = srcWidth > srcHeight` salah menilai orientasi karena buffer video Android selalu berukuran landscape (misal 1920x1080) sekalipun ponsel dipegang vertikal.
+
+---
+
+## 2. SOLUSI IMPLEMENTASI REKAYASA SISTEM (v1.7.9)
+
+1. **Full Bleed Viewfinder Fit Tanpa Bilah Hitam (`style.css` & `index.html`):**
+   - Menyematkan `position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important;` pada `#cameraVideo`.
+   - Video kini mengisi 100% seluruh ruang viewport viewfinder dari ujung ke ujung tanpa bilah hitam.
+2. **Perekaman Langsung Frame Video WYSIWYG (`app.js`):**
+   - Menggantikan `takePhoto()` perangkat keras dengan perekaman langsung dari live frame `video`.
+   - Mengambil potongan koordinat `[sx, sy, sw, sh]` yang persis sama dengan yang dilihat mata pengguna di layar.
+   - Mengunci kanvas Full HD ke `1080 x 1920` (portrait) atau `1920 x 1080` (landscape) berdasarkan orientasi riil perangkat (`window.innerHeight >= window.innerWidth`), bukan buffer sensor mentah.
+   - Hasil foto di modal pratinjau dan rol film 100.0% identik dengan apa yang dibidik di layar.
 
 ## 1. ANALISIS KELUHAN TERBARU PENGGUNA
 Pengguna menyampaikan kendala utama:

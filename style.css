@@ -52,6 +52,24 @@
   padding-bottom: 0.75rem;
 }
 
+/* Kamera Viewfinder Viewport - Full Bleed Immersive Fit (Anti-Letterbox / Anti-Bilah Hitam) */
+#viewfinderViewport {
+  position: relative !important;
+  width: 100% !important;
+  overflow: hidden !important;
+  background-color: #000000 !important;
+}
+
+#viewfinderViewport video#cameraVideo {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  z-index: 1 !important;
+}
+
 /* ==============================================================================
  * PODIUM & VOTING WINNERS SHOWCASE (LUXURY GOLD & SILVER CUSTOM)
  * ============================================================================== */

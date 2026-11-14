@@ -1705,6 +1705,7 @@ function triggerNativeCamera() {
 async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const canvas = document.getElementById('photoRenderCanvas');
   const ctx = canvas.getContext('2d');
+  const viewport = document.getElementById('viewfinderViewport');
 
   // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
   STATE.rawCapturedImageObj = imgSource;
@@ -1712,7 +1713,10 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   // Ekstraksi dimensi riil (Krusial: HTMLVideoElement, ImageBitmap, HTMLImageElement)
   const srcWidth = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
   const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1920;
-  const isLandscape = srcWidth > srcHeight;
+  
+  // Orientasi perangkat: jika live camera, ikuti orientasi layar ponsel (portrait vs landscape)
+  const isMobilePortrait = window.innerHeight >= window.innerWidth;
+  const isLandscape = (imgSource instanceof HTMLImageElement || imgSource.tagName === 'IMG') ? (srcWidth > srcHeight) : (!isMobilePortrait);
 
   // 1. Tentukan bingkai resmi yang aktif
   let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
@@ -1780,24 +1784,36 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // 5. Render Foto Kamera (Center Crop - Cover)
-  const imgRatio = srcWidth / srcHeight;
-  const targetRatio = canvas.width / canvas.height;
-  let renderW, renderH, offsetX, offsetY;
+  // 5. Render Foto Kamera: Pemetaan Presisi 1:1 Mengikuti Viewfinder (WYSIWYG Sejati)
+  const targetW = canvas.width;
+  const targetH = canvas.height;
+  const targetRatio = targetW / targetH;
+  const srcRatio = srcWidth / srcHeight;
 
-  if (imgRatio > targetRatio) {
-    renderH = canvas.height;
-    renderW = canvas.height * imgRatio;
-    offsetX = (canvas.width - renderW) / 2;
-    offsetY = 0;
+  // Dapatkan rasio aspek viewfinder riil di layar ponsel
+  const vpWidth = (viewport && viewport.clientWidth) ? viewport.clientWidth : targetW;
+  const vpHeight = (viewport && viewport.clientHeight) ? viewport.clientHeight : targetH;
+  const vpRatio = (vpWidth > 0 && vpHeight > 0) ? (vpWidth / vpHeight) : targetRatio;
+
+  // Hitung cropping rectangle presisi dari sumber (video / gambar)
+  let sx = 0, sy = 0, sw = srcWidth, sh = srcHeight;
+  const cropRatio = (imgSource instanceof HTMLVideoElement || imgSource.tagName === 'VIDEO') ? vpRatio : targetRatio;
+
+  if (srcRatio > cropRatio) {
+    // Sumber lebih lebar -> crop bagian kiri & kanan secara simetris
+    sw = Math.round(srcHeight * cropRatio);
+    sx = Math.round((srcWidth - sw) / 2);
+    sy = 0;
+    sh = srcHeight;
   } else {
-    renderW = canvas.width;
-    renderH = canvas.width / imgRatio;
-    offsetX = 0;
-    offsetY = (canvas.height - renderH) / 2;
+    // Sumber lebih tinggi -> crop bagian atas & bawah secara simetris
+    sh = Math.round(srcWidth / cropRatio);
+    sy = Math.round((srcHeight - sh) / 2);
+    sx = 0;
+    sw = srcWidth;
   }
 
-  ctx.drawImage(imgSource, offsetX, offsetY, renderW, renderH);
+  ctx.drawImage(imgSource, sx, sy, sw, sh, 0, 0, targetW, targetH);
 
   // 6. Terapkan Filter Warna Analog
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
@@ -4880,19 +4896,7 @@ async function triggerCameraShutter() {
   const video = document.getElementById('cameraVideo');
   // Cek apakah live video stream sudah aktif dan memiliki frame riil
   if (STATE.mediaStream && video && video.readyState >= 2 && video.videoWidth > 0) {
-    const videoTrack = STATE.mediaStream.getVideoTracks()[0];
-    // Tangkap gambar kualitas HD sensor penuh jika ImageCapture didukung browser perangkat
-    if (window.ImageCapture && videoTrack && videoTrack.readyState === 'live') {
-      try {
-        const imageCapture = new ImageCapture(videoTrack);
-        const blob = await imageCapture.takePhoto();
-        const bitmap = await createImageBitmap(blob);
-        await processPhotoWithFrameAndFilter(bitmap);
-        return;
-      } catch (errCapture) {
-        console.warn("ImageCapture takePhoto fallback to video frame:", errCapture);
-      }
-    }
+    // Tangkap langsung frame live video resolusi penuh agar 100% WYSIWYG sesuai persis dengan bidikan viewfinder
     await processPhotoWithFrameAndFilter(video);
   } else {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
