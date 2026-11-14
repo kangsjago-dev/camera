@@ -1388,14 +1388,20 @@ function showView(viewId) {
     }
   }
 
-  // Hide all views first
+  // Hide all views first with both class and explicit style.display
   ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
+    if (el) {
+      el.classList.add('hidden');
+      el.style.display = 'none';
+    }
   });
 
   const target = document.getElementById(viewId);
-  if (target) target.classList.remove('hidden');
+  if (target) {
+    target.classList.remove('hidden');
+    target.style.display = '';
+  }
 
   const bottomNav = document.getElementById('bottomNavBar');
 

@@ -34,7 +34,7 @@
 }
 
 /* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit & Anti-Overlap Safe Padding) */
-.camera-page-container {
+.camera-page-container:not(.hidden) {
   height: 100% !important;
   max-height: 100% !important;
   display: flex !important;
@@ -43,6 +43,12 @@
   overflow: hidden !important;
   padding-bottom: 0.25rem !important;
   touch-action: manipulation !important;
+}
+
+#viewCamera.hidden,
+.camera-page-container.hidden,
+.hidden {
+  display: none !important;
 }
 
 /* Lock scroll completely when in camera mode so mobile viewport fits 1 page */
@@ -55,9 +61,20 @@ body.camera-lock-scroll {
 }
 
 body.camera-lock-scroll main {
+  height: calc(100vh - 3.5rem - 4.25rem) !important;
   height: calc(100dvh - 3.5rem - 4.25rem - env(safe-area-inset-bottom, 0px)) !important;
+  max-height: calc(100vh - 3.5rem - 4.25rem) !important;
   max-height: calc(100dvh - 3.5rem - 4.25rem - env(safe-area-inset-bottom, 0px)) !important;
   overflow: hidden !important;
+}
+
+body.camera-lock-scroll #viewCamera:not(.hidden) {
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
 }
 
 /* Full-bleed responsive viewfinder for mobile */
