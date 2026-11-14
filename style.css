@@ -33,7 +33,7 @@
   background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
 }
 
-/* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit) */
+/* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit & Anti-Overlap Safe Padding) */
 .camera-page-container {
   height: calc(100dvh - 4.5rem);
   max-height: calc(100dvh - 4.5rem);
@@ -41,6 +41,41 @@
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
+  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Full-bleed responsive viewfinder for mobile */
+#viewfinderViewport {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+#viewfinderViewport video#cameraVideo {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+  z-index: 1 !important;
+}
+
+/* Centered Slideshow Stage */
+.slideshow-centered-stage {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 10 !important;
+  padding: 1.5rem !important;
+  pointer-events: none !important;
+}
+
+.slideshow-centered-stage img {
+  pointer-events: auto !important;
 }
 
 /* Live Camera Filters (CSS Real-time Video Stream Preview) */
@@ -149,12 +184,4 @@
 .podium-card-bronze:hover {
   transform: translateY(-3px) scale(1.02);
   box-shadow: 0 0 25px rgba(205, 127, 50, 0.3);
-}
-
-/* Floating Filter Selector Pills in Viewfinder */
-#filterListContainer {
-  scrollbar-width: none;
-}
-#filterListContainer::-webkit-scrollbar {
-  display: none;
 }

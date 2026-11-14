@@ -8,7 +8,9 @@
  * 2. getDisplayValues() untuk cegah distorsi tanggal/waktu timezone.
  * 3. SpreadsheetApp.flush() sebelum return response.
  * 4. LockService untuk penomoran ID unik sekuensial anti-tabrakan.
- * 5. CORS Friendly JSON Output untuk dikonsumsi Frontend SPA.
+ * 5. Sanitasi Mutlak: Dilarang menyimpan base64 ke cell Spreadsheet (maks 45k chars).
+ * 6. Folder Reuse: Mencegah duplikasi folder kosong di Google Drive.
+ * 7. CORS Friendly JSON Output untuk dikonsumsi Frontend SPA.
  * ================================================================================
  */
 
@@ -72,6 +74,14 @@ const COL_CONFIG = {
   DESC: 2
 };
 
+const SHEET_NAMES = {
+  EVENT: "DataEvent",
+  FOTO: "DataFoto",
+  KATEGORI: "DataKategori",
+  VOTING: "DataVoting",
+  PENGATURAN: "Config"
+};
+
 /**
  * Helper Output JSON dengan Header CORS Terbuka
  */
@@ -81,14 +91,116 @@ function createJsonResponse(data) {
 }
 
 /**
- * HTTP GET Router: Melayani pembacaan data (Events, Galeri, Status, Quota)
+ * Sanitasi Ketat String untuk Sel Spreadsheet
+ * Mencegah error 'Your input contains more than the maximum of 50000 characters in a single cell'
+ */
+function sanitizeCellValue(val, maxLen) {
+  if (val === null || val === undefined) return "";
+  const limit = maxLen || 45000;
+  let str = String(val);
+  // Dilarang keras menyimpan data URI base64 ke dalam cell
+  if (str.indexOf("data:") === 0) {
+    return "";
+  }
+  if (str.length > limit) {
+    return str.substring(0, limit);
+  }
+  return str;
+}
+
+/**
+ * Helper Ekstraksi ID Folder Google Drive dari URL atau Raw ID
+ */
+function extractDriveFolderId(input) {
+  if (!input) return "";
+  const str = String(input).trim();
+  const match = str.match(/[-\w]{25,}/);
+  return match ? match[0] : str;
+}
+
+/**
+ * Helper Pembuatan Slug Acara yang Bersih
+ */
+function createSlug(text) {
+  if (!text) return "acara-" + Date.now();
+  return text.toString().toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '');
+}
+
+/**
+ * Helper Aman JSON Parsing
+ */
+function parseJsonSafe(jsonStr, fallback) {
+  if (!jsonStr) return fallback;
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+/**
+ * Generator ID Unik Sekuensial
+ */
+function generateIncrementalId(sheet, prefix, colIndex) {
+  let maxNum = 0;
+  if (sheet && sheet.getLastRow() > 1) {
+    const vals = sheet.getRange(2, colIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues();
+    vals.forEach(function(r) {
+      const val = r[0];
+      if (val && val.indexOf(prefix) === 0) {
+        const numPart = parseInt(val.replace(prefix, ""), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
+      }
+    });
+  }
+  const nextNum = maxNum + 1;
+  const padded = ("000" + nextNum).slice(-3);
+  return prefix + padded;
+}
+
+/**
+ * Smart Folder Discovery & Reuse (Eliminasi Folder Kosong Dobel di Google Drive)
+ */
+function getOrCreateEventSubFolder(parentFolder, eventId, eventSlug, eventName) {
+  const cleanName = (eventSlug || eventName || eventId).replace(/[/\\:*?"<>|]/g, "_").trim();
+  const candidateNames = [
+    cleanName,
+    "SnapEvent_" + cleanName,
+    eventSlug,
+    eventId
+  ];
+
+  for (let i = 0; i < candidateNames.length; i++) {
+    const iter = parentFolder.getFoldersByName(candidateNames[i]);
+    if (iter.hasNext()) {
+      return iter.next();
+    }
+  }
+
+  // Jika belum ada, buat 1 folder baru
+  const newFolder = parentFolder.createFolder(cleanName);
+  try {
+    newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {}
+  return newFolder;
+}
+
+/**
+ * HTTP GET Router
  */
 function doGet(e) {
   try {
     const params = e && e.parameter ? e.parameter : {};
     const action = params.action || "ping";
 
-    if (action === "ping") {
+    if (action === "ping" || action === "testConnection") {
       return createJsonResponse({
         status: "success",
         message: "SnapEvent Backend API Online & Siap Digunakan",
@@ -96,11 +208,7 @@ function doGet(e) {
       });
     }
 
-    if (action === "getInitialData") {
-      return createJsonResponse(handleGetInitialData());
-    }
-
-    if (action === "getAllEvents" || action === "adminGetEvents") {
+    if (action === "getInitialData" || action === "getAllEvents" || action === "adminGetEvents") {
       return createJsonResponse(handleGetAllEvents());
     }
 
@@ -121,9 +229,20 @@ function doGet(e) {
       return createJsonResponse(handleGetSlideshowPhotos(eventId));
     }
 
+    if (action === "getGuestQuota") {
+      const eventId = params.eventId || "";
+      const guestId = params.guestId || "";
+      return createJsonResponse(handleGetGuestQuota(eventId, guestId));
+    }
+
     if (action === "adminGetSummary") {
       const pin = params.pin || "";
       return createJsonResponse(handleAdminGetSummary(pin));
+    }
+
+    if (action === "cleanDeletedPhotos") {
+      const eventId = params.eventId || "";
+      return createJsonResponse(handleCleanDeletedPhotos(eventId));
     }
 
     return createJsonResponse({
@@ -139,7 +258,7 @@ function doGet(e) {
 }
 
 /**
- * HTTP POST Router: Melayani mutasi data (Upload Foto, Submit Vote, Admin Ops)
+ * HTTP POST Router
  */
 function doPost(e) {
   try {
@@ -158,6 +277,10 @@ function doPost(e) {
 
     if (action === "uploadPhoto") {
       return createJsonResponse(handleUploadPhoto(payload));
+    }
+
+    if (action === "uploadCustomFrame") {
+      return createJsonResponse(handleUploadCustomFrame(payload));
     }
 
     if (action === "submitVote") {
@@ -197,28 +320,20 @@ function doPost(e) {
 }
 
 // ================================================================================
-// HANDLER BUSINESS LOGIC: GUEST & EVENT
+// HANDLER EVENT & GALLERY
 // ================================================================================
 
-function handleGetInitialData() {
+function handleGetAllEvents() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
+  const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
   const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
 
   if (!eventSheet) {
-    return { status: "error", message: "Database belum diinisialisasi. Jalankan inisialisasiDatabase() di setup.gs" };
+    return { status: "error", message: "Database belum siap. Sheet DataEvent tidak ditemukan." };
   }
 
-  // Ambil Konfigurasi Global
-  const configMap = {};
-  if (configSheet && configSheet.getLastRow() > 1) {
-    const configRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 3).getDisplayValues();
-    configRows.forEach(function(r) {
-      configMap[r[COL_CONFIG.KEY]] = r[COL_CONFIG.VAL];
-    });
-  }
-
-  // Ambil Semua Daftar Event untuk Sinkronisasi Multi-Event
   const events = [];
   if (eventSheet.getLastRow() > 1) {
     const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
@@ -246,61 +361,29 @@ function handleGetInitialData() {
     });
   }
 
-  return {
-    status: "success",
-    appTitle: configMap["app_title"] || "SnapEvent Enterprise Studio",
-    globalConfig: configMap,
-    events: events,
-    allEvents: events
-  };
-}
-
-function handleGetAllEvents() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-
-  if (!eventSheet || eventSheet.getLastRow() <= 1) {
-    return { status: "success", events: [], totalEvents: 0 };
-  }
-
-  const events = [];
-  const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-  rows.forEach(function(r) {
-    if (r[COL_EVENT.ID]) {
-      events.push({
-        idEvent: r[COL_EVENT.ID],
-        namaEvent: r[COL_EVENT.NAMA] || "Acara",
-        slugEvent: r[COL_EVENT.SLUG] || createSlug(r[COL_EVENT.NAMA] || ""),
-        tanggalEvent: r[COL_EVENT.TANGGAL] || "",
-        hashtagEvent: r[COL_EVENT.HASHTAG] || "",
-        maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-        maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
-        revealMode: r[COL_EVENT.REVEAL_MODE] || "SEGERA",
-        isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
-        likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
-        publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-        activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-        activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
-        gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
-        statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
-        customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
-      });
-    }
-  });
+  const totalEvents = events.length;
+  const totalPhotos = fotoSheet ? Math.max(0, fotoSheet.getLastRow() - 1) : 0;
+  const totalVotes = voteSheet ? Math.max(0, voteSheet.getLastRow() - 1) : 0;
 
   const globalConfig = {};
   if (configSheet && configSheet.getLastRow() > 1) {
     const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-    cRows.forEach(function(r) {
-      globalConfig[r[COL_CONFIG.KEY]] = r[COL_CONFIG.VAL];
+    cRows.forEach(function(cr) {
+      globalConfig[cr[COL_CONFIG.KEY]] = cr[COL_CONFIG.VAL];
     });
   }
 
   return {
     status: "success",
     events: events,
-    totalEvents: events.length,
+    totalEvents: totalEvents,
+    totalPhotos: totalPhotos,
+    totalVotes: totalVotes,
+    metrics: {
+      totalEvents: totalEvents,
+      totalPhotos: totalPhotos,
+      totalVotes: totalVotes
+    },
     globalConfig: globalConfig
   };
 }
@@ -308,21 +391,21 @@ function handleGetAllEvents() {
 function handleGetEventDetails(eventId, guestId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
+  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
 
   if (!eventSheet || eventSheet.getLastRow() <= 1) {
-    return { status: "error", message: "Event tidak ditemukan" };
+    return { status: "error", message: "Event tidak ditemukan." };
   }
 
+  let matchedEvent = null;
   const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-  let eventData = null;
-
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     if (r[COL_EVENT.ID] === eventId || r[COL_EVENT.SLUG] === eventId) {
-      eventData = {
+      matchedEvent = {
         idEvent: r[COL_EVENT.ID],
         namaEvent: r[COL_EVENT.NAMA],
         slugEvent: r[COL_EVENT.SLUG],
@@ -336,34 +419,24 @@ function handleGetEventDetails(eventId, guestId) {
         publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
         activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
         activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
-        customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || "",
-        statusEvent: r[COL_EVENT.STATUS]
+        gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID],
+        statusEvent: r[COL_EVENT.STATUS],
+        customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
       };
       break;
     }
   }
 
-  if (!eventData) {
-    return { status: "error", message: "Event tidak ditemukan atau sudah tidak aktif" };
+  if (!matchedEvent) {
+    return { status: "error", message: "Event '" + eventId + "' tidak ditemukan." };
   }
 
-  // Hitung jumlah foto yang sudah diupload oleh guestId ini
-  let guestPhotoCount = 0;
-  if (guestId && fotoSheet && fotoSheet.getLastRow() > 1) {
-    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
-    fRows.forEach(function(fr) {
-      if (fr[COL_FOTO.ID_EVENT] === eventData.idEvent && fr[COL_FOTO.GUEST_ID] === guestId) {
-        guestPhotoCount++;
-      }
-    });
-  }
-
-  // Ambil Kategori Voting untuk Event Ini
+  // Ambil Kategori Acara
   const categories = [];
   if (katSheet && katSheet.getLastRow() > 1) {
     const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
     kRows.forEach(function(kr) {
-      if (kr[COL_KAT.ID_EVENT] === eventData.idEvent) {
+      if (kr[COL_KAT.ID_EVENT] === matchedEvent.idEvent || kr[COL_KAT.ID_EVENT] === matchedEvent.slugEvent) {
         categories.push({
           idKategori: kr[COL_KAT.ID],
           namaKategori: kr[COL_KAT.NAMA],
@@ -372,94 +445,80 @@ function handleGetEventDetails(eventId, guestId) {
         });
       }
     });
-    categories.sort(function(a, b) { return a.urutan - b.urutan; });
   }
 
-  // Hitung Kuota Voting yang Sudah Digunakan oleh Guest
-  const guestVotesMap = {}; // idKategori -> count
-  if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
-    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 5).getDisplayValues();
-    vRows.forEach(function(vr) {
-      if (vr[COL_VOTE.ID_EVENT] === eventData.idEvent && vr[COL_VOTE.GUEST_ID] === guestId) {
-        const catId = vr[COL_VOTE.ID_KAT];
-        guestVotesMap[catId] = (guestVotesMap[catId] || 0) + 1;
+  // Statistik Tamu
+  let guestUploadedPhotos = 0;
+  if (guestId && fotoSheet && fotoSheet.getLastRow() > 1) {
+    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
+    fRows.forEach(function(fr) {
+      if (fr[COL_FOTO.ID_EVENT] === matchedEvent.idEvent && fr[COL_FOTO.GUEST_ID] === guestId) {
+        guestUploadedPhotos++;
       }
     });
   }
 
-  // Ambil Pengaturan Global
-  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-  const globalConfig = {};
-  if (configSheet && configSheet.getLastRow() > 1) {
-    const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-    cRows.forEach(function(r) {
-      globalConfig[r[COL_CONFIG.KEY]] = r[COL_CONFIG.VAL];
+  const guestVotesMap = {};
+  if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
+    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
+    vRows.forEach(function(vr) {
+      if (vr[COL_VOTE.ID_EVENT] === matchedEvent.idEvent && vr[COL_VOTE.GUEST_ID] === guestId) {
+        const cat = vr[COL_VOTE.ID_KAT] || "DEFAULT";
+        guestVotesMap[cat] = (guestVotesMap[cat] || 0) + 1;
+      }
     });
   }
 
-  // Ambil Semua Event Ringkas untuk Sinkronisasi Multi-Event
-  const allEvents = [];
-  for (let eIdx = 0; eIdx < rows.length; eIdx++) {
-    const er = rows[eIdx];
-    if (er[COL_EVENT.ID]) {
-      allEvents.push({
-        idEvent: er[COL_EVENT.ID],
-        namaEvent: er[COL_EVENT.NAMA] || "Acara",
-        slugEvent: er[COL_EVENT.SLUG] || createSlug(er[COL_EVENT.NAMA] || ""),
-        tanggalEvent: er[COL_EVENT.TANGGAL] || "",
-        hashtagEvent: er[COL_EVENT.HASHTAG] || "",
-        maxFotoPerGuest: Number(er[COL_EVENT.MAX_FOTO]) || 10,
-        maxVotePerGuest: Number(er[COL_EVENT.MAX_VOTE]) || 3,
-        revealMode: er[COL_EVENT.REVEAL_MODE] || "SEGERA",
-        isRevealed: er[COL_EVENT.IS_REVEALED] === "TRUE" || er[COL_EVENT.IS_REVEALED] === "true",
-        likeEnabled: er[COL_EVENT.LIKE_ENABLED] !== "FALSE" && er[COL_EVENT.LIKE_ENABLED] !== "false",
-        publicVisible: er[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && er[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-        gdriveFolderId: er[COL_EVENT.GDRIVE_FOLDER_ID] || "",
-        statusEvent: er[COL_EVENT.STATUS] || "INAKTIF",
-        customFrameUrl: er[COL_EVENT.CUSTOM_FRAME_URL] || ""
-      });
-    }
-  }
+  const allEventsRes = handleGetAllEvents();
 
   return {
     status: "success",
-    event: eventData,
-    allEvents: allEvents,
-    globalConfig: globalConfig,
+    event: matchedEvent,
+    categories: categories,
     guestStats: {
-      guestPhotoCount: guestPhotoCount,
-      remainingPhotos: Math.max(0, eventData.maxFotoPerGuest - guestPhotoCount),
+      uploadedPhotos: guestUploadedPhotos,
+      remainingPhotos: Math.max(0, matchedEvent.maxFotoPerGuest - guestUploadedPhotos),
       guestVotesMap: guestVotesMap
     },
-    categories: categories
+    allEvents: allEventsRes.events || [],
+    metrics: allEventsRes.metrics,
+    globalConfig: allEventsRes.globalConfig
   };
 }
 
+/**
+ * GET GALLERY DENGAN SINKRONISASI OTOMATIS GOOGLE DRIVE
+ * 1. Menghapus foto yang filenya sudah dihapus di Google Drive (023, 024)
+ * 2. Mengingest foto yang ada di Google Drive tapi belum tercatat di Sheet (032, 033)
+ */
 function handleGetGallery(eventId, guestId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
   const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
+  const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
 
-  // Ambil info status reveal event
   let isRevealed = true;
   let revealMode = "SEGERA";
-  let likeEnabled = true;
+  let folderId = "";
+  let eventSlug = "";
+  let eventName = "";
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
         revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
         const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
         isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
-        likeEnabled = evRows[i][COL_EVENT.LIKE_ENABLED] !== "FALSE" && evRows[i][COL_EVENT.LIKE_ENABLED] !== "false";
+        folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+        eventSlug = evRows[i][COL_EVENT.SLUG];
+        eventName = evRows[i][COL_EVENT.NAMA];
         break;
       }
     }
   }
 
-  // Jika revealMode adalah SETELAH dan admin belum klik reveal, kunci galeri untuk publik
   if (!isRevealed) {
     return {
       status: "locked",
@@ -469,7 +528,127 @@ function handleGetGallery(eventId, guestId) {
     };
   }
 
-  // Ambil daftar foto
+  // Multi-Folder Discovery: Cari candidate folder acara di Google Drive
+  const candidateFolders = [];
+  if (folderId) {
+    try { candidateFolders.push(DriveApp.getFolderById(folderId)); } catch(e) {}
+  }
+
+  // Periksa subfolder di bawah Master Folder
+  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+  let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+  if (configSheet && configSheet.getLastRow() > 1) {
+    const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+    cRows.forEach(function(cr) {
+      if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
+    });
+  }
+
+  if (masterFolderId) {
+    try {
+      const masterF = DriveApp.getFolderById(masterFolderId);
+      const searchNames = [eventSlug, "SnapEvent_" + eventSlug, eventName, "SnapEvent_" + eventName.replace(/[^a-zA-Z0-9]/g, "_")];
+      searchNames.forEach(function(name) {
+        if (!name) return;
+        const it = masterF.getFoldersByName(name);
+        while (it.hasNext()) {
+          const f = it.next();
+          if (!candidateFolders.some(cf => cf.getId() === f.getId())) {
+            candidateFolders.push(f);
+          }
+        }
+      });
+    } catch (e) {}
+  }
+
+  // 1. Bersihkan foto yang filenya telah dihapus di Drive
+  const rowsToDelete = [];
+  if (fotoSheet && fotoSheet.getLastRow() > 1) {
+    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
+    for (let j = 0; j < fRows.length; j++) {
+      const fr = fRows[j];
+      if (fr[COL_FOTO.ID_EVENT] === eventId) {
+        const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
+        if (fileId && fileId.trim() !== "") {
+          try {
+            const df = DriveApp.getFileById(fileId);
+            if (df.isTrashed()) {
+              rowsToDelete.push(j + 2);
+            }
+          } catch (e) {
+            // File 404 / tidak ditemukan di Drive -> jadwalkan hapus baris
+            rowsToDelete.push(j + 2);
+          }
+        }
+      }
+    }
+
+    // Hapus baris mati dari bawah ke atas agar indeks baris tidak bergeser
+    for (let d = rowsToDelete.length - 1; d >= 0; d--) {
+      try {
+        fotoSheet.deleteRow(rowsToDelete[d]);
+      } catch (err) {}
+    }
+    if (rowsToDelete.length > 0) {
+      SpreadsheetApp.flush();
+    }
+  }
+
+  // 2. Auto-ingest file foto yang ada di Google Drive tapi belum ada di Sheet (misal: 032, 033)
+  if (fotoSheet && candidateFolders.length > 0) {
+    const existingFileIds = new Set();
+    const existingPhotoIds = new Set();
+    if (fotoSheet.getLastRow() > 1) {
+      const curRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 8).getDisplayValues();
+      curRows.forEach(function(r) {
+        if (r[COL_FOTO.ID]) existingPhotoIds.add(r[COL_FOTO.ID]);
+        if (r[COL_FOTO.GDRIVE_FILE_ID]) existingFileIds.add(r[COL_FOTO.GDRIVE_FILE_ID]);
+      });
+    }
+
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+
+    candidateFolders.forEach(function(targetF) {
+      try {
+        const filesIter = targetF.getFiles();
+        while (filesIter.hasNext()) {
+          const file = filesIter.next();
+          if (file.isTrashed()) continue;
+          const fId = file.getId();
+          const fName = file.getName();
+
+          if (!existingFileIds.has(fId) && fName.indexOf("FTO-") === 0) {
+            try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+            const directUrl = "https://lh3.googleusercontent.com/d/" + fId;
+            const parts = fName.split("_");
+            const photoIdCandidate = parts[0] || ("FTO-" + Date.now());
+            const guestCandidate = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
+
+            fotoSheet.appendRow([
+              photoIdCandidate,
+              eventId,
+              "GUEST-CLOUD",
+              guestCandidate,
+              "Momen seru!",
+              "RAW",
+              "POLAROID",
+              fId,
+              directUrl,
+              0,
+              false,
+              nowStr
+            ]);
+            existingFileIds.add(fId);
+            existingPhotoIds.add(photoIdCandidate);
+          }
+        }
+      } catch (err) {}
+    });
+    SpreadsheetApp.flush();
+  }
+
+  // 3. Ambil data foto final yang sudah bersih
   const photos = [];
   if (fotoSheet && fotoSheet.getLastRow() > 1) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
@@ -491,10 +670,9 @@ function handleGetGallery(eventId, guestId) {
     }
   }
 
-  // Balik urutan agar foto terbaru tampil di paling atas
   photos.reverse();
 
-  // Ambil riwayat foto yang sudah divote oleh guest ini
+  // Riwayat vote tamu ini
   const votedPhotoIds = [];
   if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
     const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
@@ -505,69 +683,86 @@ function handleGetGallery(eventId, guestId) {
     });
   }
 
+  // Kategori voting
+  const categories = [];
+  if (katSheet && katSheet.getLastRow() > 1) {
+    const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
+    kRows.forEach(function(kr) {
+      if (kr[COL_KAT.ID_EVENT] === eventId || kr[COL_KAT.ID_EVENT] === eventSlug) {
+        categories.push({
+          idKategori: kr[COL_KAT.ID],
+          namaKategori: kr[COL_KAT.NAMA],
+          deskripsi: kr[COL_KAT.DESKRIPSI],
+          urutan: Number(kr[COL_KAT.URUTAN]) || 1
+        });
+      }
+    });
+  }
+
   return {
     status: "success",
     isRevealed: true,
-    likeEnabled: likeEnabled,
     photos: photos,
-    votedPhotoIds: votedPhotoIds
+    votedPhotoIds: votedPhotoIds,
+    categories: categories
   };
 }
 
 function handleGetSlideshowPhotos(eventId) {
+  const galRes = handleGetGallery(eventId, "");
+  return {
+    status: "success",
+    photos: galRes.photos || [],
+    categories: galRes.categories || []
+  };
+}
+
+function handleGetGuestQuota(eventId, guestId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
 
-  let hashtag = "#SnapEvent";
-  let namaEvent = "Live Event Gallery";
-
+  let maxFoto = 10;
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 5).getDisplayValues();
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 7).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
-        namaEvent = evRows[i][COL_EVENT.NAMA];
-        hashtag = evRows[i][COL_EVENT.HASHTAG];
+        maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
         break;
       }
     }
   }
 
-  const photos = [];
+  let uploaded = 0;
   if (fotoSheet && fotoSheet.getLastRow() > 1) {
-    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
-    for (let j = 0; j < fRows.length; j++) {
-      const fr = fRows[j];
-      if (fr[COL_FOTO.ID_EVENT] === eventId) {
-        photos.push({
-          idFoto: fr[COL_FOTO.ID],
-          guestNama: fr[COL_FOTO.GUEST_NAMA],
-          caption: fr[COL_FOTO.CAPTION],
-          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
-          createdAt: fr[COL_FOTO.CREATED_AT]
-        });
+    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
+    fRows.forEach(function(fr) {
+      if (fr[COL_FOTO.ID_EVENT] === eventId && fr[COL_FOTO.GUEST_ID] === guestId) {
+        uploaded++;
       }
-    }
+    });
   }
-
-  photos.reverse();
 
   return {
     status: "success",
-    namaEvent: namaEvent,
-    hashtag: hashtag,
-    photos: photos
+    maxFoto: maxFoto,
+    uploaded: uploaded,
+    remaining: Math.max(0, maxFoto - uploaded)
   };
 }
 
+function handleCleanDeletedPhotos(eventId) {
+  return handleGetGallery(eventId, "");
+}
+
 // ================================================================================
-// UPLOAD FOTO KE GOOGLE DRIVE & SIMPAN DATABASE
+// UPLOAD FOTO & FRAME KE GOOGLE DRIVE
 // ================================================================================
 
 function handleUploadPhoto(payload) {
   const lock = LockService.getScriptLock();
   try {
-    lock.waitLock(15000); // Kunci agar perhitungan kuota dan ID aman dari tabrakan
+    lock.waitLock(15000);
   } catch (lockErr) {
     return { status: "error", message: "Server sibuk, silakan coba upload lagi." };
   }
@@ -598,6 +793,7 @@ function handleUploadPhoto(payload) {
     let maxFoto = 10;
     let folderId = "";
     let namaEvent = "Event";
+    let slugEvent = "";
 
     if (eventSheet.getLastRow() <= 1) {
       return { status: "error", message: "Belum ada data event yang terdaftar." };
@@ -610,6 +806,7 @@ function handleUploadPhoto(payload) {
         maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
         folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
         namaEvent = evRows[i][COL_EVENT.NAMA];
+        slugEvent = evRows[i][COL_EVENT.SLUG];
         break;
       }
     }
@@ -636,41 +833,30 @@ function handleUploadPhoto(payload) {
       };
     }
 
-    // 3. Simpan File ke Google Drive Target
+    // 3. Simpan File ke Google Drive (Dengan Smart Reuse, Mencegah Folder Kosong Dobel)
+    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    if (configSheet && configSheet.getLastRow() > 1) {
+      const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+      cRows.forEach(function(cr) {
+        if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
+      });
+    }
+
+    let parentFolder = DriveApp.getRootFolder();
+    if (masterFolderId) {
+      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+    }
+
     let targetFolder;
-    try {
-      if (folderId && folderId.trim() !== "") {
-        targetFolder = DriveApp.getFolderById(folderId);
-      } else {
-        // Cek apakah ada master folder di pengaturan global
-        const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-        let masterFolderId = "";
-        if (configSheet && configSheet.getLastRow() > 1) {
-          const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-          cRows.forEach(function(cr) {
-            if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]);
-          });
-        }
-
-        // Fallback permanen ke folder master Drive resmi jika belum terekam di sheet
-        if (!masterFolderId) {
-          masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
-        }
-
-        let parentFolder = DriveApp.getRootFolder();
-        if (masterFolderId) {
-          try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
-        }
-
-        targetFolder = parentFolder.createFolder("SnapEvent_" + namaEvent.replace(/[^a-zA-Z0-9]/g, "_"));
-        targetFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        // Simpan folderId baru ke DataEvent
-        eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
-      }
-    } catch (driveErr) {
-      // Fallback ke Root jika ID folder bermasalah
-      Logger.log("Drive folder error: " + driveErr.message);
-      targetFolder = DriveApp.getRootFolder();
+    if (folderId && folderId.trim() !== "") {
+      try { targetFolder = DriveApp.getFolderById(folderId); } catch(e) {}
+    }
+    if (!targetFolder) {
+      targetFolder = getOrCreateEventSubFolder(parentFolder, eventId, slugEvent, namaEvent);
+      // Simpan folderId baru ke DataEvent agar permintaan berikutnya memakai folder yang sama
+      eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
+      SpreadsheetApp.flush();
     }
 
     // Ekstraksi Base64 Data
@@ -690,30 +876,30 @@ function handleUploadPhoto(payload) {
 
     // Generator ID Foto Incremental
     const newIdFoto = generateIncrementalId(fotoSheet, "FTO-" + dateCompact + "-", COL_FOTO.ID);
-    const fileName = newIdFoto + "_" + guestNama.replace(/[^a-zA-Z0-9]/g, "") + ".jpg";
+    const cleanGuestName = guestNama.replace(/[^a-zA-Z0-9]/g, "") || "Tamu";
+    const fileName = newIdFoto + "_" + cleanGuestName + ".jpg";
 
     const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
     const driveFile = targetFolder.createFile(blob);
     driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     const fileId = driveFile.getId();
-    // Direct link tampilan gambar Google Drive
     const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
 
-    // 4. Catat ke DataFoto
+    // 4. Catat ke DataFoto dengan sanitasi mutlak
     fotoSheet.appendRow([
-      newIdFoto,            // COL[0] ID
-      eventId,              // COL[1] ID_EVENT
-      guestId,              // COL[2] GUEST_ID
-      guestNama,            // COL[3] GUEST_NAMA
-      caption,              // COL[4] CAPTION
-      cameraStyle,          // COL[5] CAMERA_STYLE
-      frameStyle,           // COL[6] FRAME_STYLE
-      fileId,               // COL[7] GDRIVE_FILE_ID
-      directViewUrl,        // COL[8] GDRIVE_VIEW_URL
-      0,                    // COL[9] TOTAL_LIKES
-      false,                // COL[10] IS_FEATURED
-      nowStr                // COL[11] CREATED_AT
+      sanitizeCellValue(newIdFoto),
+      sanitizeCellValue(eventId),
+      sanitizeCellValue(guestId),
+      sanitizeCellValue(guestNama),
+      sanitizeCellValue(caption),
+      sanitizeCellValue(cameraStyle),
+      sanitizeCellValue(frameStyle),
+      sanitizeCellValue(fileId),
+      sanitizeCellValue(directViewUrl),
+      0,
+      false,
+      nowStr
     ]);
 
     SpreadsheetApp.flush();
@@ -730,8 +916,84 @@ function handleUploadPhoto(payload) {
   }
 }
 
+/**
+ * UPLOAD CUSTOM FRAME PNG LANGSUNG KE GOOGLE DRIVE DENGAN SINGLE-FILE RETENTION
+ */
+function handleUploadCustomFrame(payload) {
+  try {
+    const eventId = String(payload.eventId || "").trim();
+    const imageBase64 = payload.imageBase64 || "";
+
+    if (!eventId || !imageBase64) {
+      return { status: "error", message: "Parameter eventId dan gambar bingkai wajib diisi." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+
+    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    if (configSheet && configSheet.getLastRow() > 1) {
+      const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+      cRows.forEach(function(cr) {
+        if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
+      });
+    }
+
+    let parentFolder = DriveApp.getRootFolder();
+    if (masterFolderId) {
+      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+    }
+
+    // Subfolder khusus frame
+    const frameSubIter = parentFolder.getFoldersByName("SnapEvent_Custom_Frames");
+    const targetFolder = frameSubIter.hasNext() ? frameSubIter.next() : parentFolder.createFolder("SnapEvent_Custom_Frames");
+    try { targetFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(e) {}
+
+    // Hapus file frame lama untuk event ini agar tidak ada penumpukan
+    const oldFiles = targetFolder.getFilesByName("FRAME_" + eventId + ".png");
+    while (oldFiles.hasNext()) {
+      try { oldFiles.next().setTrashed(true); } catch(e) {}
+    }
+
+    let pureBase64 = imageBase64;
+    let mimeType = "image/png";
+    if (pureBase64.indexOf("data:") === 0) {
+      const parts = pureBase64.split(",");
+      pureBase64 = parts[1];
+    }
+
+    const decodedBytes = Utilities.base64Decode(pureBase64);
+    const blob = Utilities.newBlob(decodedBytes, mimeType, "FRAME_" + eventId + ".png");
+    const newFile = targetFolder.createFile(blob);
+    newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    const directUrl = "https://lh3.googleusercontent.com/d/" + newFile.getId();
+
+    // Simpan direct URL ke DataEvent kolom CUSTOM_FRAME_URL
+    if (eventSheet && eventSheet.getLastRow() > 1) {
+      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 2).getDisplayValues();
+      for (let r = 0; r < evRows.length; r++) {
+        if (evRows[r][COL_EVENT.ID] === eventId) {
+          eventSheet.getRange(r + 2, COL_EVENT.CUSTOM_FRAME_URL + 1).setValue(directUrl);
+          break;
+        }
+      }
+      SpreadsheetApp.flush();
+    }
+
+    return {
+      status: "success",
+      fileId: newFile.getId(),
+      customFrameUrl: directUrl
+    };
+  } catch (err) {
+    return { status: "error", message: "Gagal upload frame: " + err.message };
+  }
+}
+
 // ================================================================================
-// VOTING & POLLING HANDLER
+// VOTING DENGAN DUKUNGAN KATEGORI & 1 SUARA PER KATEGORI
 // ================================================================================
 
 function handleSubmitVote(payload) {
@@ -754,42 +1016,27 @@ function handleSubmitVote(payload) {
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-    const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
     const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
+    const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
 
-    // Cek batas vote event
-    let maxVote = 3;
-    if (eventSheet && eventSheet.getLastRow() > 1) {
-      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 7).getDisplayValues();
-      for (let i = 0; i < evRows.length; i++) {
-        if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
-          maxVote = Number(evRows[i][COL_EVENT.MAX_VOTE]) || 3;
-          break;
-        }
-      }
-    }
-
-    // Cek apakah tamu sudah memilih foto ini sebelumnya
-    let userVotesInCat = 0;
-    if (voteSheet.getLastRow() > 1) {
+    // Cek apakah tamu sudah memilih kategori ini sebelumnya (1x per kategori)
+    let alreadyVotedCat = false;
+    if (voteSheet && voteSheet.getLastRow() > 1) {
       const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
       for (let j = 0; j < vRows.length; j++) {
         const vr = vRows[j];
         if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
-          if (vr[COL_VOTE.ID_FOTO] === idFoto) {
-            return { status: "already_voted", message: "Anda sudah menyukai foto ini!" };
-          }
           if (idKategori && vr[COL_VOTE.ID_KAT] === idKategori) {
-            userVotesInCat++;
+            alreadyVotedCat = true;
+            break;
           }
         }
       }
     }
 
-    if (userVotesInCat >= 1) {
+    if (alreadyVotedCat) {
       return {
-        status: "limit_reached",
+        status: "already_voted",
         message: "Anda sudah memberikan voting pada kategori ini (Maksimal 1 suara per kategori)."
       };
     }
@@ -797,7 +1044,7 @@ function handleSubmitVote(payload) {
     // Tambah counter like di DataFoto
     let updatedLikes = 1;
     let targetFotoRow = -1;
-    if (fotoSheet.getLastRow() > 1) {
+    if (fotoSheet && fotoSheet.getLastRow() > 1) {
       const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 10).getDisplayValues();
       for (let k = 0; k < fRows.length; k++) {
         if (fRows[k][COL_FOTO.ID] === idFoto) {
@@ -818,12 +1065,12 @@ function handleSubmitVote(payload) {
     const newIdVote = generateIncrementalId(voteSheet, "VOT-", COL_VOTE.ID);
 
     voteSheet.appendRow([
-      newIdVote,
-      eventId,
-      idFoto,
-      idKategori,
-      guestId,
-      guestNama,
+      sanitizeCellValue(newIdVote),
+      sanitizeCellValue(eventId),
+      sanitizeCellValue(idFoto),
+      sanitizeCellValue(idKategori),
+      sanitizeCellValue(guestId),
+      sanitizeCellValue(guestNama),
       nowStr
     ]);
 
@@ -832,7 +1079,9 @@ function handleSubmitVote(payload) {
     return {
       status: "success",
       message: "Suara Anda berhasil dicatat!",
-      updatedLikes: updatedLikes
+      updatedLikes: updatedLikes,
+      idKategori: idKategori,
+      idFoto: idFoto
     };
   } finally {
     lock.releaseLock();
@@ -840,7 +1089,7 @@ function handleSubmitVote(payload) {
 }
 
 // ================================================================================
-// ADMIN OPERASIONAL & KONTROL
+// ADMIN OPERASIONAL & PENGATURAN GLOBAL
 // ================================================================================
 
 function handleAdminLogin(payload) {
@@ -868,12 +1117,10 @@ function handleAdminLogin(payload) {
     });
   }
 
-  // 1. Cek Akun Administrator Utama atau Master PIN
   if ((username && password && username === expectedUser && password === expectedPass) || (pin && pin === expectedPin)) {
     return { status: "success", message: "Autentikasi Administrator Berhasil.", user: username || expectedUser, role: "admin" };
   }
 
-  // 2. Cek Akun Operator / Kru Tambahan
   if (username && password && Array.isArray(userAccounts)) {
     for (let u = 0; u < userAccounts.length; u++) {
       const acc = userAccounts[u];
@@ -893,64 +1140,8 @@ function handleAdminLogin(payload) {
 
 function handleAdminGetSummary(pin) {
   const loginCheck = handleAdminLogin({ pin: pin });
-  if (loginCheck.status !== "success") {
-    return loginCheck;
-  }
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-  const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
-  const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
-  const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
-  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-
-  const totalEvents = eventSheet ? Math.max(0, eventSheet.getLastRow() - 1) : 0;
-  const totalPhotos = fotoSheet ? Math.max(0, fotoSheet.getLastRow() - 1) : 0;
-  const totalVotes = voteSheet ? Math.max(0, voteSheet.getLastRow() - 1) : 0;
-
-  // Daftar Semua Event
-  const events = [];
-  if (eventSheet && totalEvents > 0) {
-    const rows = eventSheet.getRange(2, 1, totalEvents, 17).getDisplayValues();
-    rows.forEach(function(r) {
-      events.push({
-        idEvent: r[COL_EVENT.ID],
-        namaEvent: r[COL_EVENT.NAMA],
-        slugEvent: r[COL_EVENT.SLUG],
-        tanggalEvent: r[COL_EVENT.TANGGAL],
-        hashtagEvent: r[COL_EVENT.HASHTAG],
-        maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-        maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
-        revealMode: r[COL_EVENT.REVEAL_MODE],
-        isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
-        likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
-        publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-        gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID],
-        statusEvent: r[COL_EVENT.STATUS],
-        createdAt: r[COL_EVENT.CREATED_AT]
-      });
-    });
-  }
-
-  // Pengaturan Global
-  const globalConfig = {};
-  if (configSheet && configSheet.getLastRow() > 1) {
-    const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-    cRows.forEach(function(r) {
-      globalConfig[r[COL_CONFIG.KEY]] = r[COL_CONFIG.VAL];
-    });
-  }
-
-  return {
-    status: "success",
-    metrics: {
-      totalEvents: totalEvents,
-      totalPhotos: totalPhotos,
-      totalVotes: totalVotes
-    },
-    events: events,
-    globalConfig: globalConfig
-  };
+  if (loginCheck.status !== "success") return loginCheck;
+  return handleGetAllEvents();
 }
 
 function handleAdminSaveEvent(payload) {
@@ -975,76 +1166,81 @@ function handleAdminSaveEvent(payload) {
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
     const frames = JSON.stringify(payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+    let folderId = payload.gdriveFolderId ? extractDriveFolderId(payload.gdriveFolderId) : "";
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
-    if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
-      try {
-        let frameBase64 = customFrameUrl.split(",")[1];
-        let frameMime = "image/png";
-        if (customFrameUrl.indexOf("image/jpeg") !== -1) frameMime = "image/jpeg";
-        const frameBytes = Utilities.base64Decode(frameBase64);
-        const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + slugEvent + "_" + Date.now() + ".png");
-        let fFolder = DriveApp.getRootFolder();
-        if (folderId) {
-          try { fFolder = DriveApp.getFolderById(folderId); } catch(fe) {}
-        }
-        const fFile = fFolder.createFile(frameBlob);
-        fFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        customFrameUrl = "https://lh3.googleusercontent.com/d/" + fFile.getId();
-      } catch (fErr) {
-        Logger.log("Custom frame upload error: " + fErr.message);
-      }
-    }
-    const categories = payload.categories || [];
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
     const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+
+    // Pastikan folder acara ada di Drive
+    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    if (configSheet && configSheet.getLastRow() > 1) {
+      const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+      cRows.forEach(function(cr) {
+        if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
+      });
+    }
+
+    let parentFolder = DriveApp.getRootFolder();
+    if (masterFolderId) {
+      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+    }
+
+    if (!folderId) {
+      try {
+        const eventFolder = getOrCreateEventSubFolder(parentFolder, idEvent, slugEvent, namaEvent);
+        folderId = eventFolder.getId();
+      } catch (dErr) {
+        Logger.log("Drive folder warn: " + dErr.message);
+      }
+    }
+
+    // Sanitasi customFrameUrl: jika base64, simpan sebagai file PNG ke Drive
+    if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
+      try {
+        const frameRes = handleUploadCustomFrame({ eventId: idEvent || slugEvent, imageBase64: customFrameUrl });
+        if (frameRes && frameRes.customFrameUrl) {
+          customFrameUrl = frameRes.customFrameUrl;
+        } else {
+          customFrameUrl = "";
+        }
+      } catch (fErr) {
+        customFrameUrl = "";
+      }
+    }
 
     const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
     const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
     const ymStr = Utilities.formatDate(new Date(), timeZone, "yyyyMM");
 
     let savedIdEvent = idEvent;
-    let folderId = payload.gdriveFolderId || "";
-
-    // Buat Subfolder Google Drive jika belum ada
-    if (!folderId) {
-      try {
-        const root = DriveApp.getRootFolder();
-        const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
-        const master = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
-        const newFolder = master.createFolder(slugEvent.replace(/[^a-zA-Z0-9_-]/g, ""));
-        newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        folderId = newFolder.getId();
-      } catch (dErr) {
-        Logger.log("Drive folder warn: " + dErr.message);
-      }
-    }
 
     if (!idEvent) {
       // INSERT EVENT BARU (17 Kolom)
       savedIdEvent = generateIncrementalId(eventSheet, "EVT-" + ymStr + "-", COL_EVENT.ID);
       eventSheet.appendRow([
-        savedIdEvent,
-        namaEvent,
-        slugEvent,
-        tanggalEvent,
-        hashtagEvent,
+        sanitizeCellValue(savedIdEvent),
+        sanitizeCellValue(namaEvent),
+        sanitizeCellValue(slugEvent),
+        sanitizeCellValue(tanggalEvent),
+        sanitizeCellValue(hashtagEvent),
         maxFoto,
         maxVote,
         revealMode,
         isRevealed,
         likeEnabled,
         publicVisible,
-        cameraStyles,
-        frames,
-        folderId,
+        sanitizeCellValue(cameraStyles),
+        sanitizeCellValue(frames),
+        sanitizeCellValue(folderId),
         "AKTIF",
         nowStr,
-        customFrameUrl
+        sanitizeCellValue(customFrameUrl, 500)
       ]);
     } else {
-      // UPDATE EVENT EKSISTING (17 Kolom Resmi)
+      // UPDATE EVENT EKSISTING (17 Kolom)
       let targetRow = -1;
       const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 1).getDisplayValues();
       for (let i = 0; i < rows.length; i++) {
@@ -1055,54 +1251,53 @@ function handleAdminSaveEvent(payload) {
       }
 
       if (targetRow !== -1) {
-        const oldRow = eventSheet.getRange(targetRow, 1, 1, 17).getDisplayValues()[0];
-        const curStatus = oldRow[COL_EVENT.STATUS] || "INAKTIF";
-        const curCreatedAt = oldRow[COL_EVENT.CREATED_AT] || nowStr;
-
-        eventSheet.getRange(targetRow, 1, 1, 17).setValues([[
-          idEvent,
-          namaEvent,
-          slugEvent,
-          tanggalEvent,
-          hashtagEvent,
+        const updateRange = eventSheet.getRange(targetRow, 1, 1, 17);
+        const curVals = updateRange.getValues()[0];
+        updateRange.setValues([[
+          sanitizeCellValue(idEvent),
+          sanitizeCellValue(namaEvent),
+          sanitizeCellValue(slugEvent),
+          sanitizeCellValue(tanggalEvent),
+          sanitizeCellValue(hashtagEvent),
           maxFoto,
           maxVote,
           revealMode,
           isRevealed,
           likeEnabled,
           publicVisible,
-          cameraStyles,
-          frames,
-          folderId,
-          curStatus,
-          curCreatedAt,
-          customFrameUrl
+          sanitizeCellValue(cameraStyles),
+          sanitizeCellValue(frames),
+          sanitizeCellValue(folderId || curVals[COL_EVENT.GDRIVE_FOLDER_ID]),
+          curVals[COL_EVENT.STATUS] || "AKTIF",
+          curVals[COL_EVENT.CREATED_AT] || nowStr,
+          sanitizeCellValue(customFrameUrl || curVals[COL_EVENT.CUSTOM_FRAME_URL], 500)
         ]]);
       }
     }
 
-    // SIMPAN / PERBARUI KATEGORI VOTING
-    if (categories && categories.length > 0 && katSheet) {
-      // Hapus kategori lama event ini jika ada
-      if (katSheet.getLastRow() > 1) {
+    // Simpan Kategori Acara
+    const categories = payload.categories || [];
+    if (katSheet && Array.isArray(categories)) {
+      if (idEvent && katSheet.getLastRow() > 1) {
         const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 2).getDisplayValues();
-        for (let k = kRows.length - 1; k >= 0; k--) {
-          if (kRows[k][COL_KAT.ID_EVENT] === savedIdEvent) {
-            katSheet.deleteRow(k + 2);
+        for (let kr = kRows.length - 1; kr >= 0; kr--) {
+          if (kRows[kr][COL_KAT.ID_EVENT] === savedIdEvent || kRows[kr][COL_KAT.ID_EVENT] === slugEvent) {
+            katSheet.deleteRow(kr + 2);
           }
         }
       }
-
-      // Masukkan kategori baru
       categories.forEach(function(cat, idx) {
-        const catId = "KAT-" + (idx + 1);
-        katSheet.appendRow([
-          catId,
-          savedIdEvent,
-          cat.namaKategori || "Kategori " + (idx + 1),
-          cat.deskripsi || "",
-          idx + 1
-        ]);
+        const catName = typeof cat === "string" ? cat : (cat.namaKategori || cat.name);
+        if (catName && catName.trim() !== "") {
+          const newIdKat = generateIncrementalId(katSheet, "KAT-", COL_KAT.ID);
+          katSheet.appendRow([
+            sanitizeCellValue(newIdKat),
+            sanitizeCellValue(savedIdEvent),
+            sanitizeCellValue(catName.trim()),
+            sanitizeCellValue(cat.deskripsi || "Kategori Pilihan Tamu"),
+            idx + 1
+          ]);
+        }
       });
     }
 
@@ -1112,7 +1307,7 @@ function handleAdminSaveEvent(payload) {
       status: "success",
       message: "Event '" + namaEvent + "' berhasil disimpan!",
       idEvent: savedIdEvent,
-      folderId: folderId,
+      gdriveFolderId: folderId,
       customFrameUrl: customFrameUrl
     };
   } finally {
@@ -1122,166 +1317,83 @@ function handleAdminSaveEvent(payload) {
 
 function handleAdminToggleReveal(payload) {
   const eventId = String(payload.eventId || "").trim();
-  const isRevealed = payload.isRevealed === true || payload.isRevealed === "true";
-
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
 
   if (!eventSheet || eventSheet.getLastRow() <= 1) {
-    return { status: "error", message: "Event tidak ditemukan." };
+    return { status: "error", message: "Sheet DataEvent kosong." };
   }
 
-  const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 1).getDisplayValues();
+  const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
   for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === eventId) {
-      const targetRow = i + 2;
-      eventSheet.getRange(targetRow, COL_EVENT.IS_REVEALED + 1).setValue(isRevealed);
+    if (rows[i][COL_EVENT.ID] === eventId || rows[i][COL_EVENT.SLUG] === eventId) {
+      const cur = rows[i][COL_EVENT.IS_REVEALED];
+      const newVal = (cur === "TRUE" || cur === "true") ? false : true;
+      eventSheet.getRange(i + 2, COL_EVENT.IS_REVEALED + 1).setValue(newVal);
       SpreadsheetApp.flush();
       return {
         status: "success",
-        message: isRevealed ? "Galeri foto resmi DIBUKA untuk tamu!" : "Galeri foto DITUTUP sementara.",
-        isRevealed: isRevealed
+        isRevealed: newVal,
+        message: newVal ? "Galeri resmi dibuka untuk tamu!" : "Galeri dikunci."
       };
     }
   }
 
-  return { status: "error", message: "Event ID tidak ditemukan." };
+  return { status: "error", message: "Event tidak ditemukan." };
 }
 
 function handleAdminSetActiveEvent(payload) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(15000);
-  } catch (e) {
-    return { status: "error", message: "Server sibuk saat mengaktifkan event." };
+  const idEvent = String(payload.idEvent || "").trim();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+
+  if (!eventSheet || eventSheet.getLastRow() <= 1) {
+    return { status: "error", message: "Sheet DataEvent kosong." };
   }
 
-  try {
-    const idEvent = String(payload.idEvent || "").trim();
-    if (!idEvent) {
-      return { status: "error", message: "ID Event diperlukan." };
-    }
+  const totalRows = eventSheet.getLastRow() - 1;
+  const rows = eventSheet.getRange(2, 1, totalRows, 15).getDisplayValues();
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-    if (!eventSheet || eventSheet.getLastRow() <= 1) {
-      return { status: "error", message: "Sheet Event kosong." };
-    }
-
-    const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-    let found = false;
-    for (let i = 0; i < rows.length; i++) {
-      const rowIndex = i + 2;
-      const curId = rows[i][COL_EVENT.ID];
-      if (curId === idEvent) {
-        eventSheet.getRange(rowIndex, COL_EVENT.STATUS + 1).setValue("AKTIF");
-        found = true;
-      } else {
-        eventSheet.getRange(rowIndex, COL_EVENT.STATUS + 1).setValue("INAKTIF");
-      }
-    }
-    SpreadsheetApp.flush();
-
-    if (!found) {
-      return { status: "error", message: "Event ID '" + idEvent + "' tidak ditemukan dalam database." };
-    }
-
-    return {
-      status: "success",
-      activeEventId: idEvent,
-      message: "Event " + idEvent + " berhasil diaktifkan sebagai acara utama!"
-    };
-  } catch (err) {
-    return { status: "error", message: "Error activating event: " + err.message };
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
+  for (let i = 0; i < rows.length; i++) {
+    const isTarget = (rows[i][COL_EVENT.ID] === idEvent || rows[i][COL_EVENT.SLUG] === idEvent);
+    eventSheet.getRange(i + 2, COL_EVENT.STATUS + 1).setValue(isTarget ? "AKTIF" : "INAKTIF");
   }
+
+  SpreadsheetApp.flush();
+  return { status: "success", message: "Event '" + idEvent + "' sekarang aktif!" };
 }
 
 function handleAdminUpdateGlobalConfig(payload) {
+  const updates = payload.updates || {};
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
 
   if (!configSheet) {
-    return { status: "error", message: "Tabel pengaturan tidak ditemukan." };
+    return { status: "error", message: "Sheet Config tidak ditemukan." };
   }
 
-  const updates = payload.updates || {};
-  let rows = [];
+  const keys = Object.keys(updates);
+  if (keys.length === 0) {
+    return { status: "error", message: "Tidak ada data konfigurasi yang diupdate." };
+  }
+
+  const existingMap = {};
   if (configSheet.getLastRow() > 1) {
-    rows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+    const rows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+    rows.forEach(function(r, idx) {
+      existingMap[r[COL_CONFIG.KEY]] = idx + 2;
+    });
   }
 
-  Object.keys(updates).forEach(function(key) {
-    let found = false;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][COL_CONFIG.KEY] === key) {
-        configSheet.getRange(i + 2, COL_CONFIG.VAL + 1).setValue(updates[key]);
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      configSheet.appendRow([key, updates[key], "Kustom Config"]);
+  keys.forEach(function(k) {
+    const val = sanitizeCellValue(updates[k], 45000);
+    if (existingMap[k]) {
+      configSheet.getRange(existingMap[k], COL_CONFIG.VAL + 1).setValue(val);
+    } else {
+      configSheet.appendRow([k, val, "Updated via Web Admin"]);
     }
   });
 
   SpreadsheetApp.flush();
-  return { status: "success", message: "Pengaturan global berhasil diperbarui." };
+  return { status: "success", message: "Konfigurasi global berhasil disimpan ke Google Sheets." };
 }
-
-// ================================================================================
-// HELPER UTILITIES: INCREMENTAL ID & PARSER
-// ================================================================================
-
-function generateIncrementalId(sheet, prefix, colIndex) {
-  if (sheet.getLastRow() <= 1) {
-    return prefix + "001";
-  }
-
-  const values = sheet.getRange(2, colIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues();
-  let maxNum = 0;
-
-  values.forEach(function(r) {
-    const idStr = String(r[0] || "");
-    if (idStr.indexOf(prefix) === 0) {
-      const numPart = parseInt(idStr.substring(prefix.length), 10);
-      if (!isNaN(numPart) && numPart > maxNum) {
-        maxNum = numPart;
-      }
-    }
-  });
-
-  const nextNum = maxNum + 1;
-  const padded = ("000" + nextNum).slice(-3);
-  return prefix + padded;
-}
-
-function parseJsonSafe(jsonStr, fallback) {
-  if (!jsonStr) return fallback;
-  try {
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    return fallback;
-  }
-}
-
-function createSlug(text) {
-  return text.toString().toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^\w\-]+/g, "")
-    .replace(/\-\-+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "");
-}
-
-function extractDriveFolderId(input) {
-  if (!input) return "";
-  const str = String(input).trim();
-  const folderMatch = str.match(/folders\/([a-zA-Z0-9_-]+)/);
-  if (folderMatch && folderMatch[1]) return folderMatch[1];
-  const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (idMatch && idMatch[1]) return idMatch[1];
-  return str;
-}
-
