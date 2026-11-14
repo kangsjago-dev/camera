@@ -609,9 +609,6 @@ function handleUploadPhoto(payload) {
         targetEventRow = i + 2;
         maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
         folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
-        if (!folderId && payload.folderId) {
-          folderId = extractDriveFolderId(payload.folderId);
-        }
         namaEvent = evRows[i][COL_EVENT.NAMA];
         break;
       }
@@ -639,60 +636,41 @@ function handleUploadPhoto(payload) {
       };
     }
 
-    // 3. Simpan File ke Google Drive Target Resmi (Folder yang Telah Ditentukan)
-    let targetFolder = null;
-
-    // A. Prioritas 1: Gunakan folderId spesifik event jika ada
-    if (folderId && folderId.trim() !== "") {
-      try {
+    // 3. Simpan File ke Google Drive Target
+    let targetFolder;
+    try {
+      if (folderId && folderId.trim() !== "") {
         targetFolder = DriveApp.getFolderById(folderId);
-      } catch (eFolder) {
-        Logger.log("getFolderById gagal pada folderId '" + folderId + "': " + eFolder.message);
-      }
-    }
-
-    // B. Prioritas 2: Gunakan master folder dari pengaturan global jika folderId event kosong
-    let masterFolderId = "";
-    if (!targetFolder) {
-      const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-      if (configSheet && configSheet.getLastRow() > 1) {
-        const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-        cRows.forEach(function(cr) {
-          if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]);
-        });
-      }
-      if (!masterFolderId) {
-        masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
-      }
-
-      if (masterFolderId) {
-        try {
-          targetFolder = DriveApp.getFolderById(masterFolderId);
-        } catch (eMaster) {
-          Logger.log("getFolderById gagal pada masterFolderId: " + eMaster.message);
+      } else {
+        // Cek apakah ada master folder di pengaturan global
+        const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+        let masterFolderId = "";
+        if (configSheet && configSheet.getLastRow() > 1) {
+          const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+          cRows.forEach(function(cr) {
+            if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]);
+          });
         }
-      }
-    }
 
-    // C. Prioritas 3: Fallback buat subfolder terorganisir di Drive
-    if (!targetFolder) {
-      try {
-        const root = DriveApp.getRootFolder();
-        targetFolder = root.createFolder("SnapEvent_" + namaEvent.replace(/[^a-zA-Z0-9]/g, "_"));
+        // Fallback permanen ke folder master Drive resmi jika belum terekam di sheet
+        if (!masterFolderId) {
+          masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+        }
+
+        let parentFolder = DriveApp.getRootFolder();
+        if (masterFolderId) {
+          try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+        }
+
+        targetFolder = parentFolder.createFolder("SnapEvent_" + namaEvent.replace(/[^a-zA-Z0-9]/g, "_"));
         targetFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (eRoot) {
-        targetFolder = DriveApp.getRootFolder();
+        // Simpan folderId baru ke DataEvent
+        eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
       }
-    }
-
-    // Rekam target folder ID ke DataEvent agar upload berikutnya konsisten di folder yang sama
-    if (targetFolder && targetEventRow !== -1) {
-      try {
-        const existingColVal = evRows[targetEventRow - 2][COL_EVENT.GDRIVE_FOLDER_ID];
-        if (!existingColVal || existingColVal.trim() === "") {
-          eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
-        }
-      } catch (eSync) {}
+    } catch (driveErr) {
+      // Fallback ke Root jika ID folder bermasalah
+      Logger.log("Drive folder error: " + driveErr.message);
+      targetFolder = DriveApp.getRootFolder();
     }
 
     // Ekstraksi Base64 Data
@@ -745,8 +723,6 @@ function handleUploadPhoto(payload) {
       message: "Foto berhasil disimpan ke rol acara!",
       idFoto: newIdFoto,
       viewUrl: directViewUrl,
-      fileId: fileId,
-      folderId: targetFolder ? targetFolder.getId() : "",
       remainingPhotos: Math.max(0, maxFoto - (currentGuestUploads + 1))
     };
   } finally {
