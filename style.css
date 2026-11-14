@@ -22,6 +22,17 @@
   background: #D4AF37;
 }
 
+/* Hide scrollbar utility for pills and frame selector */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
 /* Luxury Gold Gradients & Accents */
 .gold-gradient-text {
   background: linear-gradient(135deg, #FFF1B0 0%, #D4AF37 50%, #AA8721 100%);

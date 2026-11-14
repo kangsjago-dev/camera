@@ -70,7 +70,8 @@ const STATE = {
   activeFilter: '800T',
   activeFrame: 'GOLD_DECO',
   mediaStream: null,
-  facingMode: 'environment', // 'environment' (back) or 'user' (front)
+  facingMode: localStorage.getItem('snapevent_camera_facing') || 'environment', // 'environment' (back) or 'user' (front)
+  cameraZoom: 1.0, // Live camera zoom level (1.0x to 3.0x)
   rawCapturedImageObj: null, // Clean captured snapshot without frame for dynamic frame switching
   currentCapturedDataUrl: null,
 
@@ -676,7 +677,7 @@ const MOCK_DATA = {
       tanggalEvent: "2026-11-13",
       hashtagEvent: "#ilhamsherwin",
       maxFotoPerGuest: 10,
-      maxVotePerGuest: 2,
+      maxVotePerGuest: 1,
       revealMode: "SEGERA",
       isRevealed: true,
       likeEnabled: true,
@@ -698,7 +699,7 @@ const MOCK_DATA = {
     tanggalEvent: "2026-11-20",
     hashtagEvent: "#SarahKevinEverAfter",
     maxFotoPerGuest: 10,
-    maxVotePerGuest: 2,
+    maxVotePerGuest: 1,
     revealMode: "SEGERA",
     isRevealed: true,
     likeEnabled: true,
@@ -1490,8 +1491,26 @@ async function loadGallery() {
         finalPhotos = MOCK_DATA.samplePhotos.filter(p => p && !deletedSet.has(String(p.idFoto)));
       }
 
+      // Pertahankan like, kategori penghargaan, dan riwayat vote lokal secara pintar
+      const existingPhotoMap = new Map();
+      (STATE.photos || []).forEach(p => { if (p && p.idFoto) existingPhotoMap.set(p.idFoto, p); });
+      finalPhotos.forEach(p => {
+        const oldP = existingPhotoMap.get(p.idFoto);
+        if (oldP) {
+          p.categoryLikes = { ...(oldP.categoryLikes || {}), ...(p.categoryLikes || {}) };
+          p.totalLikes = Math.max(oldP.totalLikes || 0, p.totalLikes || 0);
+          if (oldP.idKategori && !p.idKategori) p.idKategori = oldP.idKategori;
+          if (oldP.namaKategori && !p.namaKategori) p.namaKategori = oldP.namaKategori;
+        }
+      });
+
+      // Pertahankan riwayat votedPhotoIds lokal yang belum tersinkron
+      const serverVoted = res.votedPhotoIds || [];
+      serverVoted.forEach(vid => {
+        if (!STATE.votedPhotoIds.includes(vid)) STATE.votedPhotoIds.push(vid);
+      });
+
       STATE.photos = finalPhotos;
-      STATE.votedPhotoIds = res.votedPhotoIds || [];
       saveEventPhotos(targetId);
       renderGallery();
       if (!document.getElementById('adminTabGallery')?.classList.contains('hidden')) {
@@ -1976,6 +1995,49 @@ function updateLiveCameraFilter() {
   video.classList.add(`filter-live-${filterKey}`);
 }
 
+/**
+ * PENGATURAN ZOOM KAMERA (LIVE VIEWFINDER & CAPTURE DIGITAL ZOOM)
+ * Mendukung pembesaran 1.0x hingga 3.0x dengan cropping matematis presisi saat capture
+ */
+function setCameraZoom(zoomLevel) {
+  const z = Math.max(1.0, Math.min(3.0, Math.round(zoomLevel * 10) / 10));
+  STATE.cameraZoom = z;
+
+  // 1. Update UI tombol zoom
+  document.querySelectorAll('.btn-cam-zoom').forEach(btn => {
+    const bz = parseFloat(btn.getAttribute('data-zoom')) || 1.0;
+    if (Math.abs(bz - z) < 0.2) {
+      btn.classList.add('bg-brand-gold', 'text-black', 'shadow-sm');
+      btn.classList.remove('text-white/70');
+    } else {
+      btn.classList.remove('bg-brand-gold', 'text-black', 'shadow-sm');
+      btn.classList.add('text-white/70');
+    }
+  });
+
+  // 2. Hardware zoom via MediaStreamTrack (jika didukung perangkat kamera ponsel)
+  const track = STATE.mediaStream?.getVideoTracks()[0];
+  if (track && track.getCapabilities) {
+    try {
+      const caps = track.getCapabilities();
+      if (caps && caps.zoom) {
+        const minZ = caps.zoom.min || 1.0;
+        const maxZ = caps.zoom.max || 3.0;
+        const hwZ = Math.max(minZ, Math.min(maxZ, z));
+        track.applyConstraints({ advanced: [{ zoom: hwZ }] }).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  // 3. Transform CSS halus pada video viewfinder langsung
+  const video = document.getElementById('cameraVideo');
+  if (video) {
+    video.style.transform = `scale(${z})`;
+    video.style.transformOrigin = 'center center';
+    video.style.transition = 'transform 0.15s ease-out';
+  }
+}
+
 async function startCameraStream() {
   const video = document.getElementById('cameraVideo');
   const standby = document.getElementById('cameraStandbyNotice');
@@ -2019,6 +2081,7 @@ async function startCameraStream() {
     }
     standby.classList.add('hidden');
     updateLiveCameraFilter();
+    setCameraZoom(STATE.cameraZoom || 1.0);
   } catch (err) {
     console.warn("Live camera stream error (fallback to native file capture):", err.message);
     standby.classList.remove('hidden');
@@ -2135,10 +2198,19 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // Ekstraksi dimensi riil (Krusial: HTMLVideoElement, ImageBitmap, HTMLImageElement)
-  const srcWidth = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
-  const srcHeight = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
-  const imgRatio = srcWidth / srcHeight;
+  // Ekstraksi dimensi riil & penerapan zoom crop kamera langsung (HTMLVideoElement)
+  const isLiveVideo = (imgSource && imgSource.tagName === 'VIDEO') || (imgSource === document.getElementById('cameraVideo'));
+  const zoomFactor = (isLiveVideo && (STATE.cameraZoom || 1.0) > 1.0) ? STATE.cameraZoom : 1.0;
+
+  const rawW = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
+  const rawH = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
+
+  const cropW = rawW / zoomFactor;
+  const cropH = rawH / zoomFactor;
+  const cropX = (rawW - cropW) / 2;
+  const cropY = (rawH - cropH) / 2;
+
+  const imgRatio = cropW / cropH;
   const targetRatio = canvas.width / canvas.height;
   let renderW, renderH, offsetX, offsetY;
 
@@ -2154,7 +2226,7 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
     offsetY = (canvas.height - renderH) / 2;
   }
 
-  ctx.drawImage(imgSource, offsetX, offsetY, renderW, renderH);
+  ctx.drawImage(imgSource, cropX, cropY, cropW, cropH, offsetX, offsetY, renderW, renderH);
 
   // Black frame detection check (Mencegah frame hitam tertangkap pada browser Android/Samsung)
   if (isCanvasPureBlack(ctx, canvas.width, canvas.height)) {
@@ -2163,7 +2235,7 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
     if (liveVideo && liveVideo.readyState >= 2 && liveVideo.videoWidth > 0) {
       try { await liveVideo.play(); } catch(e){}
       await new Promise(r => setTimeout(r, 120));
-      ctx.drawImage(liveVideo, offsetX, offsetY, renderW, renderH);
+      ctx.drawImage(liveVideo, cropX, cropY, cropW, cropH, offsetX, offsetY, renderW, renderH);
     }
     if (isCanvasPureBlack(ctx, canvas.width, canvas.height)) {
       console.warn("Frame is still pure black after retry!");
@@ -2656,12 +2728,19 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
   }
 }
 
-// --- 7. VOTING / LIKE SYSTEM (PILIHAN KATEGORI & 1X VOTE PER KATEGORI) ---
+// --- 7. VOTING / LIKE SYSTEM (PILIHAN KATEGORI & 1X VOTE PER KATEGORI & TIDAK BISA DOUBLE VOTE FOTO SAMA) ---
 let CURRENT_VOTE_TARGET_PHOTO_ID = null;
 
 function openVoteCategoryModal(idFoto) {
-  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 2;
-  const currentVotesCount = Array.isArray(STATE.votedCategoryIds) ? STATE.votedCategoryIds.length : 0;
+  // 1. Cek apakah tamu sudah pernah memberikan suara untuk foto ini (Cegah voting dobel pada gambar yang sama)
+  if (Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(idFoto)) {
+    showToast("Anda sudah memberikan suara untuk foto ini (Tidak bisa voting ganda pada gambar yang sama)!", "warning");
+    return;
+  }
+
+  // 2. Cek kuota voting tamu (default standar: 1x, dapat diatur custom oleh admin di pengaturan acara)
+  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 1;
+  const currentVotesCount = Array.isArray(STATE.votedPhotoIds) ? STATE.votedPhotoIds.length : (STATE.votedCategoryIds?.length || 0);
   if (currentVotesCount >= maxVotesAllowed) {
     showToast(`Kuota voting Anda sudah habis (Maksimal ${maxVotesAllowed}x voting per tamu)!`, "warning");
     return;
@@ -2718,8 +2797,14 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     return;
   }
 
-  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 2;
-  const currentVotesCount = Array.isArray(STATE.votedCategoryIds) ? STATE.votedCategoryIds.length : 0;
+  // Cek apakah tamu sudah pernah vote foto ini
+  if (Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(idFoto)) {
+    showToast("Anda sudah memberikan suara untuk foto ini (Tidak bisa voting ganda pada gambar yang sama)!", "warning");
+    return;
+  }
+
+  const maxVotesAllowed = Number(STATE.activeEvent?.maxVotePerGuest) || 1;
+  const currentVotesCount = Array.isArray(STATE.votedPhotoIds) ? STATE.votedPhotoIds.length : (STATE.votedCategoryIds?.length || 0);
   if (currentVotesCount >= maxVotesAllowed) {
     showToast(`Batas maksimal ${maxVotesAllowed}x voting per tamu telah tercapai!`, "warning");
     return;
@@ -2732,10 +2817,13 @@ async function handleVotePhoto(idFoto, idKategori = '') {
   }
 
   // Tandai voting secara lokal seketika (Respon Cepat)
-  STATE.votedCategoryIds.push(idKategori);
+  if (!STATE.votedCategoryIds.includes(idKategori)) {
+    STATE.votedCategoryIds.push(idKategori);
+  }
   if (!STATE.votedPhotoIds.includes(idFoto)) {
     STATE.votedPhotoIds.push(idFoto);
   }
+  saveEventVotes(STATE.activeEventId);
   localStorage.setItem('snapevent_voted_category_ids', JSON.stringify(STATE.votedCategoryIds));
   localStorage.setItem('snapevent_voted_photo_ids', JSON.stringify(STATE.votedPhotoIds));
 
@@ -2744,6 +2832,15 @@ async function handleVotePhoto(idFoto, idKategori = '') {
     targetPhoto.totalLikes = (targetPhoto.totalLikes || 0) + 1;
     if (!targetPhoto.categoryLikes) targetPhoto.categoryLikes = {};
     targetPhoto.categoryLikes[idKategori] = (targetPhoto.categoryLikes[idKategori] || 0) + 1;
+    targetPhoto.idKategori = idKategori;
+
+    // Simpan juga dengan nama kategori agar pencarian tab kategori selalu sinkron
+    const catObj = (STATE.activeCategories || []).find(c => c.idKategori === idKategori || c.namaKategori === idKategori);
+    if (catObj && catObj.namaKategori) {
+      targetPhoto.categoryLikes[catObj.namaKategori] = (targetPhoto.categoryLikes[catObj.namaKategori] || 0) + 1;
+      targetPhoto.namaKategori = catObj.namaKategori;
+    }
+    saveEventPhotos(STATE.activeEventId);
     renderGallery();
   }
 
@@ -2824,16 +2921,44 @@ function renderGallery() {
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   } else if (STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'WINNERS') {
-    // Filter HANYA foto yang mendapatkan suara di kategori ini (Kategori Pilihan)
+    // Filter foto yang mendapatkan suara di kategori ini (Pencarian fleksibel ID dan Nama Kategori)
     const catId = STATE.activeGalleryFilter;
+    const activeCatObj = (STATE.activeCategories || []).find(c => c.idKategori === catId || c.namaKategori === catId);
+    const targetCatId = activeCatObj ? activeCatObj.idKategori : catId;
+    const targetCatName = activeCatObj ? activeCatObj.namaKategori.toLowerCase().trim() : (catId ? catId.toLowerCase().trim() : '');
+
     filtered = filtered.filter(p => {
-      const catCount = (p.categoryLikes && p.categoryLikes[catId]) || 0;
-      return catCount > 0 || p.idKategori === catId;
+      if (!p) return false;
+      // 1. Direct assignment match
+      if (p.idKategori === targetCatId || p.idKategori === catId) return true;
+      if (p.namaKategori && p.namaKategori.toLowerCase().trim() === targetCatName) return true;
+      if (p.categoryName && p.categoryName.toLowerCase().trim() === targetCatName) return true;
+
+      // 2. Category likes vote mapping match (ID atau Nama)
+      if (p.categoryLikes) {
+        if ((p.categoryLikes[targetCatId] || 0) > 0) return true;
+        if ((p.categoryLikes[catId] || 0) > 0) return true;
+        if (targetCatName) {
+          for (const k in p.categoryLikes) {
+            if (k.toLowerCase().trim() === targetCatName && p.categoryLikes[k] > 0) return true;
+          }
+        }
+      }
+      return false;
     });
+
     filtered.sort((a, b) => {
-      const aCount = (a.categoryLikes && a.categoryLikes[catId]) || 0;
-      const bCount = (b.categoryLikes && b.categoryLikes[catId]) || 0;
-      return bCount - aCount;
+      const getLikes = (photo) => {
+        if (!photo.categoryLikes) return 0;
+        let cnt = (photo.categoryLikes[targetCatId] || 0) || (photo.categoryLikes[catId] || 0);
+        if (targetCatName) {
+          for (const k in photo.categoryLikes) {
+            if (k.toLowerCase().trim() === targetCatName) cnt = Math.max(cnt, photo.categoryLikes[k]);
+          }
+        }
+        return cnt;
+      };
+      return getLikes(b) - getLikes(a);
     });
   }
 
@@ -3147,20 +3272,25 @@ function renderVotingWinners() {
 
     let catWinnerCards = '';
     categories.forEach(cat => {
-      // Cari foto dengan like terbanyak di kategori ini
-      const catPhotos = [...STATE.photos].filter(p => {
-        const catLikes = (p.categoryLikes && p.categoryLikes[cat.idKategori]) || 0;
-        return catLikes > 0;
-      });
-      catPhotos.sort((a, b) => {
-        const aL = (a.categoryLikes && a.categoryLikes[cat.idKategori]) || 0;
-        const bL = (b.categoryLikes && b.categoryLikes[cat.idKategori]) || 0;
-        return bL - aL;
-      });
+      // Cari foto dengan like terbanyak di kategori ini (Pencarian ID & Nama Kategori)
+      const targetCatName = cat.namaKategori ? cat.namaKategori.toLowerCase().trim() : '';
+      const getVotes = (p) => {
+        if (!p) return 0;
+        let v = (p.categoryLikes && p.categoryLikes[cat.idKategori]) || 0;
+        if (targetCatName && p.categoryLikes) {
+          for (const k in p.categoryLikes) {
+            if (k.toLowerCase().trim() === targetCatName) v = Math.max(v, p.categoryLikes[k]);
+          }
+        }
+        return v;
+      };
+
+      const catPhotos = [...STATE.photos].filter(p => getVotes(p) > 0);
+      catPhotos.sort((a, b) => getVotes(b) - getVotes(a));
 
       if (catPhotos.length > 0) {
         const winner = catPhotos[0];
-        const winnerLikes = (winner.categoryLikes && winner.categoryLikes[cat.idKategori]) || 0;
+        const winnerLikes = getVotes(winner);
         const winUrls = getDriveImageUrls(winner.gdriveViewUrl);
         catWinnerCards += `
           <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-3.5 flex items-center gap-3.5 shadow-md">
@@ -3627,17 +3757,30 @@ function setAndLockSingleFrame(frameId, frameName) {
 }
 
 function getAllAdminCandidateFrames(eventObj) {
+  const normTitle = (str) => {
+    if (!str) return '';
+    return str.replace(/^[\u{1F300}-\u{1F9FF}\s]+/u, '')
+              .replace(/\((acara|global|event)\)/gi, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .toLowerCase();
+  };
+
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
     STATE.customFrames = getDefaultPresetCustomFrames();
     localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
   } else {
-    // Bersihkan duplikat di STATE.customFrames berdasarkan nama dan scope/eventId
+    // Bersihkan duplikat di STATE.customFrames berdasarkan nama ternormalisasi dan dataUrl
     const seenCf = new Set();
+    const seenDataUrls = new Set();
     STATE.customFrames = STATE.customFrames.filter(cf => {
       if (!cf || !cf.name) return false;
-      const key = `${cf.name.trim().toLowerCase()}__${cf.scope || 'event'}`;
-      if (seenCf.has(key)) return false;
-      seenCf.add(key);
+      const baseName = normTitle(cf.name);
+      const scopeKey = `${baseName}__${cf.scope || 'event'}`;
+      if (seenCf.has(scopeKey)) return false;
+      if (cf.dataUrl && seenDataUrls.has(cf.dataUrl)) return false;
+      seenCf.add(scopeKey);
+      if (cf.dataUrl) seenDataUrls.add(cf.dataUrl);
       return true;
     });
     localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
@@ -3651,17 +3794,21 @@ function getAllAdminCandidateFrames(eventObj) {
   ];
 
   const currentEvId = eventObj ? getResolvedEventId(eventObj.idEvent) : getResolvedEventId(STATE.activeEventId);
-  const seenFrameNames = new Set(['✨ gold deco', '📷 polaroid', '▪️ minimalist', 'tanpa bingkai']);
+  const seenFrameNames = new Set(['gold deco', 'polaroid', 'minimalist', 'tanpa bingkai']);
+  const seenUrls = new Set();
 
   if (Array.isArray(STATE.customFrames)) {
     STATE.customFrames.forEach(cf => {
       const cfEvId = cf.eventId ? getResolvedEventId(cf.eventId) : '';
       if (cf.scope === 'global' || !cf.eventId || cfEvId === currentEvId) {
-        const cleanName = (cf.name || '').trim().toLowerCase();
-        if (!frames.some(f => f.id === cf.id) && !seenFrameNames.has(cleanName)) {
+        const cleanName = normTitle(cf.name);
+        const urlKey = cf.dataUrl ? cf.dataUrl.slice(0, 100) : '';
+        if (!frames.some(f => f.id === cf.id) && !seenFrameNames.has(cleanName) && (!urlKey || !seenUrls.has(urlKey))) {
           seenFrameNames.add(cleanName);
+          if (urlKey) seenUrls.add(urlKey);
           const rawName = cf.name.startsWith('🖼️') ? cf.name : `🖼️ ${cf.name}`;
-          const displayName = rawName.includes('(') ? rawName : `${rawName} (${cf.scope === 'global' ? 'Global' : 'Acara'})`;
+          const cleanDisplayName = rawName.replace(/\((acara|global|event)\)/gi, '').trim();
+          const displayName = `${cleanDisplayName} (${cf.scope === 'global' ? 'Global' : 'Acara'})`;
           frames.push({
             id: cf.id,
             name: displayName,
@@ -3677,8 +3824,11 @@ function getAllAdminCandidateFrames(eventObj) {
 
   // Custom frame yang baru diunggah di form atau tersimpan di event ini jika belum ada di list
   const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
-  const eventFrameName = (eventObj?.customFrameName || `${eventObj?.namaEvent || 'Acara'} Frame`).trim().toLowerCase();
-  if (eventCustomData && !frames.some(f => f.dataUrl === eventCustomData) && !seenFrameNames.has(eventFrameName)) {
+  const eventFrameName = normTitle(eventObj?.customFrameName || `${eventObj?.namaEvent || 'Acara'} Frame`);
+  const eventUrlKey = eventCustomData ? eventCustomData.slice(0, 100) : '';
+  if (eventCustomData && !seenUrls.has(eventUrlKey) && !seenFrameNames.has(eventFrameName)) {
+    seenFrameNames.add(eventFrameName);
+    if (eventUrlKey) seenUrls.add(eventUrlKey);
     frames.push({
       id: 'CUSTOM_EVENT',
       name: eventObj?.customFrameName ? `🖼️ ${eventObj.customFrameName}` : '🖼️ Bingkai Kustom Acara (Custom PNG)',
@@ -3940,7 +4090,7 @@ function resetCreateEventForm() {
   document.getElementById('formEventHashtag').value = "";
   document.getElementById('formEventTanggal').value = d.toISOString().split('T')[0];
   document.getElementById('formEventMaxFoto').value = "10";
-  document.getElementById('formEventMaxVote').value = "2";
+  document.getElementById('formEventMaxVote').value = "1";
   document.getElementById('formEventDriveFolder').value = "";
   document.getElementById('formEventFrameName').value = "";
 
@@ -4631,7 +4781,7 @@ async function saveAdminEventForm() {
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const tanggal = document.getElementById('formEventTanggal').value;
   const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
-  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 2;
+  const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 1;
   const driveFolder = extractDriveFolderId(document.getElementById('formEventDriveFolder').value.trim());
 
   let revealMode = 'SEGERA';
@@ -5063,8 +5213,51 @@ function bindEvents() {
   // Switch Camera Lens (Front/Back)
   document.getElementById('btnSwitchCamera').addEventListener('click', () => {
     STATE.facingMode = (STATE.facingMode === 'environment') ? 'user' : 'environment';
+    localStorage.setItem('snapevent_camera_facing', STATE.facingMode);
     startCameraStream();
   });
+
+  // Camera Zoom Controls (1x, 2x, 3x)
+  document.querySelectorAll('.btn-cam-zoom').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const z = parseFloat(btn.getAttribute('data-zoom')) || 1.0;
+      setCameraZoom(z);
+    });
+  });
+
+  // Touch Pinch-to-zoom on Viewfinder for Mobile Phones
+  const viewfinder = document.getElementById('viewfinderViewport');
+  if (viewfinder) {
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1.0;
+    viewfinder.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchStartDist = Math.hypot(dx, dy);
+        pinchStartZoom = STATE.cameraZoom || 1.0;
+      }
+    }, { passive: true });
+
+    viewfinder.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinchStartDist > 0) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const currentDist = Math.hypot(dx, dy);
+        const scaleChange = currentDist / pinchStartDist;
+        const newZoom = Math.max(1.0, Math.min(3.0, pinchStartZoom * scaleChange));
+        setCameraZoom(newZoom);
+      }
+    }, { passive: true });
+
+    viewfinder.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) {
+        pinchStartDist = 0;
+      }
+    }, { passive: true });
+  }
 
   // Filter Selector Pills (Event Delegation)
   document.getElementById('filterListContainer').addEventListener('click', (e) => {

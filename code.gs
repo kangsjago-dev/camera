@@ -490,7 +490,6 @@ function handleGetAllEvents() {
           tanggalEvent: r[COL_EVENT.TANGGAL] || "",
           hashtagEvent: r[COL_EVENT.HASHTAG] || "",
           maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-          maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 2,
           revealMode: r[COL_EVENT.REVEAL_MODE] || "SEGERA",
           isRevealed: isRev,
           likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
@@ -612,7 +611,7 @@ function handleGetEventDetails(eventId, guestId) {
     tanggalEvent: r[COL_EVENT.TANGGAL],
     hashtagEvent: r[COL_EVENT.HASHTAG],
     maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-    maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 2,
+    maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
     revealMode: r[COL_EVENT.REVEAL_MODE],
     isRevealed: isRev,
     likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
@@ -959,18 +958,51 @@ function handleGetGallery(eventId, guestId) {
     }
   });
 
-  photos.reverse();
-
-  // Riwayat vote tamu ini
-  const votedPhotoIds = [];
-  if (guestId && voteSheet && voteSheet.getLastRow() > 1) {
-    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
-    vRows.forEach(function(vr) {
-      if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
-        votedPhotoIds.push(vr[COL_VOTE.ID_FOTO]);
+  // 3. Agregasi Voting & Kategori Penghargaan secara Komprehensif
+  const catNameMap = {};
+  if (katSheet && katSheet.getLastRow() > 1) {
+    const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 3).getDisplayValues();
+    kRows.forEach(function(kr) {
+      if (kr[COL_KAT.ID]) {
+        catNameMap[kr[COL_KAT.ID]] = kr[COL_KAT.NAMA] || "";
       }
     });
   }
+
+  const photoCatLikes = {}; // [idFoto] -> { [idKat]: count, [namaKat]: count }
+  const photoTotalVotes = {}; // [idFoto] -> totalCount
+  const votedPhotoIds = [];
+
+  if (voteSheet && voteSheet.getLastRow() > 1) {
+    const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 6).getDisplayValues();
+    vRows.forEach(function(vr) {
+      const vEvt = vr[COL_VOTE.ID_EVENT];
+      if (vEvt === canonicalEventId || vEvt === eventId || vEvt === eventSlug) {
+        const pId = vr[COL_VOTE.ID_FOTO];
+        const cId = vr[COL_VOTE.ID_KAT] || "DEFAULT";
+        if (!photoCatLikes[pId]) photoCatLikes[pId] = {};
+        photoCatLikes[pId][cId] = (photoCatLikes[pId][cId] || 0) + 1;
+        const cName = catNameMap[cId];
+        if (cName) {
+          photoCatLikes[pId][cName] = (photoCatLikes[pId][cName] || 0) + 1;
+        }
+        photoTotalVotes[pId] = (photoTotalVotes[pId] || 0) + 1;
+
+        if (guestId && vr[COL_VOTE.GUEST_ID] === guestId && !votedPhotoIds.includes(pId)) {
+          votedPhotoIds.push(pId);
+        }
+      }
+    });
+  }
+
+  photos.forEach(function(p) {
+    p.categoryLikes = photoCatLikes[p.idFoto] || {};
+    if (photoTotalVotes[p.idFoto] !== undefined) {
+      p.totalLikes = Math.max(p.totalLikes || 0, photoTotalVotes[p.idFoto]);
+    }
+  });
+
+  photos.reverse();
 
   // Kategori voting
   const categories = [];
@@ -1399,7 +1431,21 @@ function handleSubmitVote(payload) {
     const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
     const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
 
-    // Cek apakah tamu sudah memilih kategori ini sebelumnya (1x per kategori) & kuota maksimal 2x vote
+    // Baca batas voting kustom acara dari tabel DataEvent (standar default: 1x)
+    let maxVotePerGuest = 1;
+    if (eventSheet && eventSheet.getLastRow() > 1) {
+      const eRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 7).getDisplayValues();
+      for (let e = 0; e < eRows.length; e++) {
+        if (eRows[e][COL_EVENT.ID] === eventId || eRows[e][COL_EVENT.SLUG] === eventId) {
+          maxVotePerGuest = Number(eRows[e][COL_EVENT.MAX_VOTE]) || 1;
+          break;
+        }
+      }
+    }
+
+    // Cek apakah tamu sudah memilih foto ini sebelumnya (Mencegah double voting pada foto yang sama)
+    // dan cek apakah tamu sudah memilih kategori ini sebelumnya (1x per kategori)
+    let alreadyVotedPhoto = false;
     let alreadyVotedCat = false;
     let totalGuestVotes = 0;
     if (voteSheet && voteSheet.getLastRow() > 1) {
@@ -1408,18 +1454,27 @@ function handleSubmitVote(payload) {
         const vr = vRows[j];
         if (vr[COL_VOTE.ID_EVENT] === eventId && vr[COL_VOTE.GUEST_ID] === guestId) {
           totalGuestVotes++;
+          if (vr[COL_VOTE.ID_FOTO] === idFoto) {
+            alreadyVotedPhoto = true;
+          }
           if (idKategori && vr[COL_VOTE.ID_KAT] === idKategori) {
             alreadyVotedCat = true;
-            break;
           }
         }
       }
     }
 
-    if (totalGuestVotes >= 2) {
+    if (alreadyVotedPhoto) {
       return {
         status: "already_voted",
-        message: "Anda sudah mencapai batas kuota maksimal 2 kali voting."
+        message: "Anda sudah memberikan suara untuk foto ini (Tidak bisa voting ganda pada gambar yang sama)."
+      };
+    }
+
+    if (totalGuestVotes >= maxVotePerGuest) {
+      return {
+        status: "already_voted",
+        message: "Anda sudah mencapai batas kuota maksimal " + maxVotePerGuest + " kali voting."
       };
     }
 
@@ -1548,7 +1603,7 @@ function handleAdminSaveEvent(payload) {
     const tanggalEvent = String(payload.tanggalEvent || "").trim();
     const hashtagEvent = String(payload.hashtagEvent || "").trim();
     const maxFoto = Number(payload.maxFotoPerGuest) || 10;
-    const maxVote = Number(payload.maxVotePerGuest) || 2;
+    const maxVote = Number(payload.maxVotePerGuest) || 3;
     const revealMode = payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA";
     const isRevealed = payload.isRevealed !== undefined 
       ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
@@ -1657,7 +1712,7 @@ function handleAdminSaveEvent(payload) {
         const finalMaxFoto = (payload.maxFotoPerGuest !== undefined && payload.maxFotoPerGuest !== null && payload.maxFotoPerGuest !== "")
           ? Number(payload.maxFotoPerGuest) : (Number(curVals[COL_EVENT.MAX_FOTO]) || 10);
         const finalMaxVote = (payload.maxVotePerGuest !== undefined && payload.maxVotePerGuest !== null && payload.maxVotePerGuest !== "")
-          ? Number(payload.maxVotePerGuest) : (Number(curVals[COL_EVENT.MAX_VOTE]) || 2);
+          ? Number(payload.maxVotePerGuest) : (Number(curVals[COL_EVENT.MAX_VOTE]) || 3);
         const finalRevealMode = payload.revealMode ? (payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA") : (curVals[COL_EVENT.REVEAL_MODE] || "SEGERA");
         const finalIsRevealed = payload.isRevealed !== undefined 
           ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
