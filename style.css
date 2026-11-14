@@ -55,20 +55,9 @@ body.camera-lock-scroll {
 }
 
 body.camera-lock-scroll main {
-  height: calc(100vh - 3.5rem - 4.25rem) !important;
   height: calc(100dvh - 3.5rem - 4.25rem - env(safe-area-inset-bottom, 0px)) !important;
-  max-height: calc(100vh - 3.5rem - 4.25rem) !important;
   max-height: calc(100dvh - 3.5rem - 4.25rem - env(safe-area-inset-bottom, 0px)) !important;
   overflow: hidden !important;
-}
-
-body.camera-lock-scroll #viewCamera {
-  height: 100% !important;
-  max-height: 100% !important;
-  overflow: hidden !important;
-  display: flex !important;
-  flex-direction: column !important;
-  justify-content: space-between !important;
 }
 
 /* Full-bleed responsive viewfinder for mobile */

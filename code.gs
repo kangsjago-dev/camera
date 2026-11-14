@@ -563,39 +563,8 @@ function handleGetGallery(eventId, guestId) {
     } catch (e) {}
   }
 
-  // 1. Bersihkan foto yang filenya telah dihapus di Drive
-  const rowsToDelete = [];
-  if (fotoSheet && fotoSheet.getLastRow() > 1) {
-    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
-    for (let j = 0; j < fRows.length; j++) {
-      const fr = fRows[j];
-      const rowEventId = fr[COL_FOTO.ID_EVENT];
-      if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
-        const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
-        if (fileId && fileId.trim() !== "") {
-          try {
-            const df = DriveApp.getFileById(fileId);
-            if (df.isTrashed()) {
-              rowsToDelete.push(j + 2);
-            }
-          } catch (e) {
-            // File 404 / tidak ditemukan di Drive -> jadwalkan hapus baris
-            rowsToDelete.push(j + 2);
-          }
-        }
-      }
-    }
-
-    // Hapus baris mati dari bawah ke atas agar indeks baris tidak bergeser
-    for (let d = rowsToDelete.length - 1; d >= 0; d--) {
-      try {
-        fotoSheet.deleteRow(rowsToDelete[d]);
-      } catch (err) {}
-    }
-    if (rowsToDelete.length > 0) {
-      SpreadsheetApp.flush();
-    }
-  }
+  // 1. Data foto di Spreadsheet adalah Single Source of Truth yang aman (Tidak menghapus paksa foto valid saat getGallery)
+  // Penghapusan file yang sudah trashed/hilang ditangani secara aman di UI client (handleGalleryImgError)
 
   // 2. Auto-ingest file foto yang ada di Google Drive tapi belum ada di Sheet (misal: 032, 033)
   if (fotoSheet && candidateFolders.length > 0) {
@@ -630,7 +599,7 @@ function handleGetGallery(eventId, guestId) {
 
             fotoSheet.appendRow([
               photoIdCandidate,
-              eventId,
+              canonicalEventId,
               "GUEST-CLOUD",
               guestCandidate,
               "Momen seru!",
@@ -803,9 +772,11 @@ function handleUploadPhoto(payload) {
       return { status: "error", message: "Belum ada data event yang terdaftar." };
     }
 
+    let canonicalEventId = eventId;
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+        canonicalEventId = evRows[i][COL_EVENT.ID];
         targetEventRow = i + 2;
         maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
         folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
@@ -824,7 +795,7 @@ function handleUploadPhoto(payload) {
     if (fotoSheet.getLastRow() > 1) {
       const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 4).getDisplayValues();
       fRows.forEach(function(fr) {
-        if (fr[COL_FOTO.ID_EVENT] === eventId && fr[COL_FOTO.GUEST_ID] === guestId) {
+        if ((fr[COL_FOTO.ID_EVENT] === eventId || fr[COL_FOTO.ID_EVENT] === canonicalEventId || fr[COL_FOTO.ID_EVENT] === slugEvent) && fr[COL_FOTO.GUEST_ID] === guestId) {
           currentGuestUploads++;
         }
       });
@@ -835,6 +806,26 @@ function handleUploadPhoto(payload) {
         status: "limit_reached",
         message: "Rol kamera Anda untuk event ini sudah penuh (" + maxFoto + " foto). Nikmati pestanya!"
       };
+    }
+
+    // Ekstraksi Base64 Data
+    let pureBase64 = imageBase64;
+    let mimeType = "image/jpeg";
+    if (pureBase64.indexOf("data:") === 0) {
+      const parts = pureBase64.split(",");
+      const meta = parts[0];
+      pureBase64 = parts[1];
+      if (meta.indexOf("image/png") !== -1) mimeType = "image/png";
+    }
+
+    // Anti-Duplicate Idempotency Cache: Mencegah upload file kembar dari retry / auto-sync bersamaan
+    const imgFingerprint = "UPL_" + canonicalEventId + "_" + guestId + "_" + pureBase64.length + "_" + pureBase64.substring(0, 32);
+    const cache = CacheService.getScriptCache();
+    const cachedResponse = cache.get(imgFingerprint);
+    if (cachedResponse) {
+      try {
+        return JSON.parse(cachedResponse);
+      } catch(e) {}
     }
 
     // 3. Simpan File ke Google Drive (Dengan Smart Reuse, Mencegah Folder Kosong Dobel)
@@ -857,20 +848,10 @@ function handleUploadPhoto(payload) {
       try { targetFolder = DriveApp.getFolderById(folderId); } catch(e) {}
     }
     if (!targetFolder) {
-      targetFolder = getOrCreateEventSubFolder(parentFolder, eventId, slugEvent, namaEvent);
+      targetFolder = getOrCreateEventSubFolder(parentFolder, canonicalEventId, slugEvent, namaEvent);
       // Simpan folderId baru ke DataEvent agar permintaan berikutnya memakai folder yang sama
       eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
       SpreadsheetApp.flush();
-    }
-
-    // Ekstraksi Base64 Data
-    let pureBase64 = imageBase64;
-    let mimeType = "image/jpeg";
-    if (pureBase64.indexOf("data:") === 0) {
-      const parts = pureBase64.split(",");
-      const meta = parts[0];
-      pureBase64 = parts[1];
-      if (meta.indexOf("image/png") !== -1) mimeType = "image/png";
     }
 
     const decodedBytes = Utilities.base64Decode(pureBase64);
@@ -890,10 +871,10 @@ function handleUploadPhoto(payload) {
     const fileId = driveFile.getId();
     const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
 
-    // 4. Catat ke DataFoto dengan sanitasi mutlak
+    // 4. Catat ke DataFoto dengan sanitasi mutlak & ID canonical
     fotoSheet.appendRow([
       sanitizeCellValue(newIdFoto),
-      sanitizeCellValue(eventId),
+      sanitizeCellValue(canonicalEventId),
       sanitizeCellValue(guestId),
       sanitizeCellValue(guestNama),
       sanitizeCellValue(caption),
@@ -908,13 +889,19 @@ function handleUploadPhoto(payload) {
 
     SpreadsheetApp.flush();
 
-    return {
+    const resultSuccess = {
       status: "success",
       message: "Foto berhasil disimpan ke rol acara!",
       idFoto: newIdFoto,
       viewUrl: directViewUrl,
       remainingPhotos: Math.max(0, maxFoto - (currentGuestUploads + 1))
     };
+
+    try {
+      cache.put(imgFingerprint, JSON.stringify(resultSuccess), 120);
+    } catch(eCache) {}
+
+    return resultSuccess;
   } finally {
     lock.releaseLock();
   }

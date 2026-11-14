@@ -1217,6 +1217,8 @@ async function autoUploadPendingPhotos(pendingList) {
   if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
   for (const photo of pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
+    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue; // KUNCI MUTLAK: Mencegah upload file kembar ke Google Drive!
+    IN_FLIGHT_PHOTO_UPLOADS.add(photo.idFoto);
     try {
       const payload = {
         action: "uploadPhoto",
@@ -1233,15 +1235,18 @@ async function autoUploadPendingPhotos(pendingList) {
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload)
       });
-      const res = await resp.json();
+      const res = await resp.json().catch(() => null);
       if (res && res.status === 'success') {
         if (res.idFoto) photo.idFoto = res.idFoto;
         if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
+        photo.isUploading = false;
         saveEventPhotos(STATE.activeEventId);
         renderGallery();
       }
     } catch (err) {
       console.warn("Auto-sync background upload error untuk foto:", photo.idFoto, err.message);
+    } finally {
+      IN_FLIGHT_PHOTO_UPLOADS.delete(photo.idFoto);
     }
   }
 }
@@ -2103,76 +2108,86 @@ function downloadPhotoToDevice(dataUrl, photoId) {
 
 // --- 6. UPLOAD PHOTO (NON-BLOCKING BACKGROUND UPLOAD KE GOOGLE DRIVE & LOCAL SAVE) ---
 const IN_FLIGHT_PHOTO_UPLOADS = new Set();
+let IS_SAVING_PHOTO = false;
 
 async function handleSavePhotoToDrive() {
+  if (IS_SAVING_PHOTO) return;
+  IS_SAVING_PHOTO = true;
+
   const btn = document.getElementById('btnSaveToDrive');
   const btnText = document.getElementById('btnSaveText');
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = "Menyimpan...";
   const caption = document.getElementById('inputPhotoCaption').value.trim();
 
-  // Pastikan ada nama tamu saat menyimpan foto ke Drive & Galeri
-  if (!STATE.guestNama || !STATE.guestNama.trim()) {
-    const promptedName = window.prompt("Masukkan Nama Panggilan Anda agar tercatat di foto & voting acara:", "");
-    if (promptedName && promptedName.trim()) {
-      STATE.guestNama = promptedName.trim();
-      localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
-      const nameInputEl = document.getElementById('inputGuestName');
-      if (nameInputEl) nameInputEl.value = STATE.guestNama;
-    } else {
-      STATE.guestNama = `Tamu-${STATE.guestId ? STATE.guestId.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
-      localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
+  try {
+    // Pastikan ada nama tamu saat menyimpan foto ke Drive & Galeri
+    if (!STATE.guestNama || !STATE.guestNama.trim()) {
+      const promptedName = window.prompt("Masukkan Nama Panggilan Anda agar tercatat di foto & voting acara:", "");
+      if (promptedName && promptedName.trim()) {
+        STATE.guestNama = promptedName.trim();
+        localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
+        const nameInputEl = document.getElementById('inputGuestName');
+        if (nameInputEl) nameInputEl.value = STATE.guestNama;
+      } else {
+        STATE.guestNama = `Tamu-${STATE.guestId ? STATE.guestId.slice(-4) : Math.floor(1000 + Math.random() * 9000)}`;
+        localStorage.setItem('snapevent_guest_nama', STATE.guestNama);
+      }
     }
+
+    // FHD Target File Size (1.2 MB - 2.5 MB)
+    const finalDataUrl = ensureJpegTargetFileSize(STATE.currentCapturedDataUrl, 1200000, 1800000);
+    const tempPhotoId = "FTO-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    const targetEventId = getResolvedEventId(STATE.activeEventId);
+
+    // 1. Simpan salinan kualitas FHD langsung ke galeri / penyimpanan ponsel tamu seketika
+    downloadPhotoToDevice(finalDataUrl, tempPhotoId);
+
+    // 2. Buat objek foto lokal di daftar foto agar seketika tampil di galeri
+    const tempLocalPhoto = {
+      idFoto: tempPhotoId,
+      eventId: targetEventId,
+      guestId: STATE.guestId,
+      guestNama: STATE.guestNama || "Tamu",
+      caption: caption || "Momen seru!",
+      cameraStyle: STATE.activeFilter || "RAW",
+      frameStyle: STATE.activeFrame || "POLAROID",
+      gdriveViewUrl: finalDataUrl,
+      totalLikes: 0,
+      categoryLikes: {},
+      isFeatured: false,
+      isUploading: true,
+      createdAt: "Baru Saja"
+    };
+
+    STATE.photos = [tempLocalPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
+    saveEventPhotos(targetEventId);
+
+    // 3. TUTUP MODAL REVIEW SEKETIKA & BERSIHKAN INPUT
+    // Tamu dapat segera mengambil foto berikutnya tanpa menunggu proses upload selesai!
+    document.getElementById('modalReviewPhoto').classList.add('hidden');
+    document.getElementById('inputPhotoCaption').value = '';
+    if (btn) btn.disabled = false;
+    if (btnText) btnText.textContent = "Simpan ke Rol";
+    updateRemainingQuotaDisplay();
+    updateGuestIdentityUI();
+
+    showToast("📸 Foto tersimpan! Mengunggah ke server cloud di latar belakang...", "info");
+
+    // 4. JALANKAN PROSES UPLOAD DI LATAR BELAKANG DENGAN KUNCI ANTI-DUPLIKASI
+    uploadPhotoInBackground({
+      action: "uploadPhoto",
+      eventId: targetEventId,
+      guestId: STATE.guestId,
+      guestNama: STATE.guestNama || "Tamu",
+      caption: caption || "Momen seru!",
+      cameraStyle: STATE.activeFilter || "RAW",
+      frameStyle: STATE.activeFrame || "POLAROID",
+      imageBase64: finalDataUrl
+    }, tempPhotoId);
+  } finally {
+    setTimeout(() => { IS_SAVING_PHOTO = false; }, 1200);
   }
-
-  // FHD Target File Size (1.2 MB - 2.5 MB)
-  const finalDataUrl = ensureJpegTargetFileSize(STATE.currentCapturedDataUrl, 1200000, 1800000);
-  const tempPhotoId = "FTO-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
-  const targetEventId = getResolvedEventId(STATE.activeEventId);
-
-  // 1. Simpan salinan kualitas FHD langsung ke galeri / penyimpanan ponsel tamu seketika
-  downloadPhotoToDevice(finalDataUrl, tempPhotoId);
-
-  // 2. Buat objek foto lokal di daftar foto agar seketika tampil di galeri
-  const tempLocalPhoto = {
-    idFoto: tempPhotoId,
-    eventId: targetEventId,
-    guestId: STATE.guestId,
-    guestNama: STATE.guestNama || "Tamu",
-    caption: caption || "Momen seru!",
-    cameraStyle: STATE.activeFilter || "RAW",
-    frameStyle: STATE.activeFrame || "POLAROID",
-    gdriveViewUrl: finalDataUrl,
-    totalLikes: 0,
-    categoryLikes: {},
-    isFeatured: false,
-    isUploading: true,
-    createdAt: "Baru Saja"
-  };
-
-  STATE.photos = [tempLocalPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
-  saveEventPhotos(targetEventId);
-
-  // 3. TUTUP MODAL REVIEW SEKETIKA & BERSIHKAN INPUT
-  // Tamu dapat segera mengambil foto berikutnya tanpa menunggu proses upload selesai!
-  document.getElementById('modalReviewPhoto').classList.add('hidden');
-  document.getElementById('inputPhotoCaption').value = '';
-  if (btn) btn.disabled = false;
-  if (btnText) btnText.textContent = "Simpan ke Rol";
-  updateRemainingQuotaDisplay();
-  updateGuestIdentityUI();
-
-  showToast("📸 Foto tersimpan! Mengunggah ke server cloud di latar belakang...", "info");
-
-  // 4. JALANKAN PROSES UPLOAD DI LATAR BELAKANG DENGAN KUNCI ANTI-DUPLIKASI
-  uploadPhotoInBackground({
-    action: "uploadPhoto",
-    eventId: targetEventId,
-    guestId: STATE.guestId,
-    guestNama: STATE.guestNama || "Tamu",
-    caption: caption || "Momen seru!",
-    cameraStyle: STATE.activeFilter || "RAW",
-    frameStyle: STATE.activeFrame || "POLAROID",
-    imageBase64: finalDataUrl
-  }, tempPhotoId);
 }
 
 async function uploadPhotoInBackground(payload, tempPhotoId) {
@@ -2224,6 +2239,8 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
       saveEventPhotos(payload.eventId);
       renderGallery();
       showToast("☁️ Foto berhasil terunggah ke Google Drive!", "success");
+      // Sinkronisasi otomatis dengan database Google Apps Script agar galeri langsung menampilkan data server
+      setTimeout(() => { loadGallery(); }, 600);
     } else if (res && res.status === 'limit_reached') {
       showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
     } else {
