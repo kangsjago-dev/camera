@@ -41,7 +41,8 @@
   flex-direction: column !important;
   justify-content: space-between !important;
   overflow: hidden !important;
-  padding-bottom: 0.25rem !important;
+  padding-bottom: 0.5rem !important;
+  box-sizing: border-box !important;
   touch-action: manipulation !important;
 }
 

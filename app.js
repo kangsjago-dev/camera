@@ -332,13 +332,15 @@ function getAvailableFrames() {
     STATE.customFrames.forEach(cf => {
       const cfEvId = cf.eventId ? getResolvedEventId(cf.eventId) : '';
       if (cf.scope === 'global' || !cf.eventId || cfEvId === activeEvId) {
-        allFrames.push({
-          id: cf.id,
-          name: `🖼️ ${cf.name || 'Custom'}`,
-          type: 'custom',
-          scope: cf.scope,
-          dataUrl: cf.dataUrl
-        });
+        if (!allFrames.some(f => f.id === cf.id)) {
+          allFrames.push({
+            id: cf.id,
+            name: `🖼️ ${cf.name || 'Custom'}`,
+            type: 'custom',
+            scope: cf.scope,
+            dataUrl: cf.dataUrl
+          });
+        }
       }
     });
   }
@@ -382,29 +384,27 @@ function getAvailableFrames() {
     // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (jangan tampilkan yang lainnya)
     if (mode === 'single') {
       let targetLocked = lockedId || (Array.isArray(activeList) && activeList[0]) || (activeCustomData ? 'CUSTOM_EVENT' : 'GOLD_DECO');
-      if (activeCustomData && (targetLocked === 'CUSTOM_EVENT' || String(targetLocked).indexOf('frame_') === 0)) {
-        targetLocked = 'CUSTOM_EVENT';
-      }
+      const exact = allFrames.find(f => f.id === targetLocked);
+      if (exact) return [exact];
       const single = allFrames.find(f => isCustomMatch(targetLocked, f));
-      return [single || allFrames.find(f => f.id === 'CUSTOM_EVENT') || allFrames[0]];
+      return [single || allFrames.find(f => f.type === 'custom') || allFrames[0]];
     }
 
     // Mode Multi-Frame: Saring dan urutkan PERSIS sesuai urutan yang ditentukan admin
     if (Array.isArray(activeList) && activeList.length > 0) {
       const ordered = [];
       activeList.forEach(frameId => {
-        const match = allFrames.find(f => isCustomMatch(frameId, f));
+        const match = allFrames.find(f => f.id === frameId || isCustomMatch(frameId, f));
         if (match && !ordered.some(o => o.id === match.id)) {
           ordered.push(match);
         }
       });
-      // Jika event memiliki custom frame dan belum masuk ke ordered, posisikan di urutan pertama
-      if (activeCustomData) {
-        const customItem = allFrames.find(f => f.id === 'CUSTOM_EVENT' || f.dataUrl === activeCustomData);
-        if (customItem && !ordered.some(o => o.id === customItem.id)) {
-          ordered.unshift(customItem);
+      // Pastikan semua custom frame yang aktif juga disertakan di multi-frame
+      allFrames.forEach(f => {
+        if (f.type === 'custom' && !ordered.some(o => o.id === f.id)) {
+          ordered.push(f);
         }
-      }
+      });
       if (ordered.length > 0) return ordered;
     }
   }
@@ -1382,6 +1382,13 @@ function applyEventToUI() {
   document.getElementById('vfFrameBottomHashtag').textContent = ev.hashtagEvent;
   document.getElementById('vfFrameDate').textContent = ev.tanggalEvent || '20.11.2026';
 
+  // Sinkronisasi Gambar QR Code di Layar Selamat Datang
+  const welcomeQrImg = document.getElementById('welcomeQrImg');
+  if (welcomeQrImg) {
+    const eventUrl = getEventShareUrl(ev.idEvent);
+    welcomeQrImg.src = getQrImageUrl(eventUrl, 250);
+  }
+
   // Preload Custom Frame jika ada
   const frameData = ev.customFrameData || ev.customFrameUrl;
   if (frameData) {
@@ -1587,11 +1594,14 @@ function applyActiveFrame(frameId) {
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
   
   let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
-  if (!customUrl && selected && selected.type === 'custom') {
-    customUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+  if (!customUrl) {
+    const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === selected?.id) : null;
+    customUrl = cf?.dataUrl || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
   }
 
-  if (selected && selected.type === 'custom' && customUrl) {
+  const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT' || String(selected.id).indexOf('frame_') === 0 || customUrl));
+
+  if (isCustomFrame && customUrl) {
     if (customImgEl) {
       customImgEl.src = customUrl;
       customImgEl.classList.remove('hidden');
@@ -3164,20 +3174,64 @@ function setAndLockSingleFrame(frameId, frameName) {
     singleSelect.value = frameId;
   }
 
-  // 4. Update data event yang sedang diedit
-  const targetEventId = document.getElementById('formEventId')?.value;
+  // 4. Ambil custom frame data jika bingkai ini adalah custom PNG
+  const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameId) : null;
+  const cfDataUrl = cf ? cf.dataUrl : (STATE.tempCustomFrameData || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl);
+
+  // 5. Update data event yang sedang diedit
+  const targetEventId = document.getElementById('formEventId')?.value || STATE.activeEventId;
   const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
   if (currentEv) {
     currentEv.frameLockMode = 'single';
     currentEv.singleLockedFrame = frameId;
+    currentEv.activeFrames = [frameId];
+    if (cfDataUrl) {
+      currentEv.customFrameData = cfDataUrl;
+      currentEv.customFrameUrl = cfDataUrl;
+      currentEv.customFrameName = frameName || cf?.name || 'Custom Frame';
+    }
+    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
   }
 
-  // 5. Re-render frame settings agar kartu single lock ter-highlight
+  // 6. Sinkronkan ke event aktif seketika agar langsung berfungsi live di kamera
+  if (STATE.activeEvent && (currentEv?.idEvent === STATE.activeEventId || !targetEventId)) {
+    STATE.activeEvent = {
+      ...STATE.activeEvent,
+      frameLockMode: 'single',
+      singleLockedFrame: frameId,
+      activeFrames: [frameId],
+      customFrameData: cfDataUrl || STATE.activeEvent.customFrameData,
+      customFrameUrl: cfDataUrl || STATE.activeEvent.customFrameUrl,
+      customFrameName: frameName || cf?.name || STATE.activeEvent.customFrameName
+    };
+    localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
+    STATE.activeFrame = frameId;
+    applyActiveFrame(frameId);
+  }
+
+  // 7. Background sync ke Google Apps Script
+  if (STATE.gasApiUrl && currentEv) {
+    fetch(STATE.gasApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'adminSaveEvent',
+        idEvent: currentEv.idEvent,
+        eventId: currentEv.idEvent,
+        frameLockMode: 'single',
+        singleLockedFrame: frameId,
+        activeFrames: [frameId],
+        customFrameUrl: cfDataUrl || ''
+      })
+    }).catch(err => console.warn("GAS lock frame sync warn:", err));
+  }
+
+  // 8. Re-render frame settings agar kartu single lock ter-highlight
   renderAdminFrameSettings(currentEv);
 
-  // 6. Scroll halus ke bagian Single Lock agar admin melihat perubahan
+  // 9. Scroll halus ke bagian Single Lock agar admin melihat perubahan
   document.getElementById('containerSingleFrameLock')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  showToast(`🔒 Bingkai "${frameName || frameId}" berhasil dikunci sebagai 1 bingkai seragam wajib acara!`, "success");
+  showToast(`🔒 Bingkai "${frameName || frameId}" AKTIF & TERKUNCI untuk kamera live!`, "success");
 }
 
 function getAllAdminCandidateFrames(eventObj) {
@@ -4384,6 +4438,17 @@ function bindEvents() {
   // Modal Share QR Handlers
   document.getElementById('btnCloseShareQr')?.addEventListener('click', () => {
     document.getElementById('modalShareQr')?.classList.add('hidden');
+  });
+
+  // Tombol Tampilkan QR Code di Layar (Header, Kamera, & Layar Selamat Datang)
+  document.getElementById('btnHeaderQr')?.addEventListener('click', () => {
+    openShareQrModal(STATE.activeEvent);
+  });
+  document.getElementById('btnCamShowQr')?.addEventListener('click', () => {
+    openShareQrModal(STATE.activeEvent);
+  });
+  document.getElementById('welcomeQrClickBox')?.addEventListener('click', () => {
+    openShareQrModal(STATE.activeEvent);
   });
 
   document.getElementById('btnCopyShareUrl')?.addEventListener('click', () => {
