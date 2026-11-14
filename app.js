@@ -43,6 +43,8 @@ const STATE = {
   driveMasterId: localStorage.getItem('snapevent_drive_master_id') || GLOBAL_CONFIG.DEFAULT_DRIVE_MASTER_ID,
   customFrameImgObj: null,
   tempCustomFrameData: null,
+  isNewFrameUploaded: false,
+  userHasSelectedFrame: false,
   customFrames: JSON.parse(localStorage.getItem('snapevent_custom_frames') || '[]'),
   events: JSON.parse(localStorage.getItem('snapevent_events') || '[]'),
   metrics: JSON.parse(localStorage.getItem('snapevent_metrics') || '{"totalEvents":5,"totalPhotos":13,"totalVotes":8}'),
@@ -388,10 +390,14 @@ function getAvailableFrames() {
     const isCustomMatch = (id, frame) => {
       if (!frame) return false;
       if (frame.id === id) return true;
-      const isCustomId = (id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).startsWith('frame_') || String(id).startsWith('FRAME_'));
-      const isFrameCustom = (frame.type === 'custom' || frame.id === 'CUSTOM_EVENT' || String(frame.id).startsWith('frame_') || String(frame.id).startsWith('FRAME_') || (activeCustomData && frame.dataUrl === activeCustomData));
-      if (isCustomId && isFrameCustom) {
-        return true;
+      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
+        return (frame.id === 'CUSTOM_EVENT' || (activeCustomData && frame.dataUrl === activeCustomData) || frame.scope === 'event');
+      }
+      if (String(id).startsWith('frame_') || String(id).startsWith('FRAME_')) {
+        if (frame.id === id) return true;
+        if (frame.id === 'CUSTOM_EVENT') return true;
+        if (activeCustomData && frame.dataUrl === activeCustomData) return true;
+        if (frame.scope === 'event') return true;
       }
       return false;
     };
@@ -764,9 +770,19 @@ async function initApp() {
   loadEventPhotos(STATE.activeEventId);
   loadEventVotes(STATE.activeEventId);
 
-  // Pastikan koleksi bingkai kustom terisi template preset jika belum ada
+  // Pastikan koleksi bingkai kustom terisi template preset jika belum ada dan bebas dari duplikat
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
     STATE.customFrames = getDefaultPresetCustomFrames();
+    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
+  } else {
+    const seenCf = new Set();
+    STATE.customFrames = STATE.customFrames.filter(cf => {
+      if (!cf || !cf.name) return false;
+      const key = `${cf.name.trim().toLowerCase()}__${cf.scope || 'event'}`;
+      if (seenCf.has(key)) return false;
+      seenCf.add(key);
+      return true;
+    });
     localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
   }
 
@@ -850,22 +866,27 @@ async function loadEventData() {
       if (res.status === 'success') {
         const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
         
-        let inferredMode = res.event.frameLockMode || 'multi';
-        let inferredLocked = res.event.singleLockedFrame || 'GOLD_DECO';
-        let inferredFrames = Array.isArray(res.event.activeFrames) ? res.event.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+        let inferredMode = res.event.frameLockMode || localActive?.frameLockMode || 'multi';
+        let inferredLocked = res.event.singleLockedFrame || localActive?.singleLockedFrame || 'GOLD_DECO';
+        let inferredFrames = (Array.isArray(res.event.activeFrames) && res.event.activeFrames.length > 0)
+          ? res.event.activeFrames
+          : (localActive?.activeFrames && localActive.activeFrames.length > 0 ? localActive.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL']);
 
         const rawFrames = res.event.activeFrames;
         if (rawFrames && typeof rawFrames === 'object' && !Array.isArray(rawFrames)) {
           inferredMode = rawFrames.mode || inferredMode;
           inferredLocked = rawFrames.locked || inferredLocked;
-          inferredFrames = Array.isArray(rawFrames.frames) ? rawFrames.frames : [inferredLocked];
+          inferredFrames = Array.isArray(rawFrames.frames) && rawFrames.frames.length > 0 ? rawFrames.frames : [inferredLocked];
         }
 
-        if (res.event.customFrameUrl) {
-          if (inferredMode === 'single' && (inferredLocked === 'CUSTOM_EVENT' || String(inferredLocked).indexOf('frame_') === 0 || inferredLocked === 'GOLD_DECO')) {
+        const activeCustomUrl = res.event.customFrameUrl || localActive?.customFrameUrl || '';
+        const activeCustomData = localActive?.customFrameData || activeCustomUrl;
+
+        if (activeCustomUrl) {
+          if (inferredMode === 'single' && (inferredLocked === 'CUSTOM_EVENT' || inferredLocked === 'CUSTOM')) {
             inferredLocked = 'CUSTOM_EVENT';
           }
-          if (Array.isArray(inferredFrames) && !inferredFrames.includes('CUSTOM_EVENT')) {
+          if (Array.isArray(inferredFrames) && !inferredFrames.some(f => f === 'CUSTOM_EVENT' || String(f).startsWith('frame_') || String(f).startsWith('FRAME_'))) {
             inferredFrames.unshift('CUSTOM_EVENT');
           }
         }
@@ -879,9 +900,10 @@ async function loadEventData() {
           frameLockMode: inferredMode,
           singleLockedFrame: inferredLocked,
           activeFrames: inferredFrames,
-          customFrameData: localActive?.customFrameData || res.event.customFrameUrl || '',
-          customFrameUrl: res.event.customFrameUrl || localActive?.customFrameUrl || ''
+          customFrameData: activeCustomData,
+          customFrameUrl: activeCustomUrl
         };
+        localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
         STATE.activeCategories = res.categories || [];
 
         if (res.metrics) {
@@ -889,26 +911,31 @@ async function loadEventData() {
           localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
         }
 
-        // Sinkronkan seluruh event secara defensif
+        // Sinkronkan seluruh event secara defensif (Pertahankan frame dan kustomisasi lokal jika server absen)
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
           STATE.events = res.allEvents.map(serverEv => {
             const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
-            let sMode = serverEv.frameLockMode || 'multi';
-            let sLocked = serverEv.singleLockedFrame || 'GOLD_DECO';
-            let sFrames = Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+            let sMode = serverEv.frameLockMode || localEv?.frameLockMode || 'multi';
+            let sLocked = serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO';
+            let sFrames = (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
+              ? serverEv.activeFrames
+              : (localEv?.activeFrames && localEv.activeFrames.length > 0 ? localEv.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL']);
 
             const sRaw = serverEv.activeFrames;
             if (sRaw && typeof sRaw === 'object' && !Array.isArray(sRaw)) {
               sMode = sRaw.mode || sMode;
               sLocked = sRaw.locked || sLocked;
-              sFrames = Array.isArray(sRaw.frames) ? sRaw.frames : [sLocked];
+              sFrames = Array.isArray(sRaw.frames) && sRaw.frames.length > 0 ? sRaw.frames : [sLocked];
             }
 
-            if (serverEv.customFrameUrl) {
-              if (sMode === 'single' && (sLocked === 'CUSTOM_EVENT' || String(sLocked).indexOf('frame_') === 0 || sLocked === 'GOLD_DECO')) {
+            const sCustomUrl = serverEv.customFrameUrl || localEv?.customFrameUrl || '';
+            const sCustomData = localEv?.customFrameData || sCustomUrl;
+
+            if (sCustomUrl) {
+              if (sMode === 'single' && (sLocked === 'CUSTOM_EVENT' || sLocked === 'CUSTOM')) {
                 sLocked = 'CUSTOM_EVENT';
               }
-              if (Array.isArray(sFrames) && !sFrames.includes('CUSTOM_EVENT')) {
+              if (Array.isArray(sFrames) && !sFrames.some(f => f === 'CUSTOM_EVENT' || String(f).startsWith('frame_') || String(f).startsWith('FRAME_'))) {
                 sFrames.unshift('CUSTOM_EVENT');
               }
             }
@@ -919,8 +946,8 @@ async function loadEventData() {
               frameLockMode: sMode,
               singleLockedFrame: sLocked,
               activeFrames: sFrames,
-              customFrameData: localEv?.customFrameData || serverEv.customFrameUrl || '',
-              customFrameUrl: serverEv.customFrameUrl || localEv?.customFrameUrl || ''
+              customFrameData: sCustomData,
+              customFrameUrl: sCustomUrl
             };
           });
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
@@ -3354,6 +3381,17 @@ function getAllAdminCandidateFrames(eventObj) {
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
     STATE.customFrames = getDefaultPresetCustomFrames();
     localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
+  } else {
+    // Bersihkan duplikat di STATE.customFrames berdasarkan nama dan scope/eventId
+    const seenCf = new Set();
+    STATE.customFrames = STATE.customFrames.filter(cf => {
+      if (!cf || !cf.name) return false;
+      const key = `${cf.name.trim().toLowerCase()}__${cf.scope || 'event'}`;
+      if (seenCf.has(key)) return false;
+      seenCf.add(key);
+      return true;
+    });
+    localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
   }
 
   const frames = [
@@ -3363,16 +3401,21 @@ function getAllAdminCandidateFrames(eventObj) {
     { id: 'NONE', name: 'Tanpa Bingkai', type: 'builtin', icon: '🚫' }
   ];
 
-  // Custom frames tersimpan di koleksi (global atau spesifik event ini)
   const currentEvId = eventObj ? getResolvedEventId(eventObj.idEvent) : getResolvedEventId(STATE.activeEventId);
+  const seenFrameNames = new Set(['✨ gold deco', '📷 polaroid', '▪️ minimalist', 'tanpa bingkai']);
+
   if (Array.isArray(STATE.customFrames)) {
     STATE.customFrames.forEach(cf => {
       const cfEvId = cf.eventId ? getResolvedEventId(cf.eventId) : '';
       if (cf.scope === 'global' || !cf.eventId || cfEvId === currentEvId) {
-        if (!frames.some(f => f.id === cf.id)) {
+        const cleanName = (cf.name || '').trim().toLowerCase();
+        if (!frames.some(f => f.id === cf.id) && !seenFrameNames.has(cleanName)) {
+          seenFrameNames.add(cleanName);
+          const rawName = cf.name.startsWith('🖼️') ? cf.name : `🖼️ ${cf.name}`;
+          const displayName = rawName.includes('(') ? rawName : `${rawName} (${cf.scope === 'global' ? 'Global' : 'Acara'})`;
           frames.push({
             id: cf.id,
-            name: `🖼️ ${cf.name || 'Bingkai Kustom'} (${cf.scope === 'global' ? 'Global' : 'Acara'})`,
+            name: displayName,
             type: 'custom',
             scope: cf.scope,
             dataUrl: cf.dataUrl,
@@ -3385,7 +3428,8 @@ function getAllAdminCandidateFrames(eventObj) {
 
   // Custom frame yang baru diunggah di form atau tersimpan di event ini jika belum ada di list
   const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
-  if (eventCustomData && !frames.some(f => f.dataUrl === eventCustomData)) {
+  const eventFrameName = (eventObj?.customFrameName || `${eventObj?.namaEvent || 'Acara'} Frame`).trim().toLowerCase();
+  if (eventCustomData && !frames.some(f => f.dataUrl === eventCustomData) && !seenFrameNames.has(eventFrameName)) {
     frames.push({
       id: 'CUSTOM_EVENT',
       name: eventObj?.customFrameName ? `🖼️ ${eventObj.customFrameName}` : '🖼️ Bingkai Kustom Acara (Custom PNG)',
@@ -3472,12 +3516,25 @@ function renderAdminFrameSettings(eventObj) {
 
   // Urutkan candidateFrames: yang ada di activeOrder disusun terlebih dahulu sesuai indexnya
   const eventCustomData = STATE.tempCustomFrameData || eventObj?.customFrameData || eventObj?.customFrameUrl;
+  const currentEvId = eventObj ? getResolvedEventId(eventObj.idEvent) : getResolvedEventId(STATE.activeEventId);
+
+  const isCustomMatch = (id, f) => {
+    if (!f) return false;
+    if (f.id === id) return true;
+    const isCustomId = (id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).startsWith('frame_') || String(id).startsWith('FRAME_'));
+    const isEvCustom = (f.type === 'custom' || f.id === 'CUSTOM_EVENT' || String(f.id).startsWith('frame_') || String(f.id).startsWith('FRAME_') || (eventCustomData && f.dataUrl === eventCustomData));
+    if (isCustomId && isEvCustom) {
+      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') return true;
+      if (f.id === 'CUSTOM_EVENT') return true;
+      if (f.scope === 'event' && (!f.eventId || getResolvedEventId(f.eventId) === currentEvId)) return true;
+      if (eventCustomData && f.dataUrl === eventCustomData) return true;
+    }
+    return false;
+  };
+
   const sortedFrames = [];
   activeOrder.forEach(id => {
-    const found = candidateFrames.find(f => 
-      f.id === id || 
-      (id === 'CUSTOM_EVENT' && (f.id === 'CUSTOM_EVENT' || (eventCustomData && f.dataUrl === eventCustomData)))
-    );
+    const found = candidateFrames.find(f => isCustomMatch(id, f));
     if (found && !sortedFrames.some(s => s.id === found.id)) {
       sortedFrames.push(found);
     }
@@ -3488,7 +3545,11 @@ function renderAdminFrameSettings(eventObj) {
     }
   });
 
-  const currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
+  let currentLocked = eventObj?.singleLockedFrame || sortedFrames[0]?.id || 'GOLD_DECO';
+  const lockedInSorted = sortedFrames.find(f => isCustomMatch(currentLocked, f));
+  if (lockedInSorted) {
+    currentLocked = lockedInSorted.id;
+  }
 
   // 1. Render Dropdown Single Frame Lock dengan Optgroup Standar & Kustom
   if (singleSelect) {
@@ -3513,8 +3574,7 @@ function renderAdminFrameSettings(eventObj) {
   if (container) {
     container.innerHTML = '';
     sortedFrames.forEach((frame) => {
-      const isCustomMatch = (frame.id === 'CUSTOM_EVENT' && activeOrder.some(a => a === 'CUSTOM_EVENT' || a === 'CUSTOM'));
-      const isChecked = activeOrder.includes(frame.id) || isCustomMatch || (!eventObj && frame.id !== 'NONE');
+      const isChecked = activeOrder.some(a => isCustomMatch(a, frame)) || (!eventObj && frame.id !== 'NONE');
       const row = document.createElement('div');
       row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
       row.setAttribute('draggable', 'true');
@@ -3654,6 +3714,7 @@ function resetCreateEventForm() {
   ]);
 
   STATE.tempCustomFrameData = null;
+  STATE.isNewFrameUploaded = false;
   document.getElementById('formEventCustomFrame').value = '';
   document.getElementById('customFramePreviewBox').classList.add('hidden');
   document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
@@ -3934,6 +3995,7 @@ function populateEditEventForm(ev) {
     btnRemove.classList.add('hidden');
     STATE.tempCustomFrameData = null;
   }
+  STATE.isNewFrameUploaded = false;
   document.getElementById('formEventCustomFrame').value = '';
 
   const radios = document.getElementsByName('revealModeRadio');
@@ -4103,20 +4165,33 @@ async function saveAdminEventForm() {
     categories: cats
   });
 
-  // Simpan Bingkai Kustom Baru jika ada unggahan
-  if (STATE.tempCustomFrameData) {
+  // Simpan Bingkai Kustom Baru HANYA jika pengguna benar-benar mengunggah file baru lewat form input
+  if (STATE.isNewFrameUploaded && STATE.tempCustomFrameData) {
     const scope = document.getElementById('formEventFrameScope')?.value || 'event';
     const frameName = document.getElementById('formEventFrameName')?.value.trim() || `${nama} Frame`;
-    const newFrameId = 'frame_' + Date.now();
-    const newFrameObj = {
-      id: newFrameId,
-      name: frameName,
-      scope: scope,
-      eventId: savedEvent.idEvent,
-      dataUrl: STATE.tempCustomFrameData
-    };
+    
     if (!Array.isArray(STATE.customFrames)) STATE.customFrames = [];
-    STATE.customFrames.unshift(newFrameObj);
+    const existingCfIdx = STATE.customFrames.findIndex(cf => 
+      cf && (cf.eventId === savedEvent.idEvent || cf.name.trim().toLowerCase() === frameName.toLowerCase())
+    );
+
+    let newFrameId;
+    if (existingCfIdx >= 0) {
+      STATE.customFrames[existingCfIdx].dataUrl = STATE.tempCustomFrameData;
+      STATE.customFrames[existingCfIdx].scope = scope;
+      STATE.customFrames[existingCfIdx].name = frameName;
+      newFrameId = STATE.customFrames[existingCfIdx].id;
+    } else {
+      newFrameId = 'frame_' + Date.now();
+      const newFrameObj = {
+        id: newFrameId,
+        name: frameName,
+        scope: scope,
+        eventId: savedEvent.idEvent,
+        dataUrl: STATE.tempCustomFrameData
+      };
+      STATE.customFrames.unshift(newFrameObj);
+    }
     localStorage.setItem('snapevent_custom_frames', JSON.stringify(STATE.customFrames));
 
     if (frameLockMode === 'multi' && !activeFrames.includes(newFrameId)) {
@@ -4127,7 +4202,7 @@ async function saveAdminEventForm() {
       savedEvent.singleLockedFrame = newFrameId;
       savedEvent.activeFrames = [newFrameId];
     }
-    STATE.tempCustomFrameData = null;
+    STATE.isNewFrameUploaded = false;
   }
 
   // Update Koleksi Acara Global (Multi-Event Management)
@@ -4145,6 +4220,8 @@ async function saveAdminEventForm() {
     STATE.activeEventId = savedEvent.idEvent;
     STATE.activeEvent = savedEvent;
     STATE.activeCategories = cats;
+    localStorage.setItem('snapevent_active_event_id', savedEvent.idEvent);
+    localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
     applyEventToUI();
     const avail = getAvailableFrames();
     if (!avail.some(f => f.id === STATE.activeFrame)) {
@@ -4710,6 +4787,7 @@ function bindEvents() {
     reader.onload = (ev) => {
       const dataUrl = ev.target.result;
       STATE.tempCustomFrameData = dataUrl;
+      STATE.isNewFrameUploaded = true;
       document.getElementById('customFramePreviewImg').src = dataUrl;
       document.getElementById('customFramePreviewBox').classList.remove('hidden');
       document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
@@ -4725,6 +4803,7 @@ function bindEvents() {
 
   document.getElementById('btnRemoveCustomFrame').addEventListener('click', () => {
     STATE.tempCustomFrameData = null;
+    STATE.isNewFrameUploaded = false;
     document.getElementById('formEventCustomFrame').value = '';
     document.getElementById('customFramePreviewBox').classList.add('hidden');
     document.getElementById('btnRemoveCustomFrame').classList.add('hidden');

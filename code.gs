@@ -1652,10 +1652,13 @@ function handleAdminSaveEvent(payload) {
 
     return {
       status: "success",
-      message: "Event '" + namaEvent + "' berhasil disimpan!",
+      message: "Event '" + finalNama + "' berhasil disimpan!",
       idEvent: savedIdEvent,
-      gdriveFolderId: folderId,
-      customFrameUrl: customFrameUrl
+      gdriveFolderId: finalFolder,
+      customFrameUrl: finalFrameUrl,
+      activeFrames: framesObj.frames,
+      frameLockMode: framesObj.mode,
+      singleLockedFrame: framesObj.locked
     };
   } finally {
     lock.releaseLock();
