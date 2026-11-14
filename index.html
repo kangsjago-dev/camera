@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.1.0" defer></script>
+  <script src="app.js?v=2.1.1" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -791,11 +791,11 @@
             <div>
               <div class="flex items-center justify-between mb-1">
                 <label class="block text-xs font-semibold text-zinc-300">URL Backend Google Apps Script (Web App Endpoint) <span class="text-amber-400 font-bold">*Wajib Cloud</span></label>
-                <button type="button" id="btnTestGasConnection" class="text-[11px] font-bold text-brand-gold hover:text-amber-300 flex items-center gap-1 transition" title="Uji Koneksi Backend GAS">
+                <button type="button" id="btnTestGasConnection" class="text-[11px] font-bold text-brand-gold hover:text-amber-300 flex items-center gap-1 transition cursor-pointer" title="Uji Koneksi Backend GAS">
                   <span>⚡ Tes Koneksi & Sinkronisasi</span>
                 </button>
               </div>
-              <input type="text" id="cfgGasUrl" value="https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec" placeholder="https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec" class="w-full bg-[#111116] border border-amber-500/40 focus:border-brand-gold rounded-xl px-3.5 py-2.5 text-xs text-white outline-none" />
+              <input type="text" id="cfgGasUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-[#111116] border border-amber-500/40 focus:border-brand-gold rounded-xl px-3.5 py-2.5 text-xs text-white outline-none selection:bg-brand-gold selection:text-black cursor-text" autocomplete="off" spellcheck="false" />
               <p class="text-[10px] text-amber-300/80 mt-1">⚠️ Wajib diisi agar settingan, nama brand, folder Drive, dan foto tamu tersimpan ke Google Sheets & berubah di semua perangkat/HP tamu.</p>
             </div>
 

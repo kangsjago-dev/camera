@@ -13,10 +13,12 @@ const GLOBAL_CONFIG = {
   DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };
 
-// URL Query Param Overrides (untuk sinkronisasi instan antar perangkat / link QR)
+// URL Query Param Overrides (hanya terapkan jika user belum menetapkan URL kustom mandiri)
 const URL_PARAMS = new URLSearchParams(window.location.search);
-if (URL_PARAMS.get('gas') && URL_PARAMS.get('gas').trim().startsWith('http')) {
-  localStorage.setItem('snapevent_gas_url', URL_PARAMS.get('gas').trim());
+const hasCustomSavedGas = localStorage.getItem('snapevent_gas_url_custom') === 'true';
+const paramGas = URL_PARAMS.get('gas');
+if (paramGas && paramGas.trim().startsWith('http') && !hasCustomSavedGas) {
+  localStorage.setItem('snapevent_gas_url', paramGas.trim());
 }
 
 // Auto-migrasi URL lama yang dead/404 ke endpoint GAS yang aktif
@@ -687,10 +689,13 @@ async function initApp() {
   // 0. Deteksi Parameter URL Cloud Bridge (?gas=... & ?event=...) atau Gunakan Default Cloud Deployment
   const urlParams = new URLSearchParams(window.location.search);
   const gasFromUrl = urlParams.get('gas');
-  if (gasFromUrl && gasFromUrl.trim().startsWith('http')) {
+  const hasCustomSavedGas = localStorage.getItem('snapevent_gas_url_custom') === 'true';
+  if (gasFromUrl && gasFromUrl.trim().startsWith('http') && !hasCustomSavedGas) {
     STATE.gasApiUrl = decodeURIComponent(gasFromUrl.trim());
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
-  } else if (!localStorage.getItem('snapevent_gas_url') || !localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) {
+  } else if (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) {
+    STATE.gasApiUrl = localStorage.getItem('snapevent_gas_url').trim();
+  } else {
     STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
   }
@@ -1106,6 +1111,7 @@ async function syncEventsFromBackend(showToastNotice = false) {
       if (enteredUrl && enteredUrl.trim().startsWith("http")) {
         STATE.gasApiUrl = enteredUrl.trim();
         localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
+        localStorage.setItem('snapevent_gas_url_custom', 'true');
         const inputEl = document.getElementById('cfgGasUrl');
         if (inputEl) inputEl.value = STATE.gasApiUrl;
         showToast("URL GAS berhasil disimpan! Melakukan sinkronisasi...", "info");
@@ -3962,15 +3968,25 @@ function renderAdminDashboard() {
       });
     }
 
-    // Config Form Values
-    if (document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = STATE.gasApiUrl;
-    if (document.getElementById('cfgAppTitle')) document.getElementById('cfgAppTitle').value = STATE.appTitle;
-    if (document.getElementById('cfgAppLogoUrl')) document.getElementById('cfgAppLogoUrl').value = STATE.appLogoUrl;
-    if (document.getElementById('cfgAppPhone')) document.getElementById('cfgAppPhone').value = STATE.appPhone;
-    if (document.getElementById('cfgAppInstagram')) document.getElementById('cfgAppInstagram').value = STATE.appInstagram;
-    if (document.getElementById('cfgAdminUser')) document.getElementById('cfgAdminUser').value = STATE.adminUser;
-    if (document.getElementById('cfgAdminPass')) document.getElementById('cfgAdminPass').value = STATE.adminPass;
-    if (document.getElementById('cfgDriveMasterId')) document.getElementById('cfgDriveMasterId').value = STATE.driveMasterId;
+    // Config Form Values (Lindungi dari overwrite saat user sedang fokus / mengetik)
+    const gasInput = document.getElementById('cfgGasUrl');
+    if (gasInput && document.activeElement !== gasInput) {
+      gasInput.value = STATE.gasApiUrl || '';
+    }
+    const titleInput = document.getElementById('cfgAppTitle');
+    if (titleInput && document.activeElement !== titleInput) titleInput.value = STATE.appTitle || '';
+    const logoInput = document.getElementById('cfgAppLogoUrl');
+    if (logoInput && document.activeElement !== logoInput) logoInput.value = STATE.appLogoUrl || '';
+    const phoneInput = document.getElementById('cfgAppPhone');
+    if (phoneInput && document.activeElement !== phoneInput) phoneInput.value = STATE.appPhone || '';
+    const igInput = document.getElementById('cfgAppInstagram');
+    if (igInput && document.activeElement !== igInput) igInput.value = STATE.appInstagram || '';
+    const userInput = document.getElementById('cfgAdminUser');
+    if (userInput && document.activeElement !== userInput) userInput.value = STATE.adminUser || '';
+    const passInput = document.getElementById('cfgAdminPass');
+    if (passInput && document.activeElement !== passInput) passInput.value = STATE.adminPass || '';
+    const driveInput = document.getElementById('cfgDriveMasterId');
+    if (driveInput && document.activeElement !== driveInput) driveInput.value = STATE.driveMasterId || '';
 
     // Render User Accounts List & Frames List
     renderUserAccountsList();
@@ -4677,6 +4693,11 @@ async function testGasConnection() {
     return;
   }
 
+  // Segera simpan URL ini ke sistem agar tidak pernah hilang atau tertimpa
+  STATE.gasApiUrl = url;
+  localStorage.setItem('snapevent_gas_url', url);
+  localStorage.setItem('snapevent_gas_url_custom', 'true');
+
   showToast("Menguji koneksi ke Google Apps Script...", "info");
   try {
     const resp = await fetch(`${url}?action=ping`, {
@@ -4685,8 +4706,6 @@ async function testGasConnection() {
     });
     const res = await resp.json();
     if (res.status === 'success') {
-      STATE.gasApiUrl = url;
-      localStorage.setItem('snapevent_gas_url', url);
       showToast("✅ Berhasil! Google Apps Script Online & Sinkronisasi Aktif.", "success");
       await loadEventData();
     } else {
@@ -4694,7 +4713,7 @@ async function testGasConnection() {
     }
   } catch (err) {
     console.error("Test GAS connection error:", err);
-    showToast("❌ Gagal terhubung ke GAS. Pastikan saat deploy Web App dipilih 'Who has access: Anyone'!", "error");
+    showToast("⚠️ URL berhasil disimpan! (Catatan: Pastikan saat deploy Web App dipilih 'Who has access: Anyone')", "info");
   }
 }
 
@@ -4702,6 +4721,32 @@ async function testGasConnection() {
 function bindEvents() {
   // Tombol Uji Koneksi & Sinkronisasi GAS
   document.getElementById('btnTestGasConnection')?.addEventListener('click', testGasConnection);
+
+  // Auto-Save Realtime untuk Input URL Backend GAS (Anti Hilang & Anti Overwrite)
+  const gasInput = document.getElementById('cfgGasUrl');
+  if (gasInput) {
+    const syncGasUrlInstant = (e) => {
+      const val = e.target.value.trim();
+      if (val && val.startsWith('http')) {
+        STATE.gasApiUrl = val;
+        localStorage.setItem('snapevent_gas_url', val);
+        localStorage.setItem('snapevent_gas_url_custom', 'true');
+      }
+    };
+    gasInput.addEventListener('input', syncGasUrlInstant);
+    gasInput.addEventListener('change', syncGasUrlInstant);
+    gasInput.addEventListener('paste', () => {
+      setTimeout(() => {
+        const val = gasInput.value.trim();
+        if (val && val.startsWith('http')) {
+          STATE.gasApiUrl = val;
+          localStorage.setItem('snapevent_gas_url', val);
+          localStorage.setItem('snapevent_gas_url_custom', 'true');
+          showToast("URL Backend berhasil ditempel & disimpan!", "info");
+        }
+      }, 50);
+    });
+  }
   // Welcome View Guest Name Submit (MANDATORY GATE)
   document.getElementById('btnStartCamera').addEventListener('click', () => {
     const nameInput = document.getElementById('inputGuestName');
@@ -5279,6 +5324,7 @@ function bindEvents() {
     STATE.podiumDisplayMode = podiumMode;
 
     localStorage.setItem('snapevent_gas_url', url);
+    localStorage.setItem('snapevent_gas_url_custom', 'true');
     localStorage.setItem('snapevent_app_title', appTitle);
     localStorage.setItem('snapevent_app_logo_url', appLogoUrl);
     localStorage.setItem('snapevent_app_phone', appPhone);
@@ -5362,6 +5408,7 @@ function bindEvents() {
 
   document.getElementById('btnResetDemoData').addEventListener('click', () => {
     localStorage.removeItem('snapevent_gas_url');
+    localStorage.removeItem('snapevent_gas_url_custom');
     localStorage.removeItem('snapevent_admin_user');
     localStorage.removeItem('snapevent_admin_pass');
     STATE.gasApiUrl = GLOBAL_CONFIG.DEFAULT_GAS_URL;
@@ -5445,7 +5492,9 @@ function showToast(message, type = 'info') {
 // Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
 // dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
 setInterval(() => {
-  if (STATE.gasApiUrl && !document.hidden) {
+  const gasInput = document.getElementById('cfgGasUrl');
+  const isEditingSettings = gasInput && (document.activeElement === gasInput || !document.getElementById('adminTabSettings')?.classList.contains('hidden'));
+  if (STATE.gasApiUrl && !document.hidden && !isEditingSettings) {
     loadEventData();
   }
 }, 45000);
@@ -5462,7 +5511,9 @@ setInterval(() => {
 }, 6000);
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && STATE.gasApiUrl) {
+  const gasInput = document.getElementById('cfgGasUrl');
+  const isEditingSettings = gasInput && (document.activeElement === gasInput || !document.getElementById('adminTabSettings')?.classList.contains('hidden'));
+  if (!document.hidden && STATE.gasApiUrl && !isEditingSettings) {
     loadEventData();
     loadGallery();
   }
