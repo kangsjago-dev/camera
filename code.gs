@@ -313,6 +313,44 @@ function doGet(e) {
       return createJsonResponse(handleAdminDeleteEvent(params));
     }
 
+    if (action === "adminUpdateGlobalConfig") {
+      let updates = {};
+      if (params.updates) {
+        updates = parseJsonSafe(params.updates, {});
+      } else {
+        updates = params;
+      }
+      return createJsonResponse(handleAdminUpdateGlobalConfig({ updates: updates }));
+    }
+
+    if (action === "adminToggleReveal") {
+      let isRevParam = params.isRevealed;
+      if (isRevParam === "true" || isRevParam === "TRUE" || isRevParam === true) isRevParam = true;
+      else if (isRevParam === "false" || isRevParam === "FALSE" || isRevParam === false) isRevParam = false;
+      return createJsonResponse(handleAdminToggleReveal({
+        eventId: params.eventId || params.idEvent || "",
+        idEvent: params.idEvent || params.eventId || "",
+        isRevealed: isRevParam
+      }));
+    }
+
+    if (action === "adminSetActiveEvent") {
+      return createJsonResponse(handleAdminSetActiveEvent({
+        idEvent: params.idEvent || params.eventId || "",
+        eventId: params.eventId || params.idEvent || ""
+      }));
+    }
+
+    if (action === "adminSaveEvent") {
+      let evData = {};
+      if (params.eventData) {
+        evData = parseJsonSafe(params.eventData, {});
+      } else {
+        evData = params;
+      }
+      return createJsonResponse(handleAdminSaveEvent(evData));
+    }
+
     return createJsonResponse({
       status: "error",
       message: "Action GET '" + action + "' tidak dikenali."

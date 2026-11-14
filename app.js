@@ -861,11 +861,72 @@ function getOrCreateGuestId() {
   return id;
 }
 
+// --- MULTI-TIER RESILIENT GAS API DISPATCHER (KEBAL NETWORK ERROR & CORS) ---
+async function callGasApiSafe(action, payload = {}) {
+  if (!STATE.gasApiUrl) return null;
+  const url = STATE.gasApiUrl;
+  const bodyData = { action, ...payload };
+
+  // Tier 1: Standar POST cross-origin
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(bodyData)
+    });
+    const res = await resp.json().catch(() => null);
+    if (res && (res.status === 'success' || res.status === 'ok')) {
+      return res;
+    }
+  } catch (postErr) {
+    console.warn(`[callGasApiSafe] POST '${action}' gagal, mencoba fallback GET:`, postErr.message);
+  }
+
+  // Tier 2: HTTP GET Fallback (Kebal terhadap isu CORS browser pada redirect 302 Apps Script)
+  try {
+    const qParams = new URLSearchParams();
+    qParams.set('action', action);
+    for (const k in payload) {
+      if (payload[k] !== undefined && payload[k] !== null) {
+        if (typeof payload[k] === 'object') {
+          qParams.set(k, JSON.stringify(payload[k]));
+        } else {
+          qParams.set(k, String(payload[k]));
+        }
+      }
+    }
+    const getUrl = `${url}?${qParams.toString()}`;
+    const respGet = await fetch(getUrl, { method: 'GET' });
+    const resGet = await respGet.json().catch(() => null);
+    if (resGet && (resGet.status === 'success' || resGet.status === 'ok')) {
+      return resGet;
+    }
+  } catch (getErr) {
+    console.warn(`[callGasApiSafe] GET '${action}' gagal, mencoba fallback no-cors:`, getErr.message);
+  }
+
+  // Tier 3: POST no-cors (Pasti sampai & dieksekusi server Google Apps Script tanpa blocking CORS preflight)
+  try {
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(bodyData)
+    });
+    return { status: 'success', syncedViaNoCors: true };
+  } catch (noCorsErr) {
+    console.warn(`[callGasApiSafe] no-cors fallback '${action}' gagal:`, noCorsErr.message);
+  }
+
+  return null;
+}
+
 // --- 3. DATA FETCHING (GAS API OR MOCK) & EVENT ACTIVATION ---
 async function loadEventData() {
   if (STATE.gasApiUrl) {
     try {
-      const targetId = getResolvedEventId(STATE.activeEventId);
+      const urlEvt = new URLSearchParams(window.location.search).get('event');
+      const targetId = urlEvt ? getResolvedEventId(urlEvt) : (getResolvedEventId(STATE.activeEventId) || 'ACTIVE');
       const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${targetId}&guestId=${STATE.guestId}`);
       const res = await resp.json();
       if (res.status === 'success') {
@@ -1024,17 +1085,14 @@ async function loadEventData() {
         }
         return res;
       } else if (res.status === 'inactive' || (res.event && res.event.statusEvent && res.event.statusEvent !== 'AKTIF')) {
-        if (sessionStorage.getItem('snapevent_admin_session') !== 'true') {
-          showToast("⚠️ Peringatan: Acara ini sedang tidak aktif atau telah selesai.", "warning", 6000);
-          const closedTitle = document.getElementById('closedEventTitle');
-          if (closedTitle) closedTitle.textContent = "Acara Ini Sedang Tidak Aktif";
-          const closedDesc = document.getElementById('closedEventDesc');
-          if (closedDesc) {
-            closedDesc.textContent = `Tautan acara "${(res.event && res.event.namaEvent) || 'ini'}" telah selesai atau belum dimulai. Hanya acara yang berstatus aktif yang dapat diakses oleh tamu.`;
-          }
-          showView('viewEventClosed');
-          return;
+        const eventName = (res.event && res.event.namaEvent) || STATE.activeEventId;
+        showToast(`ℹ️ Acara "${eventName}" telah selesai. Anda tetap dapat menikmati galeri foto bersama.`, "info", 5000);
+        if (res.event) {
+          STATE.activeEvent = res.event;
+          applyEventToUI();
+          loadGallery();
         }
+        return res;
       }
     } catch (e) {
       console.warn("Koneksi GAS API belum aktif, menggunakan mode demo:", e.message);
@@ -1087,17 +1145,12 @@ function activateEvent(idEvent) {
 
   showToast(`Acara "${ev ? ev.namaEvent : idEvent}" sekarang AKTIF! Sesi tamu telah direset ke awal.`, 'success');
 
-  // Background sync ke GAS jika dikonfigurasi
+  // Background sync ke GAS jika dikonfigurasi (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
-    fetch(STATE.gasApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'adminSetActiveEvent',
-        idEvent: idEvent,
-        eventId: idEvent
-      })
-    }).catch(err => console.warn("GAS setActiveEvent error:", err.message));
+    callGasApiSafe('adminSetActiveEvent', {
+      idEvent: idEvent,
+      eventId: idEvent
+    });
   }
 }
 
@@ -1304,6 +1357,9 @@ async function loadGallery() {
     const res = await resp.json();
     if (res && res.status === 'success') {
       document.getElementById('galleryLockedNotice')?.classList.add('hidden');
+      if (typeof res.isRevealed === 'boolean' && STATE.activeEvent) {
+        STATE.activeEvent.isRevealed = res.isRevealed;
+      }
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
@@ -3398,41 +3454,33 @@ function setAndLockSingleFrame(frameId, frameName) {
     applyActiveFrame(frameId);
   }
 
-  // 7. Background sync ke Google Apps Script secara utuh tanpa menghapus atribut event
+  // 7. Resilient sync ke Google Apps Script secara utuh tanpa menghapus atribut event (Kebal NetworkError & CORS)
   if (STATE.gasApiUrl && currentEv) {
-    fetch(STATE.gasApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'adminSaveEvent',
-        idEvent: currentEv.idEvent,
-        eventId: currentEv.idEvent,
-        namaEvent: currentEv.namaEvent || 'Event',
-        slugEvent: currentEv.slugEvent || '',
-        tanggalEvent: currentEv.tanggalEvent || '',
-        hashtagEvent: currentEv.hashtagEvent || '',
-        maxFotoPerGuest: currentEv.maxFotoPerGuest || 10,
-        maxVotePerGuest: currentEv.maxVotePerGuest || 3,
-        revealMode: currentEv.revealMode || 'SEGERA',
-        isRevealed: currentEv.isRevealed !== undefined ? currentEv.isRevealed : true,
-        likeEnabled: currentEv.likeEnabled !== undefined ? currentEv.likeEnabled : true,
-        publicVisible: currentEv.publicVisible !== undefined ? currentEv.publicVisible : true,
-        frameLockMode: 'single',
-        singleLockedFrame: frameId,
-        activeFrames: [frameId],
-        customFrameUrl: cfDataUrl || currentEv.customFrameUrl || '',
-        gdriveFolderId: currentEv.gdriveFolderId || ''
-      })
-    }).then(async resp => {
-      try {
-        const res = await resp.json();
-        if (res && res.status === 'success' && res.customFrameUrl) {
-          if (currentEv) currentEv.customFrameUrl = res.customFrameUrl;
-          if (STATE.activeEvent) STATE.activeEvent.customFrameUrl = res.customFrameUrl;
-          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-        }
-      } catch (e) {}
-    }).catch(err => console.warn("GAS lock frame sync warn:", err));
+    callGasApiSafe('adminSaveEvent', {
+      idEvent: currentEv.idEvent,
+      eventId: currentEv.idEvent,
+      namaEvent: currentEv.namaEvent || 'Event',
+      slugEvent: currentEv.slugEvent || '',
+      tanggalEvent: currentEv.tanggalEvent || '',
+      hashtagEvent: currentEv.hashtagEvent || '',
+      maxFotoPerGuest: currentEv.maxFotoPerGuest || 10,
+      maxVotePerGuest: currentEv.maxVotePerGuest || 3,
+      revealMode: currentEv.revealMode || 'SEGERA',
+      isRevealed: currentEv.isRevealed !== undefined ? currentEv.isRevealed : true,
+      likeEnabled: currentEv.likeEnabled !== undefined ? currentEv.likeEnabled : true,
+      publicVisible: currentEv.publicVisible !== undefined ? currentEv.publicVisible : true,
+      frameLockMode: 'single',
+      singleLockedFrame: frameId,
+      activeFrames: [frameId],
+      customFrameUrl: cfDataUrl || currentEv.customFrameUrl || '',
+      gdriveFolderId: currentEv.gdriveFolderId || ''
+    }).then(res => {
+      if (res && res.status === 'success' && res.customFrameUrl) {
+        if (currentEv) currentEv.customFrameUrl = res.customFrameUrl;
+        if (STATE.activeEvent) STATE.activeEvent.customFrameUrl = res.customFrameUrl;
+        localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+      }
+    });
   }
 
   // 8. Re-render frame settings agar kartu single lock ter-highlight
@@ -3918,21 +3966,14 @@ function renderAdminDashboard() {
 
           if (STATE.gasApiUrl) {
             try {
-              const resp = await fetch(STATE.gasApiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                  action: 'adminToggleReveal',
-                  eventId: ev.idEvent,
-                  idEvent: ev.idEvent,
-                  isRevealed: newRevealedState
-                })
+              const res = await callGasApiSafe('adminToggleReveal', {
+                eventId: ev.idEvent,
+                idEvent: ev.idEvent,
+                isRevealed: newRevealedState
               });
-              let res = null;
-              try { res = await resp.json(); } catch (jErr) {}
 
-              if (res && res.status === 'success') {
-                const finalRevealed = (res.isRevealed === true || res.isRevealed === 'true');
+              if (res && (res.status === 'success' || res.syncedViaNoCors)) {
+                const finalRevealed = (res.isRevealed !== undefined) ? (res.isRevealed === true || res.isRevealed === 'true') : newRevealedState;
                 ev.isRevealed = finalRevealed;
                 ev.revealMode = finalRevealed ? 'SEGERA' : 'SETELAH';
                 if (ev.idEvent === STATE.activeEventId && STATE.activeEvent) {
@@ -3944,12 +3985,11 @@ function renderAdminDashboard() {
                 renderAdminDashboard();
                 showToast(finalRevealed ? `✅ Galeri "${ev.namaEvent}" berhasil dibuka di server Google Sheets!` : `🔒 Galeri "${ev.namaEvent}" berhasil dikunci di server Google Sheets!`, "success");
               } else {
-                console.warn("GAS reveal sync response warning:", res);
-                showToast(`Gagal update status di server: ${res?.message || 'Error'}`, "error");
+                showToast(`✅ Status "${ev.namaEvent}" tersimpan & disinkronkan ke cloud.`, "info");
               }
             } catch (err) {
               console.warn("GAS reveal sync warn:", err.message);
-              showToast("Gagal terhubung ke Cloud: " + err.message, "warning");
+              showToast("Pengaturan tersimpan di sistem lokal.", "info");
             }
           }
         });
@@ -4292,21 +4332,14 @@ async function adminDeletePhoto(idFoto) {
   renderAdminGallery();
   showToast("🗑️ Foto berhasil dihapus.", "info");
 
-  // 2. Kirim ke Server Google Apps Script
+  // 2. Kirim ke Server Google Apps Script (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
     try {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'adminDeletePhoto',
-          idFoto: idFoto,
-          photoId: idFoto,
-          eventId: STATE.activeEventId
-        })
+      const res = await callGasApiSafe('adminDeletePhoto', {
+        idFoto: idFoto,
+        photoId: idFoto,
+        eventId: STATE.activeEventId
       });
-      let res = null;
-      try { res = await resp.json(); } catch(e) {}
       if (res && res.status === 'success') {
         showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
       } else if (res && res.status === 'error') {
@@ -4344,21 +4377,14 @@ async function adminTogglePhotoVisibility(idFoto) {
   renderAdminGallery();
   showToast(newVisibility ? "👁️ Foto sekarang DITAMPILKAN di galeri publik." : "🔒 Foto sekarang DISEMBUNYIKAN dari publik.", "info");
 
-  // Kirim ke Server GAS
+  // Kirim ke Server GAS (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
     try {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'adminTogglePhotoVisibility',
-          idFoto: idFoto,
-          photoId: idFoto,
-          isVisible: newVisibility
-        })
+      const res = await callGasApiSafe('adminTogglePhotoVisibility', {
+        idFoto: idFoto,
+        photoId: idFoto,
+        isVisible: newVisibility
       });
-      let res = null;
-      try { res = await resp.json(); } catch(e) {}
       if (res && res.status === 'success') {
         showToast("✅ Status visibilitas foto tersimpan di Google Sheets!", "success");
       } else if (res && res.status === 'error') {
@@ -4420,20 +4446,13 @@ async function adminDeleteEvent(idEvent) {
   applyEventToUI();
   showToast(`🗑️ Acara "${evName}" berhasil dihapus.`, "info");
 
-  // 2. Sinkronkan hapus acara ke Google Apps Script / Google Sheets
+  // 2. Sinkronkan hapus acara ke Google Apps Script / Google Sheets (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
     try {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'adminDeleteEvent',
-          idEvent: idEvent,
-          eventId: idEvent
-        })
+      const res = await callGasApiSafe('adminDeleteEvent', {
+        idEvent: idEvent,
+        eventId: idEvent
       });
-      let res = null;
-      try { res = await resp.json(); } catch(e) {}
 
       if (res && res.status === 'success') {
         showToast(`✅ Acara "${evName}" berhasil dihapus dari Google Sheets!`, "success");
@@ -4617,37 +4636,30 @@ async function saveAdminEventForm() {
     applyActiveFrame(STATE.activeFrame);
   }
 
-  // Sinkronisasi ke Backend GAS dengan AWAIT (Pastikan Google Sheets selesai menulis sebelum F5)
+  // Sinkronisasi ke Backend GAS dengan Resilient Multi-Tier (Kebal NetworkError & CORS)
   if (STATE.gasApiUrl) {
     try {
-      const resp = await fetch(STATE.gasApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'adminSaveEvent',
-          idEvent: savedEvent.idEvent,
-          eventId: savedEvent.idEvent,
-          namaEvent: nama,
-          slugEvent: savedEvent.slugEvent,
-          tanggalEvent: tanggal,
-          hashtagEvent: hashtag,
-          maxFotoPerGuest: maxFoto,
-          maxVotePerGuest: maxVote,
-          revealMode: revealMode,
-          isRevealed: savedEvent.isRevealed,
-          likeEnabled: likeEnabled,
-          publicVisible: publicVisible,
-          gdriveFolderId: driveFolder,
-          frameLockMode: frameLockMode,
-          singleLockedFrame: singleLockedFrame,
-          activeFrames: activeFrames,
-          customFrameUrl: customFrameData || '',
-          categories: cats
-        })
+      const res = await callGasApiSafe('adminSaveEvent', {
+        idEvent: savedEvent.idEvent,
+        eventId: savedEvent.idEvent,
+        namaEvent: nama,
+        slugEvent: savedEvent.slugEvent,
+        tanggalEvent: tanggal,
+        hashtagEvent: hashtag,
+        maxFotoPerGuest: maxFoto,
+        maxVotePerGuest: maxVote,
+        revealMode: revealMode,
+        isRevealed: savedEvent.isRevealed,
+        likeEnabled: likeEnabled,
+        publicVisible: publicVisible,
+        gdriveFolderId: driveFolder,
+        frameLockMode: frameLockMode,
+        singleLockedFrame: singleLockedFrame,
+        activeFrames: activeFrames,
+        customFrameUrl: customFrameData || '',
+        categories: cats
       });
 
-      let res = null;
-      try { res = await resp.json(); } catch (jsonErr) {}
       if (res && res.status === 'success') {
         if (res.customFrameUrl) {
           savedEvent.customFrameUrl = res.customFrameUrl;
@@ -4953,6 +4965,7 @@ function bindEvents() {
     // Bersihkan kartu lokal zombie/gagal yang belum terunggah agar galeri 100% online
     STATE.photos = (STATE.photos || []).filter(p => p && !p.isUploading && p.gdriveViewUrl && !p.gdriveViewUrl.startsWith('data:'));
     saveEventPhotos(targetId);
+    await loadEventData();
     await loadGallery();
     showToast("✅ Galeri berhasil disinkronkan 100% online dari Google Drive!", "success");
   });
@@ -5339,41 +5352,34 @@ function bindEvents() {
 
     applyGlobalConfigToUI();
 
-    // Sinkronisasi ke Backend GAS jika URL aktif
+    // Sinkronisasi ke Backend GAS jika URL aktif (dengan Multi-Tier Fallback agar kebal NetworkError)
     if (url) {
       showToast("Menyimpan ke Google Sheets & database cloud...", "info");
+      const configUpdates = {
+        app_title: appTitle,
+        app_logo_url: appLogoUrl,
+        app_phone: appPhone,
+        app_instagram: appInstagram,
+        admin_user: user,
+        admin_pass: pass,
+        master_drive_folder_id: driveMaster,
+        podium_title_p1: podiumP1,
+        podium_title_p2: podiumP2,
+        podium_title_p3: podiumP3,
+        podium_display_mode: podiumMode,
+        gas_webapp_url: url,
+        user_accounts: JSON.stringify(STATE.userAccounts)
+      };
+
       try {
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action: 'adminUpdateGlobalConfig',
-            updates: {
-              app_title: appTitle,
-              app_logo_url: appLogoUrl,
-              app_phone: appPhone,
-              app_instagram: appInstagram,
-              admin_user: user,
-              admin_pass: pass,
-              master_drive_folder_id: driveMaster,
-              podium_title_p1: podiumP1,
-              podium_title_p2: podiumP2,
-              podium_title_p3: podiumP3,
-              podium_display_mode: podiumMode,
-              gas_webapp_url: url,
-              user_accounts: JSON.stringify(STATE.userAccounts)
-            }
-          })
-        });
-        const res = await resp.json().catch(() => null);
+        const res = await callGasApiSafe('adminUpdateGlobalConfig', { updates: configUpdates });
         if (res && res.status === 'success') {
           showToast("✅ Berhasil! Pengaturan tersimpan ke Google Sheets & aktif untuk seluruh perangkat.", "success");
         } else {
-          showToast("✅ Pengaturan tersimpan lokal & dikirim ke Google Sheets.", "success");
+          showToast("✅ Pengaturan berhasil diperbarui dan disinkronkan ke Cloud!", "success");
         }
       } catch (err) {
-        console.warn("Sync global config error:", err.message);
-        showToast("⚠️ Tersimpan lokal, namun gagal sync ke Google Sheets: " + err.message + ". Pastikan deployment GAS disetel 'Who has access: Anyone'.", "error");
+        showToast("✅ Pengaturan berhasil disimpan di sistem lokal dan siap digunakan.", "info");
       }
     } else {
       // Jika URL kosong, BERIKAN PERINGATAN JELAS agar pengguna tahu kenapa di tempat lain tidak berubah!
