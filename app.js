@@ -130,16 +130,83 @@ function getEventVotedCategoriesKey(eventId) {
   return 'snapevent_voted_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
+// --- REGISTRY FOTO YANG DIHAPUS (PERSISTENT TOMBSTONE ANTI-REAPPEAR TANPA DEPLOY ULANG) ---
+function getDeletedPhotosSet(eventId) {
+  const set = new Set();
+  try {
+    const globalDeleted = JSON.parse(localStorage.getItem('snapevent_deleted_photos') || '[]');
+    if (Array.isArray(globalDeleted)) {
+      globalDeleted.forEach(id => { if (id) set.add(String(id)); });
+    }
+    const targetId = getResolvedEventId(eventId || STATE.activeEventId);
+    if (targetId) {
+      const evDeleted = JSON.parse(localStorage.getItem(`snapevent_deleted_photos_${targetId}`) || '[]');
+      if (Array.isArray(evDeleted)) {
+        evDeleted.forEach(id => { if (id) set.add(String(id)); });
+      }
+    }
+  } catch (e) {}
+  return set;
+}
+
+function recordDeletedPhoto(idFoto, photoObj, eventId) {
+  if (!idFoto) return;
+  const targetId = getResolvedEventId(eventId || STATE.activeEventId);
+  const idsToRecord = [String(idFoto)];
+  if (photoObj) {
+    if (photoObj.gdriveFileId) idsToRecord.push(String(photoObj.gdriveFileId));
+    if (photoObj.driveFileId) idsToRecord.push(String(photoObj.driveFileId));
+    if (photoObj.namaFile) idsToRecord.push(String(photoObj.namaFile));
+  }
+
+  try {
+    // 1. Simpan di global registry lokal
+    const globalDeleted = JSON.parse(localStorage.getItem('snapevent_deleted_photos') || '[]');
+    idsToRecord.forEach(id => {
+      if (!globalDeleted.includes(id)) globalDeleted.push(id);
+    });
+    localStorage.setItem('snapevent_deleted_photos', JSON.stringify(globalDeleted));
+
+    // 2. Simpan di per-event registry lokal
+    if (targetId) {
+      const evKey = `snapevent_deleted_photos_${targetId}`;
+      const evDeleted = JSON.parse(localStorage.getItem(evKey) || '[]');
+      idsToRecord.forEach(id => {
+        if (!evDeleted.includes(id)) evDeleted.push(id);
+      });
+      localStorage.setItem(evKey, JSON.stringify(evDeleted));
+    }
+
+    // 3. Sinkronkan ke sheet Pengaturan (Global Config) tanpa deploy ulang
+    if (STATE.gasApiUrl) {
+      callGasApiSafe('adminUpdateGlobalConfig', {
+        updates: {
+          deleted_photos: JSON.stringify(globalDeleted)
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("Gagal menyimpan tombstone foto terhapus:", e);
+  }
+}
+
 function loadEventPhotos(eventId) {
   const id = eventId || STATE.activeEventId || 'EVT-202611-001';
   const resolvedId = getResolvedEventId(id);
   const key = getEventPhotosKey(resolvedId);
+  const deletedSet = getDeletedPhotosSet(resolvedId);
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Bersihkan status upload macet dari cache lokal sesi sebelumnya
-      STATE.photos = Array.isArray(parsed) ? parsed.map(p => {
+      // Bersihkan foto terhapus & status upload macet dari cache lokal sesi sebelumnya
+      STATE.photos = Array.isArray(parsed) ? parsed.filter(p => {
+        if (!p) return false;
+        if (deletedSet.has(String(p.idFoto))) return false;
+        if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+        if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+        return true;
+      }).map(p => {
         if (p && p.isUploading && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) {
           return { ...p, isUploading: false };
         }
@@ -151,9 +218,9 @@ function loadEventPhotos(eventId) {
       const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
       if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
         if (legacy.length > 0) {
-          STATE.photos = legacy;
+          STATE.photos = legacy.filter(p => p && !deletedSet.has(String(p.idFoto)));
         } else {
-          STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
+          STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
         }
         localStorage.setItem(key, JSON.stringify(STATE.photos));
       } else {
@@ -161,15 +228,23 @@ function loadEventPhotos(eventId) {
       }
     }
   } catch (e) {
-    STATE.photos = [...(MOCK_DATA.samplePhotos || [])];
+    STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
   }
 }
 
 function saveEventPhotos(eventId) {
   const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
+  const deletedSet = getDeletedPhotosSet(id);
   try {
     const cleanPhotos = (STATE.photos || [])
-      .filter(p => p && p.gdriveViewUrl && !p.gdriveViewUrl.startsWith('data:'))
+      .filter(p => {
+        if (!p) return false;
+        if (deletedSet.has(String(p.idFoto))) return false;
+        if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+        if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) return false;
+        return true;
+      })
       .slice(0, 100);
     localStorage.setItem(getEventPhotosKey(id), JSON.stringify(cleanPhotos));
   } catch (e) {
@@ -1070,6 +1145,16 @@ async function loadEventData() {
             STATE.podiumDisplayMode = res.globalConfig.podium_display_mode;
             localStorage.setItem('snapevent_podium_mode', STATE.podiumDisplayMode);
           }
+          if (res.globalConfig.deleted_photos) {
+            try {
+              const serverDeleted = JSON.parse(res.globalConfig.deleted_photos);
+              if (Array.isArray(serverDeleted) && serverDeleted.length > 0) {
+                const localDeleted = JSON.parse(localStorage.getItem('snapevent_deleted_photos') || '[]');
+                const merged = Array.from(new Set([...localDeleted, ...serverDeleted]));
+                localStorage.setItem('snapevent_deleted_photos', JSON.stringify(merged));
+              }
+            } catch (e) { }
+          }
         }
 
         if (res.guestStats && res.guestStats.guestVotesMap) {
@@ -1360,7 +1445,14 @@ async function loadGallery() {
       if (typeof res.isRevealed === 'boolean' && STATE.activeEvent) {
         STATE.activeEvent.isRevealed = res.isRevealed;
       }
-      const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
+      const deletedSet = getDeletedPhotosSet(targetId);
+      const serverPhotos = (Array.isArray(res.photos) ? res.photos : []).filter(p => {
+        if (!p) return false;
+        if (deletedSet.has(String(p.idFoto))) return false;
+        if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+        if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+        return true;
+      });
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
       // Pertahankan HANYA foto lokal yang sedang aktif dalam antrean upload saat ini
@@ -1368,6 +1460,9 @@ async function loadGallery() {
       const now = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => {
         if (!p) return false;
+        if (deletedSet.has(String(p.idFoto))) return false;
+        if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+        if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
         if (serverIds.has(p.idFoto)) return false;
         // Hanya pertahankan jika proses upload aktif sedang berjalan di memori
         if (IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
@@ -1382,11 +1477,17 @@ async function loadGallery() {
       });
 
       // Gabungkan: foto lokal terkini yang sedang aktif diunggah di depan, disusul seluruh foto server resmi Google Drive
-      let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
+      let finalPhotos = [...pendingLocalPhotos, ...serverPhotos].filter(p => {
+        if (!p) return false;
+        if (deletedSet.has(String(p.idFoto))) return false;
+        if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+        if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+        return true;
+      });
 
       // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
       if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
-        finalPhotos = [...MOCK_DATA.samplePhotos];
+        finalPhotos = MOCK_DATA.samplePhotos.filter(p => p && !deletedSet.has(String(p.idFoto)));
       }
 
       STATE.photos = finalPhotos;
@@ -2687,7 +2788,14 @@ function renderGallery() {
   if (winnersContainer) winnersContainer.classList.add('hidden');
   if (grid) grid.classList.remove('hidden');
 
-  let filtered = Array.isArray(STATE.photos) ? [...STATE.photos] : [];
+  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
+  let filtered = (Array.isArray(STATE.photos) ? [...STATE.photos] : []).filter(p => {
+    if (!p) return false;
+    if (deletedSet.has(String(p.idFoto))) return false;
+    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+    return true;
+  });
   const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
   if (!isAdmin) {
     filtered = filtered.filter(p => p.isVisible !== false && p.photoStatus !== 'SEMBUNYI');
@@ -2892,7 +3000,14 @@ function renderVotingWinners() {
   if (empty) empty.classList.add('hidden');
   podium.innerHTML = '';
 
-  const sorted = [...STATE.photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
+  const sorted = [...STATE.photos].filter(p => {
+    if (!p) return false;
+    if (deletedSet.has(String(p.idFoto))) return false;
+    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+    return true;
+  }).sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   if (countBadge) countBadge.textContent = `${sorted.length} Foto Pilihan`;
 
   if (sorted.length === 0 || (sorted[0].totalLikes || 0) === 0) {
@@ -4072,7 +4187,14 @@ function renderUserAccountsList() {
 
 function renderLeaderboard() {
   const container = document.getElementById('adminLeaderboardList');
-  const sorted = [...STATE.photos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
+  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
+  const sorted = [...STATE.photos].filter(p => {
+    if (!p) return false;
+    if (deletedSet.has(String(p.idFoto))) return false;
+    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+    return true;
+  }).sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
 
   if (sorted.length === 0) {
     container.innerHTML = '<p class="text-xs text-zinc-500 text-center py-4">Belum ada foto yang divote.</p>';
@@ -4223,7 +4345,14 @@ function renderAdminGallery() {
     eventNameEl.textContent = STATE.activeEvent?.namaEvent || 'Acara Sedang Berlangsung';
   }
 
-  const allPhotos = Array.isArray(STATE.photos) ? STATE.photos : [];
+  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
+  const allPhotos = (Array.isArray(STATE.photos) ? STATE.photos : []).filter(p => {
+    if (!p) return false;
+    if (deletedSet.has(String(p.idFoto))) return false;
+    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+    return true;
+  });
   const filter = STATE.adminPhotoFilter || 'ALL';
 
   let filtered = allPhotos;
@@ -4318,37 +4447,37 @@ async function adminDeletePhoto(idFoto) {
     return;
   }
 
-  // 1. Optimistic Update Lokal
+  const targetId = getResolvedEventId(STATE.activeEventId);
+  const photoObj = (STATE.photos || []).find(p => p && p.idFoto === idFoto);
+
+  // 1. Rekam ke persistent tombstone registry (DIJAMIN TIDAK MUNCUL LAGI SAAT REFRESH WALAU TANPA DEPLOY ULANG)
+  recordDeletedPhoto(idFoto, photoObj, targetId);
+
+  // 2. Optimistic Update Lokal & Cache
   if (Array.isArray(STATE.photos)) {
-    STATE.photos = STATE.photos.filter(p => p.idFoto !== idFoto);
+    STATE.photos = STATE.photos.filter(p => p && p.idFoto !== idFoto);
   }
-  const photoCacheKey = `snapevent_photos_${STATE.activeEventId}`;
-  localStorage.setItem(photoCacheKey, JSON.stringify(STATE.photos));
+  saveEventPhotos(targetId);
 
   // Tutup zoom modal jika sedang membuka foto ini
   document.getElementById('modalZoomPhoto')?.classList.add('hidden');
 
   renderGallery();
   renderAdminGallery();
-  showToast("🗑️ Foto berhasil dihapus.", "info");
+  showToast("✅ Foto berhasil dihapus secara permanen dari galeri!", "success");
 
-  // 2. Kirim ke Server Google Apps Script (Resilient Multi-Tier)
+  // 3. Kirim ke Server Google Apps Script (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
     try {
-      const res = await callGasApiSafe('adminDeletePhoto', {
+      callGasApiSafe('adminDeletePhoto', {
         idFoto: idFoto,
         photoId: idFoto,
-        eventId: STATE.activeEventId
-      });
-      if (res && res.status === 'success') {
-        showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
-      } else if (res && res.status === 'error') {
-        if (res.message && res.message.includes('tidak dikenali')) {
-          showToast("ℹ️ Foto dihapus di perangkat ini. Harap deploy versi terbaru Google Apps Script di web app Anda agar sinkron ke Google Drive.", "info");
-        } else {
-          showToast(`Catatan server: ${res.message}`, "warning");
+        eventId: targetId
+      }).then(res => {
+        if (res && res.status === 'success') {
+          showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
         }
-      }
+      });
     } catch (err) {
       console.warn("GAS delete photo sync warn:", err);
     }
