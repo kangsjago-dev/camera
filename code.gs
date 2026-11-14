@@ -339,6 +339,22 @@ function handleGetAllEvents() {
     const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     rows.forEach(function(r) {
       if (r[COL_EVENT.ID]) {
+        const rawFrames = parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+        let fMode = "multi";
+        let fLocked = "GOLD_DECO";
+        let fList = ["GOLD_DECO", "POLAROID", "MINIMAL"];
+        if (rawFrames && typeof rawFrames === "object" && !Array.isArray(rawFrames)) {
+          fMode = rawFrames.mode || "multi";
+          fLocked = rawFrames.locked || "GOLD_DECO";
+          fList = Array.isArray(rawFrames.frames) ? rawFrames.frames : [fLocked];
+        } else if (Array.isArray(rawFrames)) {
+          fList = rawFrames;
+          if (rawFrames.length === 1) {
+            fMode = "single";
+            fLocked = rawFrames[0];
+          }
+        }
+
         events.push({
           idEvent: r[COL_EVENT.ID],
           namaEvent: r[COL_EVENT.NAMA] || "Acara",
@@ -352,7 +368,9 @@ function handleGetAllEvents() {
           likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
           publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
           activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-          activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
+          activeFrames: fList,
+          frameLockMode: fMode,
+          singleLockedFrame: fLocked,
           gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
           statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
           customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
@@ -400,36 +418,75 @@ function handleGetEventDetails(eventId, guestId) {
     return { status: "error", message: "Event tidak ditemukan." };
   }
 
-  let matchedEvent = null;
+  let matchedRow = null;
   const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (r[COL_EVENT.ID] === eventId || r[COL_EVENT.SLUG] === eventId) {
-      matchedEvent = {
-        idEvent: r[COL_EVENT.ID],
-        namaEvent: r[COL_EVENT.NAMA],
-        slugEvent: r[COL_EVENT.SLUG],
-        tanggalEvent: r[COL_EVENT.TANGGAL],
-        hashtagEvent: r[COL_EVENT.HASHTAG],
-        maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
-        maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
-        revealMode: r[COL_EVENT.REVEAL_MODE],
-        isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
-        likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
-        publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
-        activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
-        activeFrames: parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]),
-        gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID],
-        statusEvent: r[COL_EVENT.STATUS],
-        customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
-      };
-      break;
+
+  // 1. Coba cari berdasarkan eventId (ID atau Slug)
+  if (eventId && eventId !== "ACTIVE" && eventId !== "DEFAULT") {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][COL_EVENT.ID] === eventId || rows[i][COL_EVENT.SLUG] === eventId) {
+        matchedRow = rows[i];
+        break;
+      }
     }
   }
 
-  if (!matchedEvent) {
-    return { status: "error", message: "Event '" + eventId + "' tidak ditemukan." };
+  // 2. Jika tidak ditemukan atau eventId kosong/default, pilih event pertama yang berstatus AKTIF
+  if (!matchedRow) {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][COL_EVENT.STATUS] === "AKTIF") {
+        matchedRow = rows[i];
+        break;
+      }
+    }
   }
+
+  // 3. Fallback: ambil baris event pertama
+  if (!matchedRow && rows.length > 0) {
+    matchedRow = rows[0];
+  }
+
+  if (!matchedRow) {
+    return { status: "error", message: "Event tidak ditemukan." };
+  }
+
+  const r = matchedRow;
+  const rawFrames = parseJsonSafe(r[COL_EVENT.FRAMES], ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+  let fMode = "multi";
+  let fLocked = "GOLD_DECO";
+  let fList = ["GOLD_DECO", "POLAROID", "MINIMAL"];
+  if (rawFrames && typeof rawFrames === "object" && !Array.isArray(rawFrames)) {
+    fMode = rawFrames.mode || "multi";
+    fLocked = rawFrames.locked || "GOLD_DECO";
+    fList = Array.isArray(rawFrames.frames) ? rawFrames.frames : [fLocked];
+  } else if (Array.isArray(rawFrames)) {
+    fList = rawFrames;
+    if (rawFrames.length === 1) {
+      fMode = "single";
+      fLocked = rawFrames[0];
+    }
+  }
+
+  const matchedEvent = {
+    idEvent: r[COL_EVENT.ID],
+    namaEvent: r[COL_EVENT.NAMA],
+    slugEvent: r[COL_EVENT.SLUG],
+    tanggalEvent: r[COL_EVENT.TANGGAL],
+    hashtagEvent: r[COL_EVENT.HASHTAG],
+    maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
+    maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
+    revealMode: r[COL_EVENT.REVEAL_MODE],
+    isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
+    likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
+    publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
+    activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
+    activeFrames: fList,
+    frameLockMode: fMode,
+    singleLockedFrame: fLocked,
+    gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID],
+    statusEvent: r[COL_EVENT.STATUS],
+    customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
+  };
 
   // Ambil Kategori Acara
   const categories = [];
@@ -507,17 +564,34 @@ function handleGetGallery(eventId, guestId) {
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
-    for (let i = 0; i < evRows.length; i++) {
-      if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
-        canonicalEventId = evRows[i][COL_EVENT.ID];
-        revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
-        const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
-        isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
-        folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
-        eventSlug = evRows[i][COL_EVENT.SLUG];
-        eventName = evRows[i][COL_EVENT.NAMA];
-        break;
+    let matchedEvRow = null;
+    if (eventId && eventId !== "DEFAULT" && eventId !== "ACTIVE") {
+      for (let i = 0; i < evRows.length; i++) {
+        if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+          matchedEvRow = evRows[i];
+          break;
+        }
       }
+    }
+    if (!matchedEvRow) {
+      for (let i = 0; i < evRows.length; i++) {
+        if (evRows[i][COL_EVENT.STATUS] === "AKTIF") {
+          matchedEvRow = evRows[i];
+          break;
+        }
+      }
+    }
+    if (!matchedEvRow && evRows.length > 0) {
+      matchedEvRow = evRows[0];
+    }
+    if (matchedEvRow) {
+      canonicalEventId = matchedEvRow[COL_EVENT.ID];
+      revealMode = matchedEvRow[COL_EVENT.REVEAL_MODE];
+      const revFlag = matchedEvRow[COL_EVENT.IS_REVEALED];
+      isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
+      folderId = extractDriveFolderId(matchedEvRow[COL_EVENT.GDRIVE_FOLDER_ID]);
+      eventSlug = matchedEvRow[COL_EVENT.SLUG];
+      eventName = matchedEvRow[COL_EVENT.NAMA];
     }
   }
 
@@ -961,11 +1035,11 @@ function handleUploadCustomFrame(payload) {
 
     const directUrl = "https://lh3.googleusercontent.com/d/" + newFile.getId();
 
-    // Simpan direct URL ke DataEvent kolom CUSTOM_FRAME_URL
+    // Simpan direct URL ke DataEvent kolom CUSTOM_FRAME_URL (Dukung match via ID atau Slug)
     if (eventSheet && eventSheet.getLastRow() > 1) {
-      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 2).getDisplayValues();
+      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 3).getDisplayValues();
       for (let r = 0; r < evRows.length; r++) {
-        if (evRows[r][COL_EVENT.ID] === eventId) {
+        if (evRows[r][COL_EVENT.ID] === eventId || evRows[r][COL_EVENT.SLUG] === eventId) {
           eventSheet.getRange(r + 2, COL_EVENT.CUSTOM_FRAME_URL + 1).setValue(directUrl);
           break;
         }
@@ -1156,7 +1230,12 @@ function handleAdminSaveEvent(payload) {
     const likeEnabled = payload.likeEnabled !== false && payload.likeEnabled !== "false";
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
-    const frames = JSON.stringify(payload.activeFrames || ["GOLD_DECO", "POLAROID", "MINIMAL"]);
+    const framesObj = {
+      mode: payload.frameLockMode || "multi",
+      locked: payload.singleLockedFrame || "GOLD_DECO",
+      frames: Array.isArray(payload.activeFrames) ? payload.activeFrames : ["GOLD_DECO", "POLAROID", "MINIMAL"]
+    };
+    const frames = JSON.stringify(framesObj);
     let folderId = payload.gdriveFolderId ? extractDriveFolderId(payload.gdriveFolderId) : "";
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
 
@@ -1233,9 +1312,9 @@ function handleAdminSaveEvent(payload) {
     } else {
       // UPDATE EVENT EKSISTING (17 Kolom)
       let targetRow = -1;
-      const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 1).getDisplayValues();
+      const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 3).getDisplayValues();
       for (let i = 0; i < rows.length; i++) {
-        if (rows[i][0] === idEvent) {
+        if (rows[i][COL_EVENT.ID] === idEvent || rows[i][COL_EVENT.SLUG] === idEvent || (slugEvent && rows[i][COL_EVENT.SLUG] === slugEvent)) {
           targetRow = i + 2;
           break;
         }

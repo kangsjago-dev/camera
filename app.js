@@ -314,9 +314,10 @@ function getAvailableFrames() {
 
   const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
   if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
+    const eventFrameName = STATE.activeEvent?.customFrameName || (STATE.activeEvent?.namaEvent ? `${STATE.activeEvent.namaEvent} Frame` : 'Bingkai Kustom Acara');
     allFrames.push({
       id: 'CUSTOM_EVENT',
-      name: STATE.activeEvent?.customFrameName ? `🖼️ ${STATE.activeEvent.customFrameName}` : '🖼️ Bingkai Kustom Acara',
+      name: `🖼️ ${eventFrameName}`,
       type: 'custom',
       scope: 'event',
       dataUrl: activeCustomData
@@ -349,12 +350,15 @@ function getAvailableFrames() {
 
     // Mode Single Frame Lock: Hanya kembalikan 1 bingkai terkunci (jangan tampilkan yang lainnya)
     if (mode === 'single') {
-      const targetLocked = lockedId || (Array.isArray(activeList) && activeList[0]) || 'GOLD_DECO';
+      let targetLocked = lockedId || (Array.isArray(activeList) && activeList[0]) || (activeCustomData ? 'CUSTOM_EVENT' : 'GOLD_DECO');
+      if (activeCustomData && (targetLocked === 'CUSTOM_EVENT' || String(targetLocked).indexOf('frame_') === 0)) {
+        targetLocked = 'CUSTOM_EVENT';
+      }
       const single = allFrames.find(f => isCustomMatch(targetLocked, f));
-      return [single || allFrames[0]];
+      return [single || allFrames.find(f => f.id === 'CUSTOM_EVENT') || allFrames[0]];
     }
 
-    // Mode Multi-Frame: Saring dan urutkan PERSIS sesuai urutan yang ditentukan admin (jangan tampilkan yang lainnya)
+    // Mode Multi-Frame: Saring dan urutkan PERSIS sesuai urutan yang ditentukan admin
     if (Array.isArray(activeList) && activeList.length > 0) {
       const ordered = [];
       activeList.forEach(frameId => {
@@ -363,6 +367,13 @@ function getAvailableFrames() {
           ordered.push(match);
         }
       });
+      // Jika event memiliki custom frame dan belum masuk ke ordered, posisikan di urutan pertama
+      if (activeCustomData) {
+        const customItem = allFrames.find(f => f.id === 'CUSTOM_EVENT' || f.dataUrl === activeCustomData);
+        if (customItem && !ordered.some(o => o.id === customItem.id)) {
+          ordered.unshift(customItem);
+        }
+      }
       if (ordered.length > 0) return ordered;
     }
   }
@@ -760,28 +771,28 @@ async function loadEventData() {
       if (res.status === 'success') {
         const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
         
-        let inferredMode = 'multi';
-        let inferredLocked = 'GOLD_DECO';
-        let inferredFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+        let inferredMode = res.event.frameLockMode || 'multi';
+        let inferredLocked = res.event.singleLockedFrame || 'GOLD_DECO';
+        let inferredFrames = Array.isArray(res.event.activeFrames) ? res.event.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
 
         const rawFrames = res.event.activeFrames;
         if (rawFrames && typeof rawFrames === 'object' && !Array.isArray(rawFrames)) {
-          inferredMode = rawFrames.mode || 'single';
-          inferredLocked = rawFrames.locked || 'GOLD_DECO';
+          inferredMode = rawFrames.mode || inferredMode;
+          inferredLocked = rawFrames.locked || inferredLocked;
           inferredFrames = Array.isArray(rawFrames.frames) ? rawFrames.frames : [inferredLocked];
-        } else if (Array.isArray(rawFrames) && rawFrames.length > 0) {
-          inferredFrames = rawFrames;
-          inferredMode = res.event.frameLockMode || (rawFrames.length === 1 ? 'single' : (localActive?.frameLockMode || 'multi'));
-          inferredLocked = res.event.singleLockedFrame || rawFrames[0] || 'GOLD_DECO';
-        } else if (res.event.frameLockMode) {
-          inferredMode = res.event.frameLockMode;
-          inferredLocked = res.event.singleLockedFrame || 'GOLD_DECO';
-          inferredFrames = [inferredLocked];
-        } else if (localActive) {
-          inferredMode = localActive.frameLockMode || 'multi';
-          inferredLocked = localActive.singleLockedFrame || 'GOLD_DECO';
-          inferredFrames = localActive.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
         }
+
+        if (res.event.customFrameUrl) {
+          if (inferredMode === 'single' && (inferredLocked === 'CUSTOM_EVENT' || String(inferredLocked).indexOf('frame_') === 0 || inferredLocked === 'GOLD_DECO')) {
+            inferredLocked = 'CUSTOM_EVENT';
+          }
+          if (Array.isArray(inferredFrames) && !inferredFrames.includes('CUSTOM_EVENT')) {
+            inferredFrames.unshift('CUSTOM_EVENT');
+          }
+        }
+
+        STATE.activeEventId = res.event.idEvent;
+        localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
 
         STATE.activeEvent = {
           ...localActive,
@@ -799,31 +810,28 @@ async function loadEventData() {
           localStorage.setItem('snapevent_metrics', JSON.stringify(STATE.metrics));
         }
 
-        // Sinkronkan seluruh event secara defensif (Pertahankan frame settings lokal jika server belum update)
+        // Sinkronkan seluruh event secara defensif
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
           STATE.events = res.allEvents.map(serverEv => {
             const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
-            let sMode = 'multi';
-            let sLocked = 'GOLD_DECO';
-            let sFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+            let sMode = serverEv.frameLockMode || 'multi';
+            let sLocked = serverEv.singleLockedFrame || 'GOLD_DECO';
+            let sFrames = Array.isArray(serverEv.activeFrames) ? serverEv.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
 
             const sRaw = serverEv.activeFrames;
             if (sRaw && typeof sRaw === 'object' && !Array.isArray(sRaw)) {
-              sMode = sRaw.mode || 'single';
-              sLocked = sRaw.locked || 'GOLD_DECO';
+              sMode = sRaw.mode || sMode;
+              sLocked = sRaw.locked || sLocked;
               sFrames = Array.isArray(sRaw.frames) ? sRaw.frames : [sLocked];
-            } else if (Array.isArray(sRaw) && sRaw.length > 0) {
-              sFrames = sRaw;
-              sMode = serverEv.frameLockMode || (sRaw.length === 1 ? 'single' : (localEv?.frameLockMode || 'multi'));
-              sLocked = serverEv.singleLockedFrame || sRaw[0] || 'GOLD_DECO';
-            } else if (serverEv.frameLockMode) {
-              sMode = serverEv.frameLockMode;
-              sLocked = serverEv.singleLockedFrame || 'GOLD_DECO';
-              sFrames = [sLocked];
-            } else if (localEv) {
-              sMode = localEv.frameLockMode || 'multi';
-              sLocked = localEv.singleLockedFrame || 'GOLD_DECO';
-              sFrames = localEv.activeFrames || ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
+            }
+
+            if (serverEv.customFrameUrl) {
+              if (sMode === 'single' && (sLocked === 'CUSTOM_EVENT' || String(sLocked).indexOf('frame_') === 0 || sLocked === 'GOLD_DECO')) {
+                sLocked = 'CUSTOM_EVENT';
+              }
+              if (Array.isArray(sFrames) && !sFrames.includes('CUSTOM_EVENT')) {
+                sFrames.unshift('CUSTOM_EVENT');
+              }
             }
 
             return {
@@ -1330,34 +1338,56 @@ function applyEventToUI() {
 
   // Render Pilihan Frame di Viewfinder (Dinamis sesuai izin Admin)
   const frameContainer = document.getElementById('frameListContainer');
+  const singleBadge = document.getElementById('camSingleFrameBadge');
+  const singleName = document.getElementById('camSingleFrameName');
   const availFrames = getAvailableFrames();
-  if (frameContainer) {
-    frameContainer.innerHTML = availFrames.map(f => `
-      <button data-frame="${f.id}" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">${f.name}</button>
-    `).join('');
+  const isSingle = (ev.frameLockMode === 'single' || availFrames.length <= 1);
+
+  if (isSingle) {
+    if (frameContainer) frameContainer.classList.add('hidden');
+    if (singleBadge) {
+      singleBadge.classList.remove('hidden');
+      if (singleName) singleName.textContent = availFrames[0]?.name || 'Bingkai Resmi Acara';
+    }
+  } else {
+    if (singleBadge) singleBadge.classList.add('hidden');
+    if (frameContainer) {
+      frameContainer.classList.remove('hidden');
+      frameContainer.innerHTML = availFrames.map(f => `
+        <button data-frame="${f.id}" class="frame-pill shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold ${STATE.activeFrame === f.id ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10'} border transition">${f.name}</button>
+      `).join('');
+    }
   }
 
-  // Render Kategori Voting di Galeri
+  // Render Kategori Voting di Galeri (Termasuk Tab Pemenang Voting Resmi)
   const catContainer = document.getElementById('galleryCategoryTabs');
-  catContainer.innerHTML = `
-    <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">Semua Foto</button>
-    <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">🔥 Paling Populer</button>
-  `;
+  if (catContainer) {
+    const isWinners = STATE.activeGalleryFilter === 'WINNERS';
+    const isPopular = STATE.activeGalleryFilter === 'POPULAR';
+    const isAll = (!isWinners && !isPopular && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
 
-  STATE.activeCategories.forEach(cat => {
-    const btn = document.createElement('button');
-    btn.setAttribute('data-cat', cat.idKategori);
-    btn.className = "cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition";
-    btn.textContent = `👑 ${cat.namaKategori}`;
-    catContainer.appendChild(btn);
-  });
+    catContainer.innerHTML = `
+      <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">Semua Foto</button>
+      <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isWinners ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'} border transition flex items-center gap-1.5">🏆 Pemenang Voting</button>
+      <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isPopular ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">🔥 Paling Populer</button>
+    `;
+
+    (STATE.activeCategories || []).forEach(cat => {
+      const isSelected = STATE.activeGalleryFilter === cat.idKategori;
+      const btn = document.createElement('button');
+      btn.setAttribute('data-cat', cat.idKategori);
+      btn.className = `cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isSelected ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition`;
+      btn.textContent = `👑 ${cat.namaKategori}`;
+      catContainer.appendChild(btn);
+    });
+  }
 
   // Set bingkai aktif sesuai kebijakan frame acara
   let targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
   if (ev.frameLockMode === 'single') {
     const lockedFrame = ev.singleLockedFrame || targetFrame;
     const match = availFrames.find(f => f.id === lockedFrame) || availFrames[0];
-    targetFrame = match ? match.id : 'GOLD_DECO';
+    targetFrame = match ? match.id : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
   } else if (Array.isArray(ev.activeFrames) && ev.activeFrames.length > 0) {
     if (availFrames.some(f => f.id === STATE.activeFrame)) {
       targetFrame = STATE.activeFrame;
@@ -1479,6 +1509,22 @@ function applyActiveFrame(frameId) {
   
   const activeFrameNameEl = document.getElementById('activeFrameName');
   if (activeFrameNameEl) activeFrameNameEl.textContent = (selected?.name || '').toUpperCase();
+
+  const singleBadge = document.getElementById('camSingleFrameBadge');
+  const singleName = document.getElementById('camSingleFrameName');
+  const frameContainer = document.getElementById('frameListContainer');
+  const isSingle = (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') || frames.length <= 1;
+
+  if (isSingle) {
+    if (frameContainer) frameContainer.classList.add('hidden');
+    if (singleBadge) {
+      singleBadge.classList.remove('hidden');
+      if (singleName && selected) singleName.textContent = selected.name || 'Bingkai Resmi Acara';
+    }
+  } else {
+    if (singleBadge) singleBadge.classList.add('hidden');
+    if (frameContainer) frameContainer.classList.remove('hidden');
+  }
   
   const customImgEl = document.getElementById('vfCustomFrameImg');
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
@@ -1566,14 +1612,31 @@ function preloadFrameImage(dataUrl) {
   }
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    const isBase64 = String(dataUrl).indexOf('data:image/') === 0;
+    if (!isBase64) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => {
       FRAME_IMG_CACHE.set(dataUrl, img);
       resolve(img);
     };
     img.onerror = () => {
-      console.warn("Preload custom frame image error:", dataUrl);
-      resolve(null);
+      if (img.crossOrigin) {
+        // Fallback: muat tanpa crossOrigin jika browser menolak header CORS
+        const fallback = new Image();
+        fallback.onload = () => {
+          FRAME_IMG_CACHE.set(dataUrl, fallback);
+          resolve(fallback);
+        };
+        fallback.onerror = () => {
+          console.warn("Preload custom frame image error:", dataUrl);
+          resolve(null);
+        };
+        fallback.src = dataUrl;
+      } else {
+        console.warn("Preload custom frame image error:", dataUrl);
+        resolve(null);
+      }
     };
     img.src = dataUrl;
   });
@@ -2364,9 +2427,11 @@ function renderGallery() {
   const empty = document.getElementById('galleryEmptyNotice');
   const countBadge = document.getElementById('galleryPhotoCountBadge');
   const winnersContainer = document.getElementById('galleryWinnersContainer');
+  const spotlightContainer = document.getElementById('galleryWinnerSpotlight');
 
   if (STATE.activeGalleryFilter === 'WINNERS') {
     if (grid) grid.classList.add('hidden');
+    if (spotlightContainer) spotlightContainer.classList.add('hidden');
     renderVotingWinners();
     return;
   }
@@ -2396,6 +2461,47 @@ function renderGallery() {
     countBadge.textContent = `${filtered.length} Foto`;
   }
 
+  // Highlight Banner Hasil Voting Terkini di atas Grid Foto
+  if (spotlightContainer) {
+    const topVoted = [...(STATE.photos || [])].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0))[0];
+    if (topVoted && (topVoted.totalLikes || 0) > 0) {
+      spotlightContainer.classList.remove('hidden');
+      spotlightContainer.innerHTML = `
+        <div class="p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-brand-gold/15 to-[#1A1A24] border border-amber-500/40 flex items-center justify-between cursor-pointer shadow-lg hover:border-brand-gold transition duration-200">
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="text-2xl animate-bounce shrink-0">🏆</span>
+            <div class="truncate">
+              <div class="text-xs font-bold text-amber-300 flex items-center gap-1.5 flex-wrap">
+                <span>Hasil Voting Terkini:</span>
+                <span class="text-white font-extrabold truncate">${topVoted.guestNama || 'Tamu'}</span>
+                <span class="text-[10px] text-brand-gold bg-brand-gold/20 px-2 py-0.5 rounded-full border border-brand-gold/30 font-bold">${topVoted.totalLikes} Suara</span>
+              </div>
+              <p class="text-[11px] text-zinc-400 truncate">Klik untuk melihat podium pemenang & juara per kategori</p>
+            </div>
+          </div>
+          <button type="button" class="shrink-0 ml-2 px-3 py-1.5 rounded-xl bg-brand-gold text-black text-xs font-bold shadow hover:brightness-110 active:scale-95 transition">
+            Lihat ➔
+          </button>
+        </div>
+      `;
+      spotlightContainer.onclick = () => {
+        STATE.activeGalleryFilter = 'WINNERS';
+        document.querySelectorAll('.cat-tab').forEach(t => {
+          if (t.getAttribute('data-cat') === 'WINNERS') {
+            t.classList.remove('bg-white/5', 'text-zinc-300');
+            t.classList.add('bg-brand-gold', 'text-black');
+          } else {
+            t.classList.remove('bg-brand-gold', 'text-black');
+            t.classList.add('bg-white/5', 'text-zinc-300');
+          }
+        });
+        renderGallery();
+      };
+    } else {
+      spotlightContainer.classList.add('hidden');
+    }
+  }
+
   if (filtered.length === 0) {
     if (grid) grid.innerHTML = '';
     if (empty) empty.classList.remove('hidden');
@@ -2404,62 +2510,93 @@ function renderGallery() {
 
   if (empty) empty.classList.add('hidden');
   if (grid) {
-    grid.innerHTML = '';
+    // SINKRONISASI DOM CERDAS (ANTI-FLICKER): Reconcile kartu eksisting tanpa menghapus <img> yang sudah dimuat
+    const existingCards = new Map();
+    grid.querySelectorAll('.group[data-id]').forEach(el => {
+      existingCards.set(el.getAttribute('data-id'), el);
+    });
 
-    filtered.forEach(photo => {
+    filtered.forEach((photo) => {
       const isVoted = Array.isArray(STATE.votedPhotoIds) && STATE.votedPhotoIds.includes(photo.idFoto);
       const isUploading = Boolean(photo.isUploading);
-      const card = document.createElement('div');
-      card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
-      card.setAttribute('data-id', photo.idFoto);
 
-      const urls = getDriveImageUrls(photo.gdriveViewUrl);
-      const primaryUrl = urls[0] || photo.gdriveViewUrl;
-      const secondaryUrl = urls[1] || '';
-      const tertiaryUrl = urls[2] || '';
+      let card = existingCards.get(photo.idFoto);
+      if (card) {
+        // Kartu sudah aktif di layar: Jangan pernah menghancurkan elemen gambar agar tidak berkedip hitam
+        existingCards.delete(photo.idFoto);
 
-      card.innerHTML = `
-        <div class="relative w-full aspect-[4/5] bg-[#161622] flex items-center justify-center overflow-hidden cursor-pointer img-click-zone">
-          <div class="absolute inset-0 flex flex-col items-center justify-center text-zinc-600 gap-1 pointer-events-none">
-            <svg class="w-6 h-6 opacity-30 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
-            </svg>
-          </div>
-          <img src="${primaryUrl}" data-secondary="${secondaryUrl}" data-tertiary="${tertiaryUrl}" data-step="0" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300 opacity-0" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handleGalleryImgError(this);" />
-          ${isUploading ? `
-            <div class="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center z-10">
-              <div class="w-6 h-6 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mb-2"></div>
-              <span class="text-[10px] text-amber-300 font-bold">Mengunggah ke Drive...</span>
+        const likeBtn = card.querySelector('.btn-like-photo');
+        if (likeBtn) {
+          likeBtn.className = `btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90`;
+          likeBtn.innerHTML = `<span>${isVoted ? '❤️' : '🤍'}</span><span>${photo.totalLikes || 0}</span>`;
+        }
+
+        const uploadingOverlay = card.querySelector('.uploading-overlay');
+        if (!isUploading && uploadingOverlay) {
+          uploadingOverlay.remove();
+        }
+
+        grid.appendChild(card);
+      } else {
+        // Foto baru yang belum ada di grid: buat kartu
+        card = document.createElement('div');
+        card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
+        card.setAttribute('data-id', photo.idFoto);
+
+        const urls = getDriveImageUrls(photo.gdriveViewUrl);
+        const primaryUrl = urls[0] || photo.gdriveViewUrl;
+        const secondaryUrl = urls[1] || '';
+        const tertiaryUrl = urls[2] || '';
+
+        card.innerHTML = `
+          <div class="relative w-full aspect-[4/5] bg-zinc-900 flex items-center justify-center overflow-hidden cursor-pointer img-click-zone">
+            <div class="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1 pointer-events-none transition-opacity duration-300">
+              <svg class="w-6 h-6 opacity-30 animate-pulse text-brand-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              <span class="text-[9px] font-mono text-zinc-500">Memuat...</span>
             </div>
-          ` : ''}
-          <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5 z-10">
-            <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
+            <img src="${primaryUrl}" data-secondary="${secondaryUrl}" data-tertiary="${tertiaryUrl}" data-step="0" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300 opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handleGalleryImgError(this);" />
+            ${isUploading ? `
+              <div class="uploading-overlay absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center z-20">
+                <div class="w-6 h-6 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mb-2"></div>
+                <span class="text-[10px] text-amber-300 font-bold">Mengunggah ke Drive...</span>
+              </div>
+            ` : ''}
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5 z-10">
+              <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
+            </div>
           </div>
-        </div>
-        <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
-          <div class="truncate pr-1">
-            <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
-            <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+          <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
+            <div class="truncate pr-1">
+              <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
+              <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+            </div>
+            <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
+              <span>${isVoted ? '❤️' : '🤍'}</span>
+              <span>${photo.totalLikes || 0}</span>
+            </button>
           </div>
-          <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
-            <span>${isVoted ? '❤️' : '🤍'}</span>
-            <span>${photo.totalLikes || 0}</span>
-          </button>
-        </div>
-      `;
+        `;
 
-      card.querySelector('.img-click-zone')?.addEventListener('click', () => {
-        openPhotoZoom(photo);
-      });
+        card.querySelector('.img-click-zone')?.addEventListener('click', () => {
+          openPhotoZoom(photo);
+        });
 
-      card.querySelector('.btn-like-photo')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openVoteCategoryModal(photo.idFoto);
-      });
+        card.querySelector('.btn-like-photo')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openVoteCategoryModal(photo.idFoto);
+        });
 
-      grid.appendChild(card);
+        grid.appendChild(card);
+      }
+    });
+
+    // Bersihkan kartu yang sudah dihapus dari data
+    existingCards.forEach(staleCard => {
+      staleCard.remove();
     });
   }
 }
