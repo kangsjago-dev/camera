@@ -175,6 +175,10 @@ function doPost(e) {
       return createJsonResponse(handleUploadPhoto(payload));
     }
 
+    if (action === "uploadCustomFrame") {
+      return createJsonResponse(handleUploadCustomFrame(payload));
+    }
+
     if (action === "submitVote") {
       return createJsonResponse(handleSubmitVote(payload));
     }
@@ -241,8 +245,17 @@ function handleGetInitialData() {
   const events = [];
   if (eventSheet.getLastRow() > 1) {
     const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
-    rows.forEach(function(r) {
+    rows.forEach(function(r, rowIdx) {
       if (r[COL_EVENT.ID]) {
+        let cleanFrameUrl = r[COL_EVENT.CUSTOM_FRAME_URL] || "";
+        // Sanitisasi proaktif: jika sel terisi Base64 raksasa (>500 char), netralkan seketika
+        if (cleanFrameUrl.indexOf("data:") === 0 || cleanFrameUrl.length > 500) {
+          cleanFrameUrl = "";
+          try {
+            eventSheet.getRange(rowIdx + 2, COL_EVENT.CUSTOM_FRAME_URL + 1).setValue("");
+          } catch(cleanErr) {}
+        }
+
         events.push({
           idEvent: r[COL_EVENT.ID],
           namaEvent: r[COL_EVENT.NAMA] || "Acara",
@@ -260,7 +273,7 @@ function handleGetInitialData() {
           podiumTitles: (parseJsonSafe(r[COL_EVENT.FRAMES], {}).podiumTitles) || null,
           gdriveFolderId: r[COL_EVENT.GDRIVE_FOLDER_ID] || "",
           statusEvent: r[COL_EVENT.STATUS] || "INAKTIF",
-          customFrameUrl: r[COL_EVENT.CUSTOM_FRAME_URL] || ""
+          customFrameUrl: cleanFrameUrl
         });
       }
     });
@@ -533,24 +546,29 @@ function handleGetGallery(eventId, guestId) {
       const fr = fRows[j];
       const fEvtId = fr[COL_FOTO.ID_EVENT];
       if (fEvtId === resolvedEventId || fEvtId === eventId) {
+        // Abaikan baris bingkai sistem agar tidak tampil sebagai foto di galeri tamu
+        if (fr[COL_FOTO.GUEST_ID] === "SYSTEM_FRAME" || fr[COL_FOTO.CAMERA_STYLE] === "FRAME") {
+          continue;
+        }
+
         const curPhotoId = fr[COL_FOTO.ID];
         const gdriveId = fr[COL_FOTO.GDRIVE_FILE_ID];
 
-        // Validasi Defensif: Lewati foto jika file telah dihapus dari Google Drive
-        let fileExists = true;
+        // Validasi Defensif Cepat: Jangan buang foto jika hanya kendala izin akses DriveApp
+        let isTrashed = false;
         if (gdriveId) {
           try {
             const driveFile = DriveApp.getFileById(gdriveId);
             if (driveFile.isTrashed()) {
-              fileExists = false;
+              isTrashed = true;
             }
           } catch (fileErr) {
-            // File telah dihapus permanen di Google Drive
-            fileExists = false;
+            // Jika DriveApp throws exception / restricted, jangan buang foto
+            isTrashed = false;
           }
         }
-        if (!fileExists) {
-          continue; // Jangan kembalikan foto yang sudah terhapus di server
+        if (isTrashed) {
+          continue; // Lewati hanya jika terbukti file ada di Trash Google Drive
         }
 
         const catLikes = photoCatLikes[curPhotoId] || {};
@@ -855,13 +873,38 @@ function handleUploadPhoto(payload) {
     const newIdFoto = generateIncrementalId(fotoSheet, "FTO-" + dateCompact + "-", COL_FOTO.ID);
     const fileName = newIdFoto + "_" + guestNama.replace(/[^a-zA-Z0-9]/g, "") + ".jpg";
 
-    const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
-    const driveFile = targetFolder.createFile(blob);
-    driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    let fileId = "";
+    let directViewUrl = "";
 
-    const fileId = driveFile.getId();
-    // Direct link tampilan gambar Google Drive
-    const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+    try {
+      // Cek apakah file dengan nama fileName sudah ada di folder target untuk mencegah duplikasi
+      let driveFile = null;
+      if (targetFolder) {
+        try {
+          const existFiles = targetFolder.getFilesByName(fileName);
+          if (existFiles.hasNext()) {
+            driveFile = existFiles.next();
+          }
+        } catch (exErr) {}
+      }
+
+      if (!driveFile && targetFolder) {
+        const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
+        driveFile = targetFolder.createFile(blob);
+      }
+
+      if (driveFile) {
+        fileId = driveFile.getId();
+        directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+        try {
+          driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        } catch (shareErr) {
+          Logger.log("Safe setSharing photo warn: " + shareErr.message);
+        }
+      }
+    } catch (dErr) {
+      Logger.log("Drive file creation warn: " + dErr.message);
+    }
 
     // 4. Catat ke DataFoto dengan Sanitisasi Sel Penuh
     fotoSheet.appendRow([
@@ -889,6 +932,116 @@ function handleUploadPhoto(payload) {
       fileId: fileId,
       folderId: targetFolder ? targetFolder.getId() : "",
       remainingPhotos: Math.max(0, maxFoto - (currentGuestUploads + 1))
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ================================================================================
+// DEDICATED CUSTOM FRAME HANDLER (SINGLE FILE DEDUPLICATION - ZERO DATA_FOTO POLLUTION)
+// ================================================================================
+
+function handleUploadCustomFrame(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return { status: "error", message: "Server sibuk saat mengunggah bingkai kustom." };
+  }
+
+  try {
+    const eventId = String(payload.eventId || "").trim();
+    const imageBase64 = payload.imageBase64 || "";
+    let folderId = extractDriveFolderId(payload.folderId || "");
+
+    if (!imageBase64) {
+      return { status: "error", message: "Data gambar bingkai tidak boleh kosong." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+
+    // Cari target folder jika spesifik
+    let targetFolder = null;
+    if (folderId) {
+      try { targetFolder = DriveApp.getFolderById(folderId); } catch(fe) {}
+    }
+
+    // Jika folder event belum ada, cari master folder
+    if (!targetFolder) {
+      const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+      let masterFolderId = "";
+      if (configSheet && configSheet.getLastRow() > 1) {
+        const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+        cRows.forEach(function(cr) {
+          if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]);
+        });
+      }
+      if (!masterFolderId) masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+
+      if (masterFolderId) {
+        try { targetFolder = DriveApp.getFolderById(masterFolderId); } catch(me) {}
+      }
+    }
+
+    if (!targetFolder) {
+      targetFolder = DriveApp.getRootFolder();
+    }
+
+    // Ekstraksi Base64 Data
+    let pureBase64 = imageBase64;
+    let mimeType = "image/png";
+    if (pureBase64.indexOf("data:") === 0) {
+      const parts = pureBase64.split(",");
+      pureBase64 = parts[1];
+      if (parts[0].indexOf("image/jpeg") !== -1) mimeType = "image/jpeg";
+    }
+
+    const decodedBytes = Utilities.base64Decode(pureBase64);
+    const cleanEventId = (eventId || "event").replace(/[^a-zA-Z0-9_-]/g, "");
+    const frameFileName = "frame_" + cleanEventId + ".png";
+
+    // PENCEGAHAN DUPLIKASI MUTLAK:
+    // Bersihkan file bingkai lama untuk event ini agar di Google Drive HANYA ADA 1 FILE BINGKAI!
+    try {
+      const existingFiles = targetFolder.getFilesByName(frameFileName);
+      while (existingFiles.hasNext()) {
+        const oldFile = existingFiles.next();
+        try { oldFile.setTrashed(true); } catch(te) {}
+      }
+    } catch(se) {}
+
+    const blob = Utilities.newBlob(decodedBytes, mimeType, frameFileName);
+    const driveFile = targetFolder.createFile(blob);
+    try {
+      driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      Logger.log("Safe setSharing custom frame warn: " + shareErr.message);
+    }
+
+    const fileId = driveFile.getId();
+    const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+
+    // Catat URL ringkas ke DataEvent secara otomatis jika event terdaftar
+    if (eventSheet && eventSheet.getLastRow() > 1 && eventId) {
+      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
+      for (let i = 0; i < evRows.length; i++) {
+        if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
+          eventSheet.getRange(i + 2, COL_EVENT.CUSTOM_FRAME_URL + 1).setValue(sanitizeCellValue(directViewUrl));
+          break;
+        }
+      }
+    }
+
+    SpreadsheetApp.flush();
+
+    return {
+      status: "success",
+      message: "Bingkai kustom berhasil disimpan (Tepat 1 file di Google Drive)!",
+      fileId: fileId,
+      viewUrl: directViewUrl,
+      customFrameUrl: directViewUrl
     };
   } finally {
     lock.releaseLock();
@@ -1187,9 +1340,10 @@ function handleAdminSaveEvent(payload) {
       folderId = String(oldRow[COL_EVENT.GDRIVE_FOLDER_ID] || "").trim();
     }
 
-    // Jika folderId belum ada, cari di folder Master Drive atau buat 1 folder definitif
+    // Jika folderId belum ada, cari di folder Master Drive atau root secara idempoten
     if (!folderId) {
       try {
+        const safeFolderName = (slugEvent || createSlug(namaEvent)).replace(/[^a-zA-Z0-9_-]/g, "");
         const root = DriveApp.getRootFolder();
         let masterFolder = null;
         const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
@@ -1206,26 +1360,51 @@ function handleAdminSaveEvent(payload) {
           try { masterFolder = DriveApp.getFolderById(masterIdConfig); } catch(me) {}
         }
         if (!masterFolder) {
-          const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
-          masterFolder = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
-          masterFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          try {
+            const iter = root.getFoldersByName("SnapEvent_Gallery_Master");
+            masterFolder = iter.hasNext() ? iter.next() : root.createFolder("SnapEvent_Gallery_Master");
+            try { masterFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (msErr) {}
+          } catch (mErr) {
+            masterFolder = root;
+          }
         }
 
-        const safeFolderName = (slugEvent || createSlug(namaEvent)).replace(/[^a-zA-Z0-9_-]/g, "");
-        const subIter = masterFolder.getFoldersByName(safeFolderName);
-        if (subIter.hasNext()) {
-          folderId = subIter.next().getId();
+        // Cek apakah folder sudah ada di masterFolder untuk mencegah duplikasi (Anti-Folder Duplikat)
+        let foundFolder = null;
+        try {
+          const subIter = masterFolder.getFoldersByName(safeFolderName);
+          if (subIter.hasNext()) {
+            foundFolder = subIter.next();
+          }
+        } catch (sfErr) {}
+
+        // Cek juga di root jika belum ditemukan di masterFolder
+        if (!foundFolder) {
+          try {
+            const rootIter = root.getFoldersByName(safeFolderName);
+            if (rootIter.hasNext()) {
+              foundFolder = rootIter.next();
+            }
+          } catch (rfErr) {}
+        }
+
+        if (foundFolder) {
+          folderId = foundFolder.getId();
         } else {
-          const newFolder = masterFolder.createFolder(safeFolderName);
-          newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-          folderId = newFolder.getId();
+          try {
+            const newFolder = masterFolder.createFolder(safeFolderName);
+            folderId = newFolder.getId();
+            try { newFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (nsErr) {}
+          } catch (cfErr) {
+            Logger.log("Gagal membuat folder baru: " + cfErr.message);
+          }
         }
       } catch (dErr) {
         Logger.log("Drive folder reuse warn: " + dErr.message);
       }
     }
 
-    // Upload & Konversi Custom Frame Base64 ke File Drive
+    // Upload & Konversi Custom Frame Base64 ke File Drive (Anti-Duplikasi: Tepat 1 File)
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
     if (customFrameUrl && customFrameUrl.indexOf("data:image/") === 0) {
       try {
@@ -1233,17 +1412,30 @@ function handleAdminSaveEvent(payload) {
         if (customFrameUrl.indexOf("image/jpeg") !== -1) frameMime = "image/jpeg";
         const frameBase64 = customFrameUrl.indexOf(",") !== -1 ? customFrameUrl.split(",")[1] : customFrameUrl;
         const frameBytes = Utilities.base64Decode(frameBase64);
-        const frameBlob = Utilities.newBlob(frameBytes, frameMime, "frame_" + (slugEvent || "custom") + "_" + Date.now() + ".png");
+        const frameFileName = "frame_" + (slugEvent || "custom") + ".png";
         let fFolder = DriveApp.getRootFolder();
         if (folderId) {
           try { fFolder = DriveApp.getFolderById(folderId); } catch(fe) {}
         }
+        // Bersihkan file bingkai lama untuk event ini
+        try {
+          const oldIter = fFolder.getFilesByName(frameFileName);
+          while (oldIter.hasNext()) {
+            try { oldIter.next().setTrashed(true); } catch(te) {}
+          }
+        } catch(oe) {}
+
+        const frameBlob = Utilities.newBlob(frameBytes, frameMime, frameFileName);
         const fFile = fFolder.createFile(frameBlob);
-        fFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        try {
+          fFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        } catch (fShareErr) {}
         customFrameUrl = "https://lh3.googleusercontent.com/d/" + fFile.getId();
       } catch (fErr) {
         Logger.log("Custom frame upload error: " + fErr.message);
-        customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL]) ? oldRow[COL_EVENT.CUSTOM_FRAME_URL] : "";
+        customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL] && oldRow[COL_EVENT.CUSTOM_FRAME_URL].length <= 500 && oldRow[COL_EVENT.CUSTOM_FRAME_URL].indexOf("data:") !== 0) 
+          ? oldRow[COL_EVENT.CUSTOM_FRAME_URL] 
+          : "";
       }
     }
 
@@ -1251,7 +1443,7 @@ function handleAdminSaveEvent(payload) {
     // Google Sheets membatasi 50.000 karakter per cell. Cegah error 'contains more than maximum 50000 characters'!
     if (customFrameUrl.indexOf("data:") === 0 || customFrameUrl.length > 500) {
       Logger.log("Sanitasi customFrameUrl terlalu panjang: " + customFrameUrl.length + " karakter");
-      customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL] && oldRow[COL_EVENT.CUSTOM_FRAME_URL].length <= 500)
+      customFrameUrl = (oldRow && oldRow[COL_EVENT.CUSTOM_FRAME_URL] && oldRow[COL_EVENT.CUSTOM_FRAME_URL].length <= 500 && oldRow[COL_EVENT.CUSTOM_FRAME_URL].indexOf("data:") !== 0)
         ? oldRow[COL_EVENT.CUSTOM_FRAME_URL]
         : "";
     }

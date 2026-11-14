@@ -678,6 +678,12 @@ function getOrCreateGuestId() {
   return id;
 }
 
+// Global Hoisted Alias agar fetchEventDetails selalu tersedia di seluruh modul
+function fetchEventDetails() {
+  return loadEventData();
+}
+window.fetchEventDetails = fetchEventDetails;
+
 // --- 3. DATA FETCHING (GAS API OR MOCK) & EVENT ACTIVATION ---
 async function loadEventData() {
   if (STATE.gasApiUrl) {
@@ -1113,8 +1119,23 @@ async function loadGallery() {
         p && p.isUploading === true && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && (nowMs - (p._createdAtMs || nowMs) < 60000)
       );
 
-      // Gabungkan: foto lokal yang baru diambil tetap tampil di depan, disusul seluruh foto resmi server
-      let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
+      // Filter foto lokal pending: buang foto lokal jika foto server dengan caption dan tamu yang sama sudah ada di server (Anti-Duplikasi Tampilan Galeri)
+      const filteredPending = pendingLocalPhotos.filter(localP => {
+        return !serverPhotos.some(srvP => 
+          srvP.idFoto === localP.idFoto || 
+          (srvP.guestNama === localP.guestNama && srvP.caption === localP.caption && Math.abs((new Date(srvP.createdAt).getTime() || 0) - (localP._createdAtMs || 0)) < 120000)
+        );
+      });
+
+      // Gabungkan dan deduplikasi ID secara unik
+      let finalPhotos = [...filteredPending, ...serverPhotos];
+      const seenPhotoIds = new Set();
+      finalPhotos = finalPhotos.filter(p => {
+        if (!p || !p.idFoto) return false;
+        if (seenPhotoIds.has(p.idFoto)) return false;
+        seenPhotoIds.add(p.idFoto);
+        return true;
+      });
 
       // Bandingkan signature foto & like untuk mencegah flicker DOM saat auto-refresh
       const oldSignature = (STATE.photos || []).map(p => `${p.idFoto}:${p.totalLikes || 0}:${p.isUploading}`).join('|');
@@ -1134,8 +1155,8 @@ async function loadGallery() {
       }
 
       // Unggah otomatis di background untuk foto lokal pending jika belum pernah dimulai
-      if (pendingLocalPhotos.length > 0) {
-        autoUploadPendingPhotos(pendingLocalPhotos);
+      if (filteredPending.length > 0) {
+        autoUploadPendingPhotos(filteredPending);
       }
     } else if (res && res.status === 'locked') {
       document.getElementById('galleryLockedNotice')?.classList.remove('hidden');
@@ -1157,8 +1178,14 @@ async function autoUploadPendingPhotos(pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
     // MENCEGAH DUPLIKASI TOTAL: Jangan pernah upload foto yang sedang in-flight!
     if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue;
-    // Hanya proses foto yang berstatus gagal / pending retry
+    // Hanya proses foto yang berstatus gagal / pending retry (Maksimal 3x percobaan agar tidak loop selamanya)
     if (!photo.uploadPending) continue;
+    photo._retryCount = (photo._retryCount || 0) + 1;
+    if (photo._retryCount > 3) {
+      photo.uploadPending = false;
+      photo.isUploading = false;
+      continue;
+    }
 
     IN_FLIGHT_PHOTO_UPLOADS.add(photo.idFoto);
     photo._isUploadStarted = true;
@@ -1756,6 +1783,14 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
     reviewImg.src = dataUrl;
   }
 
+  // Sesuaikan rasio wadah pratinjau modal review mengikuti rasio asli foto/bingkai Full HD (Anti-Gepeng & Anti-Bilah Hitam)
+  const reviewContainer = document.getElementById('reviewPhotoContainer');
+  if (reviewContainer && canvas.width > 0 && canvas.height > 0) {
+    reviewContainer.style.aspectRatio = `${canvas.width} / ${canvas.height}`;
+    reviewContainer.style.maxHeight = '56vh';
+    reviewContainer.style.width = 'auto';
+  }
+
   // Render Pilihan Frame Pasca-Foto di Modal Review
   renderReviewFramePills(frameToUse);
 
@@ -2345,6 +2380,8 @@ function renderGallery() {
   if (grid) grid.classList.remove('hidden');
 
   let filtered = Array.isArray(STATE.photos) ? [...STATE.photos] : [];
+  // Sterilkan galeri tamu dari file bingkai sistem (FRAME / SYSTEM_FRAME)
+  filtered = filtered.filter(p => p && p.cameraStyle !== 'FRAME' && p.guestId !== 'SYSTEM_FRAME');
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     // Paling Populer: Hanya tampilkan foto yang sudah mendapatkan suara (>0), urutkan tertinggi
@@ -2431,13 +2468,18 @@ function renderGallery() {
       const imgEl = card.querySelector('img');
       if (imgEl) {
         imgEl.onerror = () => {
-          // File tidak ditemukan atau telah dihapus di server Drive: hapus kartu seketika
-          card.remove();
-          STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photo.idFoto);
-          saveEventPhotos(STATE.activeEventId);
-          const remaining = grid.querySelectorAll('.group[data-id]').length;
-          if (countBadge) countBadge.textContent = `${remaining} Foto`;
-          if (remaining === 0 && empty) empty.classList.remove('hidden');
+          // Dual Fallback: Jika link direct lh3 mengalami kendala sesaat di browser seluler, alihkan ke thumbnail
+          if (photo.gdriveViewUrl && photo.gdriveViewUrl.includes('lh3.googleusercontent.com/d/')) {
+            const parts = photo.gdriveViewUrl.split('/d/');
+            const fileId = parts[1]?.split('?')[0];
+            if (fileId && !imgEl._hasTriedFallback) {
+              imgEl._hasTriedFallback = true;
+              imgEl.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1080`;
+              return;
+            }
+          }
+          // Jika gambar masih gagal setelah fallback, berikan indikator visual tanpa menghapus data lokal
+          card.classList.add('opacity-40');
         };
       }
 
@@ -2739,7 +2781,15 @@ async function promptEditPodiumTitles() {
 }
 
 function openPhotoZoom(photo) {
-  document.getElementById('zoomImg').src = photo.gdriveViewUrl;
+  const zoomEl = document.getElementById('zoomImg');
+  zoomEl.src = photo.gdriveViewUrl;
+  zoomEl.onerror = () => {
+    if (photo.gdriveViewUrl && photo.gdriveViewUrl.includes('lh3.googleusercontent.com/d/')) {
+      const parts = photo.gdriveViewUrl.split('/d/');
+      const fileId = parts[1]?.split('?')[0];
+      if (fileId) zoomEl.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1920`;
+    }
+  };
   document.getElementById('zoomGuestNama').textContent = `Oleh: ${photo.guestNama}`;
   document.getElementById('zoomTime').textContent = photo.createdAt || 'Baru Saja';
   document.getElementById('zoomCaption').textContent = photo.caption ? `"${photo.caption}"` : '';
@@ -3711,14 +3761,9 @@ async function saveAdminEventForm() {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
-          action: 'uploadPhoto',
+          action: 'uploadCustomFrame',
           eventId: targetEventId,
           folderId: driveFolder || STATE.activeEvent?.gdriveFolderId || "",
-          guestId: 'SYSTEM_FRAME',
-          guestNama: 'Bingkai Acara',
-          caption: 'Custom Frame ' + nama,
-          cameraStyle: 'FRAME',
-          frameStyle: 'CUSTOM',
           imageBase64: STATE.tempCustomFrameData
         })
       });
@@ -3726,10 +3771,10 @@ async function saveAdminEventForm() {
       if (frameUploadRes && (frameUploadRes.viewUrl || frameUploadRes.fileId)) {
         const cloudUrl = frameUploadRes.viewUrl || ('https://lh3.googleusercontent.com/d/' + frameUploadRes.fileId);
         customFrameToSend = cloudUrl;
-        STATE.tempCustomFrameData = cloudUrl;
+        STATE.tempCustomFrameData = null; // SELESAI: Bersihkan data Base64 sementara agar tidak terunggah ganda
       }
     } catch (fErr) {
-      console.warn("Upload bingkai kustom via uploadPhoto fallback:", fErr.message);
+      console.warn("Upload bingkai kustom via uploadCustomFrame:", fErr.message);
     }
   }
 
