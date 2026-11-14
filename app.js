@@ -1213,9 +1213,6 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Kumpulkan ID foto yang sudah ada di server
-      const serverIds = new Set(serverPhotos.map(p => p.idFoto));
-
       // Pertahankan foto lokal terkini yang belum muncul di respons server agar tidak hilang saat polling
       const now = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => {
