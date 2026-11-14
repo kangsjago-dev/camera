@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.0.8" defer></script>
+  <script src="app.js?v=2.0.9" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -341,12 +341,6 @@
           <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
             Semua Foto
           </button>
-          <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition flex items-center gap-1.5">
-            🏆 Pemenang Voting
-          </button>
-          <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
-            🔥 Paling Populer
-          </button>
         </div>
       </div>
 
@@ -355,6 +349,11 @@
 
       <!-- WINNERS SHOWCASE PODIUM (Juara 1 Emas, Juara 2 Perak, Juara 3 Perunggu) -->
       <div id="galleryWinnersContainer" class="hidden mb-6 space-y-4">
+        <div class="flex items-center justify-between mb-1 px-1">
+          <button type="button" id="btnBackToGalleryFromWinners" class="text-xs text-brand-gold hover:underline flex items-center gap-1 font-semibold cursor-pointer">
+            ← Kembali ke Galeri Foto
+          </button>
+        </div>
         <div class="text-center bg-gradient-to-b from-brand-gold/15 to-transparent border border-brand-gold/30 rounded-2xl p-4">
           <span class="text-[10px] font-bold text-brand-gold uppercase tracking-widest bg-brand-gold/20 px-3 py-0.5 rounded-full border border-brand-gold/40">Hall of Fame</span>
           <h3 class="font-serif text-xl font-bold text-white mt-1.5">🏆 Pemenang Foto Terfavorit Pesta</h3>
@@ -421,17 +420,20 @@
       </div>
 
       <!-- Admin Tab Switcher -->
-      <div class="flex items-center gap-2 overflow-x-auto pb-2 mb-4 text-xs font-semibold">
-        <button data-admintab="events" class="adm-tab px-3 py-1.5 rounded-lg bg-brand-gold text-black transition">
+      <div class="flex items-center gap-2 overflow-x-auto pb-2 mb-4 text-xs font-semibold" id="adminTabsContainer">
+        <button data-admintab="events" class="adm-tab px-3 py-1.5 rounded-lg bg-brand-gold text-black transition shrink-0">
           Daftar Event
         </button>
-        <button data-admintab="create" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+        <button data-admintab="create" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
           + Buat Event Baru
         </button>
-        <button data-admintab="leaderboard" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+        <button data-admintab="gallery" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 flex items-center gap-1.5">
+          🖼️ Kelola Galeri
+        </button>
+        <button data-admintab="leaderboard" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
           Pemenang Voting
         </button>
-        <button data-admintab="settings" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+        <button data-admintab="settings" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
           Pengaturan Global
         </button>
       </div>
@@ -683,6 +685,56 @@
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <!-- TAB 2.5: KELOLA GALERI FOTO (Tampilkan / Sembunyikan & Hapus Foto) -->
+      <div id="adminTabGallery" class="hidden space-y-4">
+        <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <h3 class="font-serif text-base font-bold text-white flex items-center gap-2">
+                <span>🖼️</span> Kelola Foto Galeri Acara
+              </h3>
+              <p class="text-xs text-zinc-400">Atur foto yang tampil di galeri publik atau hapus foto yang tidak sesuai</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" id="btnAdminRefreshGallery" class="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-zinc-300 hover:text-brand-gold font-semibold transition flex items-center gap-1.5 cursor-pointer">
+                <span>🔄</span> Segarkan Galeri
+              </button>
+            </div>
+          </div>
+
+          <!-- Info Bar Acara & Filter Mode -->
+          <div class="flex items-center justify-between text-xs text-zinc-400 bg-black/40 rounded-xl p-3 border border-white/5 mb-4 flex-wrap gap-2">
+            <div>Acara Aktif: <span id="adminGalleryEventName" class="text-brand-gold font-bold">Acara</span></div>
+            <div id="adminGalleryPhotoStats" class="font-mono text-zinc-300">0 Foto</div>
+          </div>
+
+          <!-- Filter Pill Admin Foto -->
+          <div class="flex items-center gap-2 mb-4 overflow-x-auto pb-1 text-xs font-semibold">
+            <button type="button" data-admphotofilter="ALL" class="adm-photo-filter px-3 py-1.5 rounded-lg bg-brand-gold text-black transition shrink-0 cursor-pointer">
+              Semua Foto
+            </button>
+            <button type="button" data-admphotofilter="VISIBLE" class="adm-photo-filter px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 cursor-pointer">
+              👁️ Tampil Publik
+            </button>
+            <button type="button" data-admphotofilter="HIDDEN" class="adm-photo-filter px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 cursor-pointer">
+              🔒 Disembunyikan
+            </button>
+          </div>
+
+          <!-- Grid Foto Admin -->
+          <div id="adminPhotoGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            <!-- Diinjeksi dinamis oleh renderAdminGallery() -->
+          </div>
+
+          <!-- Empty State Admin Foto -->
+          <div id="adminPhotoEmptyNotice" class="hidden text-center py-10">
+            <div class="text-3xl mb-2">📷</div>
+            <p class="text-sm font-semibold text-zinc-300 mb-1">Belum Ada Foto di Galeri Acara Ini</p>
+            <p class="text-xs text-zinc-500">Foto yang diunggah oleh tamu akan muncul di sini untuk dikelola.</p>
+          </div>
         </div>
       </div>
 
@@ -1056,6 +1108,18 @@
         </button>
         <button id="btnZoomDownload" class="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition" title="Unduh Foto">
           ⬇️ Unduh
+        </button>
+      </div>
+
+      <!-- Admin Photo Moderation Controls (Khusus Admin) -->
+      <div id="zoomAdminControls" class="hidden mt-3 pt-3 border-t border-white/10 grid grid-cols-2 gap-2">
+        <button id="btnZoomToggleVisibility" type="button" class="py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer">
+          <span id="zoomToggleVisibilityIcon">👁️</span>
+          <span id="zoomToggleVisibilityText">Sembunyikan</span>
+        </button>
+        <button id="btnZoomDeletePhoto" type="button" class="py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer">
+          <span>🗑️</span>
+          <span>Hapus Foto</span>
         </button>
       </div>
     </div>

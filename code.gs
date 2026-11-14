@@ -301,6 +301,14 @@ function doGet(e) {
       return createJsonResponse(handleCleanDeletedPhotos(eventId));
     }
 
+    if (action === "adminDeletePhoto") {
+      return createJsonResponse(handleAdminDeletePhoto(params));
+    }
+
+    if (action === "adminTogglePhotoVisibility") {
+      return createJsonResponse(handleAdminTogglePhotoVisibility(params));
+    }
+
     return createJsonResponse({
       status: "error",
       message: "Action GET '" + action + "' tidak dikenali."
@@ -361,6 +369,14 @@ function doPost(e) {
 
     if (action === "adminUpdateGlobalConfig") {
       return createJsonResponse(handleAdminUpdateGlobalConfig(payload));
+    }
+
+    if (action === "adminDeletePhoto") {
+      return createJsonResponse(handleAdminDeletePhoto(payload));
+    }
+
+    if (action === "adminTogglePhotoVisibility") {
+      return createJsonResponse(handleAdminTogglePhotoVisibility(payload));
     }
 
     return createJsonResponse({
@@ -812,6 +828,8 @@ function handleGetGallery(eventId, guestId) {
           }
           seenPhotoIds.add(uniqueId);
 
+          const isPhotoVisible = String(fr[COL_FOTO.IS_FEATURED] || "").trim().toUpperCase() !== "SEMBUNYI";
+
           photos.push({
             idFoto: uniqueId,
             guestNama: fr[COL_FOTO.GUEST_NAMA] || "Tamu",
@@ -821,6 +839,8 @@ function handleGetGallery(eventId, guestId) {
             gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || (fileId ? ("https://lh3.googleusercontent.com/d/" + fileId) : ""),
             totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
             isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
+            isVisible: isPhotoVisible,
+            photoStatus: isPhotoVisible ? "TAMPIL" : "SEMBUNYI",
             createdAt: fr[COL_FOTO.CREATED_AT] || nowStr
           });
         } else {
@@ -1756,4 +1776,137 @@ function handleAdminUpdateGlobalConfig(payload) {
 
   SpreadsheetApp.flush();
   return { status: "success", message: "Konfigurasi global berhasil disimpan ke Google Sheets." };
+}
+
+/**
+ * HAPUS FOTO GALERI SECARA PERMANEN (DATA & FILE GOOGLE DRIVE)
+ */
+function handleAdminDeletePhoto(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return { status: "error", message: "Server sibuk, silakan coba sesaat lagi." };
+  }
+
+  try {
+    const idFoto = String(payload.idFoto || payload.photoId || "").trim();
+    if (!idFoto) {
+      return { status: "error", message: "Parameter idFoto wajib disertakan." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
+    const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
+
+    if (!fotoSheet || fotoSheet.getLastRow() <= 1) {
+      return { status: "error", message: "Sheet DataFoto kosong." };
+    }
+
+    let deleted = false;
+    let driveFileId = "";
+    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
+
+    for (let r = fRows.length - 1; r >= 0; r--) {
+      const rowId = fRows[r][COL_FOTO.ID];
+      const rowFileId = fRows[r][COL_FOTO.GDRIVE_FILE_ID];
+      const rowUrl = fRows[r][COL_FOTO.GDRIVE_VIEW_URL] || "";
+
+      if (rowId === idFoto || (rowFileId && rowFileId === idFoto) || (rowFileId && idFoto.indexOf(rowFileId) !== -1) || (rowUrl && rowUrl.indexOf(idFoto) !== -1)) {
+        driveFileId = rowFileId;
+        fotoSheet.deleteRow(r + 2);
+        deleted = true;
+        break;
+      }
+    }
+
+    // Hapus juga riwayat voting untuk foto ini di DataVoting
+    if (voteSheet && voteSheet.getLastRow() > 1 && deleted) {
+      const vRows = voteSheet.getRange(2, 1, voteSheet.getLastRow() - 1, 4).getDisplayValues();
+      for (let vr = vRows.length - 1; vr >= 0; vr--) {
+        if (vRows[vr][COL_VOTE.ID_FOTO] === idFoto) {
+          try { voteSheet.deleteRow(vr + 2); } catch (e) {}
+        }
+      }
+    }
+
+    // Hapus file fisik di Google Drive jika ada
+    if (driveFileId) {
+      try {
+        const file = DriveApp.getFileById(driveFileId);
+        if (file) file.setTrashed(true);
+      } catch (dErr) {
+        Logger.log("Drive trash warn: " + dErr.message);
+      }
+    }
+
+    SpreadsheetApp.flush();
+
+    if (deleted) {
+      return { status: "success", message: "Foto berhasil dihapus permanen dari galeri dan Drive.", idFoto: idFoto };
+    } else {
+      return { status: "error", message: "Foto ID '" + idFoto + "' tidak ditemukan di database." };
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * TOGGLE TAMPILKAN / SEMBUNYIKAN FOTO DI GALERI PUBLIK
+ */
+function handleAdminTogglePhotoVisibility(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return { status: "error", message: "Server sibuk, silakan coba sesaat lagi." };
+  }
+
+  try {
+    const idFoto = String(payload.idFoto || payload.photoId || "").trim();
+    if (!idFoto) {
+      return { status: "error", message: "Parameter idFoto wajib disertakan." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
+
+    if (!fotoSheet || fotoSheet.getLastRow() <= 1) {
+      return { status: "error", message: "Sheet DataFoto kosong." };
+    }
+
+    const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
+    for (let r = 0; r < fRows.length; r++) {
+      const rowId = fRows[r][COL_FOTO.ID];
+      const rowFileId = fRows[r][COL_FOTO.GDRIVE_FILE_ID];
+      const rowUrl = fRows[r][COL_FOTO.GDRIVE_VIEW_URL] || "";
+
+      if (rowId === idFoto || (rowFileId && rowFileId === idFoto) || (rowFileId && idFoto.indexOf(rowFileId) !== -1) || (rowUrl && rowUrl.indexOf(idFoto) !== -1)) {
+        const currentFeatured = fRows[r][COL_FOTO.IS_FEATURED];
+        let newIsVisible;
+        if (payload.isVisible !== undefined && payload.isVisible !== null) {
+          newIsVisible = (payload.isVisible === true || payload.isVisible === "true" || payload.isVisible === "TRUE");
+        } else {
+          newIsVisible = (currentFeatured === "SEMBUNYI");
+        }
+
+        const newStatusVal = newIsVisible ? "TAMPIL" : "SEMBUNYI";
+        fotoSheet.getRange(r + 2, COL_FOTO.IS_FEATURED + 1).setValue(newStatusVal);
+        SpreadsheetApp.flush();
+
+        return {
+          status: "success",
+          idFoto: idFoto,
+          isVisible: newIsVisible,
+          photoStatus: newStatusVal,
+          message: newIsVisible ? "Foto sekarang DITAMPILKAN di galeri publik." : "Foto sekarang DISEMBUNYIKAN dari galeri publik."
+        };
+      }
+    }
+
+    return { status: "error", message: "Foto ID '" + idFoto + "' tidak ditemukan." };
+  } finally {
+    lock.releaseLock();
+  }
 }

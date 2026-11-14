@@ -1331,6 +1331,9 @@ async function loadGallery() {
       STATE.votedPhotoIds = res.votedPhotoIds || [];
       saveEventPhotos(targetId);
       renderGallery();
+      if (!document.getElementById('adminTabGallery')?.classList.contains('hidden')) {
+        renderAdminGallery();
+      }
 
       // Unggah otomatis untuk foto offline murni yang belum ada di antrean
       const offlineUnstarted = pendingLocalPhotos.filter(p => 
@@ -1516,24 +1519,20 @@ function applyEventToUI() {
     }
   }
 
-  // Render Kategori Voting di Galeri (Termasuk Tab Pemenang Voting Resmi)
+  // Render Kategori Voting di Galeri (Sesuai Kategori Poling yang Dikonfigurasi)
   const catContainer = document.getElementById('galleryCategoryTabs');
   if (catContainer) {
-    const isWinners = STATE.activeGalleryFilter === 'WINNERS';
-    const isPopular = STATE.activeGalleryFilter === 'POPULAR';
-    const isAll = (!isWinners && !isPopular && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
+    const isAll = (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL' || STATE.activeGalleryFilter === 'WINNERS' || STATE.activeGalleryFilter === 'POPULAR');
 
     catContainer.innerHTML = `
-      <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">Semua Foto</button>
-      <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isWinners ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'} border transition flex items-center gap-1.5">🏆 Pemenang Voting</button>
-      <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isPopular ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition">🔥 Paling Populer</button>
+      <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer">Semua Foto</button>
     `;
 
     (STATE.activeCategories || []).forEach(cat => {
       const isSelected = STATE.activeGalleryFilter === cat.idKategori;
       const btn = document.createElement('button');
       btn.setAttribute('data-cat', cat.idKategori);
-      btn.className = `cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isSelected ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition`;
+      btn.className = `cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isSelected ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer`;
       btn.textContent = `👑 ${cat.namaKategori}`;
       catContainer.appendChild(btn);
     });
@@ -2627,6 +2626,10 @@ function renderGallery() {
   if (grid) grid.classList.remove('hidden');
 
   let filtered = Array.isArray(STATE.photos) ? [...STATE.photos] : [];
+  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
+  if (!isAdmin) {
+    filtered = filtered.filter(p => p.isVisible !== false && p.photoStatus !== 'SEMBUNYI');
+  }
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
@@ -2726,8 +2729,9 @@ function renderGallery() {
         grid.appendChild(card);
       } else {
         // Foto baru yang belum ada di grid: buat kartu
+        const isHidden = (photo.isVisible === false || photo.photoStatus === 'SEMBUNYI');
         card = document.createElement('div');
-        card.className = "group relative bg-brand-surfaceLight border border-brand-surfaceBorder rounded-xl overflow-hidden shadow-md flex flex-col justify-between";
+        card.className = `group relative bg-brand-surfaceLight border ${isHidden ? 'border-amber-500/50' : 'border-brand-surfaceBorder'} rounded-xl overflow-hidden shadow-md flex flex-col justify-between`;
         card.setAttribute('data-id', photo.idFoto);
 
         const urls = getDriveImageUrls(photo.gdriveViewUrl);
@@ -2736,7 +2740,7 @@ function renderGallery() {
         const tertiaryUrl = urls[2] || '';
 
         card.innerHTML = `
-          <div class="relative w-full aspect-[4/5] bg-zinc-900 flex items-center justify-center overflow-hidden cursor-pointer img-click-zone">
+          <div class="relative w-full aspect-[4/5] bg-zinc-900 flex items-center justify-center overflow-hidden cursor-pointer img-click-zone ${isHidden ? 'opacity-70' : ''}">
             <div class="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1 pointer-events-none transition-opacity duration-300">
               <svg class="w-6 h-6 opacity-30 animate-pulse text-brand-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/>
@@ -2751,6 +2755,21 @@ function renderGallery() {
                 <div class="w-6 h-6 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mb-2"></div>
                 <span class="text-[10px] text-amber-300 font-bold">Mengunggah ke Drive...</span>
               </div>
+            ` : ''}
+            ${isAdmin ? `
+              <div class="absolute top-2 right-2 z-20 flex items-center gap-1">
+                <button type="button" class="btn-card-toggle-vis p-1.5 rounded-lg bg-black/80 hover:bg-amber-500 text-amber-300 hover:text-black transition shadow cursor-pointer text-xs" title="${isHidden ? 'Tampilkan ke Publik' : 'Sembunyikan dari Publik'}">
+                  ${isHidden ? '👁️' : '🙈'}
+                </button>
+                <button type="button" class="btn-card-delete-photo p-1.5 rounded-lg bg-black/80 hover:bg-rose-600 text-rose-300 hover:text-white transition shadow cursor-pointer text-xs" title="Hapus Foto">
+                  🗑️
+                </button>
+              </div>
+              ${isHidden ? `
+                <div class="absolute top-2 left-2 z-20 bg-amber-500 text-black text-[9px] font-extrabold px-2 py-0.5 rounded-full shadow">
+                  Disembunyikan
+                </div>
+              ` : ''}
             ` : ''}
             <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2.5 z-10">
               <span class="text-[11px] text-zinc-300 truncate">${photo.caption || photo.guestNama || ''}</span>
@@ -2776,6 +2795,17 @@ function renderGallery() {
           e.stopPropagation();
           openVoteCategoryModal(photo.idFoto);
         });
+
+        if (isAdmin) {
+          card.querySelector('.btn-card-toggle-vis')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            adminTogglePhotoVisibility(photo.idFoto);
+          });
+          card.querySelector('.btn-card-delete-photo')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            adminDeletePhoto(photo.idFoto);
+          });
+        }
 
         grid.appendChild(card);
       }
@@ -3013,6 +3043,36 @@ function openPhotoZoom(photo) {
     a.target = '_blank';
     a.click();
   };
+
+  // Kontrol Moderasi Galeri Khusus Admin
+  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
+  const adminControls = document.getElementById('zoomAdminControls');
+  if (adminControls) {
+    if (isAdmin) {
+      adminControls.classList.remove('hidden');
+      const isHidden = (photo.isVisible === false || photo.photoStatus === 'SEMBUNYI');
+      const iconEl = document.getElementById('zoomToggleVisibilityIcon');
+      const textEl = document.getElementById('zoomToggleVisibilityText');
+      if (iconEl) iconEl.textContent = isHidden ? '👁️' : '🙈';
+      if (textEl) textEl.textContent = isHidden ? 'Tampilkan' : 'Sembunyikan';
+
+      const btnToggle = document.getElementById('btnZoomToggleVisibility');
+      if (btnToggle) {
+        btnToggle.onclick = () => {
+          adminTogglePhotoVisibility(photo.idFoto);
+        };
+      }
+
+      const btnDel = document.getElementById('btnZoomDeletePhoto');
+      if (btnDel) {
+        btnDel.onclick = () => {
+          adminDeletePhoto(photo.idFoto);
+        };
+      }
+    } else {
+      adminControls.classList.add('hidden');
+    }
+  }
 
   document.getElementById('modalZoomPhoto').classList.remove('hidden');
 }
@@ -4053,14 +4113,213 @@ function switchAdminTab(tabName) {
     activeBtn.classList.add('bg-brand-gold', 'text-black');
   }
 
-  ['adminTabEvents', 'adminTabCreate', 'adminTabLeaderboard', 'adminTabSettings'].forEach(id => {
-    document.getElementById(id).classList.add('hidden');
+  ['adminTabEvents', 'adminTabCreate', 'adminTabGallery', 'adminTabLeaderboard', 'adminTabSettings'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
   });
 
-  if (tabName === 'events') document.getElementById('adminTabEvents').classList.remove('hidden');
-  if (tabName === 'create') document.getElementById('adminTabCreate').classList.remove('hidden');
-  if (tabName === 'leaderboard') document.getElementById('adminTabLeaderboard').classList.remove('hidden');
-  if (tabName === 'settings') document.getElementById('adminTabSettings').classList.remove('hidden');
+  if (tabName === 'events') document.getElementById('adminTabEvents')?.classList.remove('hidden');
+  if (tabName === 'create') document.getElementById('adminTabCreate')?.classList.remove('hidden');
+  if (tabName === 'gallery') {
+    document.getElementById('adminTabGallery')?.classList.remove('hidden');
+    renderAdminGallery();
+  }
+  if (tabName === 'leaderboard') document.getElementById('adminTabLeaderboard')?.classList.remove('hidden');
+  if (tabName === 'settings') document.getElementById('adminTabSettings')?.classList.remove('hidden');
+}
+
+/**
+ * PENGATURAN GALERI ADMIN: EDIT TAMPILKAN / SEMBUNYIKAN & HAPUS FOTO
+ */
+function renderAdminGallery() {
+  const container = document.getElementById('adminPhotoGrid');
+  const empty = document.getElementById('adminPhotoEmptyNotice');
+  const eventNameEl = document.getElementById('adminGalleryEventName');
+  const statsEl = document.getElementById('adminGalleryPhotoStats');
+  if (!container) return;
+
+  if (eventNameEl) {
+    eventNameEl.textContent = STATE.activeEvent?.namaEvent || 'Acara Sedang Berlangsung';
+  }
+
+  const allPhotos = Array.isArray(STATE.photos) ? STATE.photos : [];
+  const filter = STATE.adminPhotoFilter || 'ALL';
+
+  let filtered = allPhotos;
+  if (filter === 'VISIBLE') {
+    filtered = allPhotos.filter(p => p.isVisible !== false && p.photoStatus !== 'SEMBUNYI');
+  } else if (filter === 'HIDDEN') {
+    filtered = allPhotos.filter(p => p.isVisible === false || p.photoStatus === 'SEMBUNYI');
+  }
+
+  const visibleCount = allPhotos.filter(p => p.isVisible !== false && p.photoStatus !== 'SEMBUNYI').length;
+  const hiddenCount = allPhotos.length - visibleCount;
+
+  if (statsEl) {
+    statsEl.textContent = `Total: ${allPhotos.length} Foto (${visibleCount} Tampil, ${hiddenCount} Disembunyikan)`;
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+
+  if (empty) empty.classList.add('hidden');
+  container.innerHTML = '';
+
+  filtered.forEach(photo => {
+    const urls = getDriveImageUrls(photo.gdriveViewUrl);
+    const primaryUrl = urls[0] || photo.gdriveViewUrl;
+    const isHidden = (photo.isVisible === false || photo.photoStatus === 'SEMBUNYI');
+
+    const card = document.createElement('div');
+    card.className = `admin-photo-card group relative bg-black/40 border ${isHidden ? 'border-amber-500/40 opacity-75' : 'border-white/10'} rounded-xl overflow-hidden flex flex-col justify-between transition hover:border-brand-gold/50 shadow-sm`;
+    card.innerHTML = `
+      <div class="relative w-full aspect-[4/5] bg-zinc-900 overflow-hidden cursor-pointer img-preview-zone">
+        <img src="${primaryUrl}" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="handleGalleryImgError(this);" />
+        <div class="absolute top-2 left-2 z-10">
+          <span class="text-[9px] font-bold px-2 py-0.5 rounded-full ${isHidden ? 'bg-amber-500/90 text-black' : 'bg-emerald-500/90 text-white'} shadow">
+            ${isHidden ? '🔒 Disembunyikan' : '🟢 Tampil Publik'}
+          </span>
+        </div>
+        <div class="absolute top-2 right-2 z-10 flex items-center gap-1">
+          <span class="text-[9px] bg-black/70 text-brand-gold font-bold px-2 py-0.5 rounded-full border border-brand-gold/30">
+            ❤️ ${photo.totalLikes || 0}
+          </span>
+        </div>
+        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2 z-10">
+          <span class="text-[10px] text-zinc-300 truncate">${photo.caption || ''}</span>
+        </div>
+      </div>
+      <div class="p-2.5 bg-[#111116] border-t border-white/5 space-y-2">
+        <div class="truncate">
+          <div class="text-xs font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
+          <div class="text-[9px] text-zinc-400 font-mono flex items-center justify-between">
+            <span>${photo.cameraStyle || 'RAW'}</span>
+            <span>${photo.createdAt ? String(photo.createdAt).split(' ')[0] : ''}</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 pt-1 border-t border-white/5">
+          <button type="button" class="btn-adm-vis py-1.5 px-2 rounded-lg ${isHidden ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500 hover:text-black' : 'bg-white/5 text-zinc-300 hover:bg-white/10'} text-[11px] font-semibold transition text-center cursor-pointer flex items-center justify-center gap-1">
+            <span>${isHidden ? '👁️' : '🙈'}</span>
+            <span>${isHidden ? 'Tampilkan' : 'Sembunyikan'}</span>
+          </button>
+          <button type="button" class="btn-adm-del py-1.5 px-2 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white text-[11px] font-semibold transition text-center cursor-pointer flex items-center justify-center gap-1">
+            <span>🗑️</span>
+            <span>Hapus</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    card.querySelector('.img-preview-zone')?.addEventListener('click', () => {
+      openPhotoZoom(photo);
+    });
+
+    card.querySelector('.btn-adm-vis')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      adminTogglePhotoVisibility(photo.idFoto);
+    });
+
+    card.querySelector('.btn-adm-del')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      adminDeletePhoto(photo.idFoto);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+async function adminDeletePhoto(idFoto) {
+  if (!idFoto) return;
+  if (!confirm("⚠️ Hapus foto ini secara permanen dari galeri dan Google Drive? Tindakan ini tidak dapat dibatalkan.")) {
+    return;
+  }
+
+  // 1. Optimistic Update Lokal
+  if (Array.isArray(STATE.photos)) {
+    STATE.photos = STATE.photos.filter(p => p.idFoto !== idFoto);
+  }
+  const photoCacheKey = `snapevent_photos_${STATE.activeEventId}`;
+  localStorage.setItem(photoCacheKey, JSON.stringify(STATE.photos));
+
+  // Tutup zoom modal jika sedang membuka foto ini
+  document.getElementById('modalZoomPhoto')?.classList.add('hidden');
+
+  renderGallery();
+  renderAdminGallery();
+  showToast("🗑️ Foto berhasil dihapus.", "info");
+
+  // 2. Kirim ke Server Google Apps Script
+  if (STATE.gasApiUrl) {
+    try {
+      const resp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminDeletePhoto',
+          idFoto: idFoto,
+          photoId: idFoto,
+          eventId: STATE.activeEventId
+        })
+      });
+      let res = null;
+      try { res = await resp.json(); } catch(e) {}
+      if (res && res.status === 'success') {
+        showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
+      } else if (res && res.status === 'error') {
+        showToast(`Catatan server: ${res.message}`, "warning");
+      }
+    } catch (err) {
+      console.warn("GAS delete photo sync warn:", err);
+    }
+  }
+}
+
+async function adminTogglePhotoVisibility(idFoto) {
+  if (!idFoto || !Array.isArray(STATE.photos)) return;
+  const photo = STATE.photos.find(p => p.idFoto === idFoto);
+  if (!photo) return;
+
+  const newVisibility = (photo.isVisible === false || photo.photoStatus === 'SEMBUNYI') ? true : false;
+  photo.isVisible = newVisibility;
+  photo.photoStatus = newVisibility ? 'TAMPIL' : 'SEMBUNYI';
+
+  const photoCacheKey = `snapevent_photos_${STATE.activeEventId}`;
+  localStorage.setItem(photoCacheKey, JSON.stringify(STATE.photos));
+
+  // Perbarui UI di zoom modal jika sedang aktif
+  const iconEl = document.getElementById('zoomToggleVisibilityIcon');
+  const textEl = document.getElementById('zoomToggleVisibilityText');
+  if (iconEl) iconEl.textContent = newVisibility ? '🙈' : '👁️';
+  if (textEl) textEl.textContent = newVisibility ? 'Sembunyikan' : 'Tampilkan';
+
+  renderGallery();
+  renderAdminGallery();
+  showToast(newVisibility ? "👁️ Foto sekarang DITAMPILKAN di galeri publik." : "🔒 Foto sekarang DISEMBUNYIKAN dari publik.", "info");
+
+  // Kirim ke Server GAS
+  if (STATE.gasApiUrl) {
+    try {
+      const resp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminTogglePhotoVisibility',
+          idFoto: idFoto,
+          photoId: idFoto,
+          isVisible: newVisibility
+        })
+      });
+      let res = null;
+      try { res = await resp.json(); } catch(e) {}
+      if (res && res.status === 'success') {
+        showToast("✅ Status visibilitas foto tersimpan di Google Sheets!", "success");
+      }
+    } catch (err) {
+      console.warn("GAS toggle visibility warn:", err);
+    }
+  }
 }
 
 async function saveAdminEventForm() {
@@ -4721,6 +4980,21 @@ function bindEvents() {
     renderGallery();
   });
 
+  // Tombol Kembali dari Podium Pemenang ke Galeri Foto
+  document.getElementById('btnBackToGalleryFromWinners')?.addEventListener('click', () => {
+    STATE.activeGalleryFilter = 'ALL';
+    document.querySelectorAll('.cat-tab').forEach(t => {
+      if (t.getAttribute('data-cat') === 'ALL') {
+        t.classList.remove('bg-white/5', 'text-zinc-300');
+        t.classList.add('bg-brand-gold', 'text-black');
+      } else {
+        t.classList.remove('bg-brand-gold', 'text-black');
+        t.classList.add('bg-white/5', 'text-zinc-300');
+      }
+    });
+    renderGallery();
+  });
+
   // Slideshow Controls
   document.getElementById('btnOpenSlideshow').addEventListener('click', openSlideshow);
   document.getElementById('btnCloseSlideshow').addEventListener('click', closeSlideshow);
@@ -4777,6 +5051,28 @@ function bindEvents() {
       }
       switchAdminTab(tab);
     });
+  });
+
+  // Filter Foto Admin Galeri (Semua, Tampil, Disembunyikan)
+  document.querySelectorAll('.adm-photo-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.adm-photo-filter').forEach(b => {
+        b.classList.remove('bg-brand-gold', 'text-black');
+        b.classList.add('bg-white/5', 'text-zinc-300');
+      });
+      btn.classList.remove('bg-white/5', 'text-zinc-300');
+      btn.classList.add('bg-brand-gold', 'text-black');
+      STATE.adminPhotoFilter = btn.getAttribute('data-admphotofilter');
+      renderAdminGallery();
+    });
+  });
+
+  // Tombol Segarkan Galeri Admin
+  document.getElementById('btnAdminRefreshGallery')?.addEventListener('click', async () => {
+    showToast("⏳ Menyegarkan foto galeri dari cloud...", "info");
+    await loadGallery();
+    renderAdminGallery();
+    showToast("✅ Galeri foto diperbarui!", "success");
   });
 
   // Custom Frame File Upload
