@@ -39,10 +39,10 @@
   </script>
 
   <!-- Modular Stylesheet (Dark Gold Luxury, Flash & Ken Burns Animations) -->
-  <link rel="stylesheet" href="style.css?v=2.0.4" />
+  <link rel="stylesheet" href="style.css?v=2.0.5" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.0.4" defer></script>
+  <script src="app.js?v=2.0.5" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -999,28 +999,27 @@
       </div>
 
       <!-- Kartu Informasi Uploader & Pesan/Ucapan Tamu (Live Event Overlay) -->
-      <div id="slideshowInfoOverlay" class="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 z-20 max-w-xl w-11/12 bg-black/85 backdrop-blur-xl border border-brand-gold/60 rounded-2xl p-3.5 sm:p-5 text-center shadow-[0_10px_35px_rgba(0,0,0,0.8)] transition-all duration-500 pointer-events-auto">
-        <div class="flex items-center justify-center gap-2 mb-1.5">
+      <div id="slideshowInfoOverlay" class="absolute bottom-16 sm:bottom-14 md:bottom-16 left-1/2 -translate-x-1/2 z-20 max-w-xl w-11/12 sm:w-auto min-w-[280px] bg-black/85 backdrop-blur-xl border border-brand-gold/60 rounded-2xl p-3 sm:p-4 text-center shadow-[0_10px_35px_rgba(0,0,0,0.8)] transition-all duration-500 pointer-events-auto">
+        <div class="flex items-center justify-center gap-2 mb-1">
           <span id="slideshowUploaderBadge" class="text-xs sm:text-sm px-3.5 py-1 rounded-full bg-brand-gold text-black font-extrabold shadow-md">Oleh Tamu</span>
           <span id="slideshowTimeBadge" class="text-xs text-zinc-300">Baru Saja</span>
         </div>
-        <p id="slideshowCaptionText" class="font-serif italic text-base sm:text-lg md:text-xl text-white drop-shadow font-medium">"Momen seru bersama para sahabat!"</p>
+        <p id="slideshowCaptionText" class="font-serif italic text-sm sm:text-base md:text-lg text-white drop-shadow font-medium">"Momen seru bersama para sahabat!"</p>
       </div>
     </div>
 
     <!-- Bottom Bar: Live Indicator & Stasiun Scan QR Raksasa -->
-    <div class="absolute bottom-0 inset-x-0 z-20 flex items-end justify-between p-4 sm:p-6 md:p-8 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none">
-      <div class="pointer-events-auto flex items-center gap-2 text-xs font-semibold text-zinc-400 bg-black/60 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10">
+    <div class="absolute bottom-0 inset-x-0 z-20 flex items-center justify-between p-3 sm:p-6 md:p-8 bg-gradient-to-t from-black/95 via-black/50 to-transparent pointer-events-none">
+      <div class="pointer-events-auto flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold text-zinc-400 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 shadow-md">
         <span>📸 SnapEvent Live System</span>
       </div>
 
-      <!-- Tampilan Tombol Bagikan untuk Mobile Ponsel (sm:hidden) -->
-      <button id="btnSlideshowMobileShare" class="pointer-events-auto flex sm:hidden items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-gold text-black text-xs font-bold shadow-lg hover:brightness-110 active:scale-95 transition" title="Bagikan Acara">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <!-- Tampilan Tombol Bagikan untuk Mobile Ponsel (sm:hidden, Icon-Only Button) -->
+      <button id="btnSlideshowMobileShare" class="pointer-events-auto flex sm:hidden items-center justify-center w-10 h-10 rounded-full bg-brand-gold text-black shadow-lg shadow-brand-gold/25 hover:brightness-110 active:scale-95 transition" title="Bagikan Acara">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
           <line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>
         </svg>
-        <span>Bagikan Acara</span>
       </button>
 
       <!-- Tampilan Stasiun Scan QR Raksasa untuk Layar PC Desktop / Proyektor (hidden sm:flex) -->
