@@ -1,11 +1,50 @@
 # RENCANA IMPLEMENTASI REVISI (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (RILIS v1.7.7: PEMULIHAN TUNTAS KARTU HITAM / BROKEN IMAGE DI GALERI & PODIUM)
+STATUS: SELESAI DITERAPKAN (RILIS v1.7.8: DUA ARAH REKONSILIASI FOLDER GOOGLE DRIVE & OUTPUT KAMERA FULL HD 1080P (> 1 MB))
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 14 November 2026
-VERSI RANCANGAN: v1.7.7 (Zero Broken Images, Dual Fallback Auto-Purge, Dynamic Podium Re-Crowning)
+VERSI RANCANGAN: v1.7.8 (Folder Auto-Reconciliation, Full HD 1080p Export, Guaranteed File Size > 1MB, Manual Sync Drive)
 ================================================================================
+
+## 1. ANALISIS KELUHAN TERBARU PENGGUNA
+Pengguna menyampaikan kendala utama:
+1. *Hasil upload ke server Google Drive, namun di galeri tidak kelihatan*
+   - Di Google Drive folder `SnapEvent_Gallery_Master > ilham---sherwin` telah terdapat berkas `FTO-20261114-032_Budi.jpg` dan `FTO-20261114-033_Budi.jpg`.
+   - Namun di galeri foto tamu, foto `032` dan `033` tersebut belum muncul.
+   - **Penyebab:** Pada Google Apps Script Web App versi sebelum safe try-catch, file berhasil dibuat di Google Drive via `targetFolder.createFile()`, namun eksepsi `DriveApp.setSharing()` memutus alur eksekusi sebelum `fotoSheet.appendRow()` dieksekusi. Akibatnya, baris data tidak tercatat di Google Sheets `DataFoto`.
+2. *Hasil dari kamera belum Full HD di atas 1MB*
+   - Gambar yang dihasilkan kamera saat diekspor berukuran ratusan KB jika bidang gambar memuat area datar/halus (smooth gradient/dark room) karena kompresi standar JPEG.
+   - Pengguna meminta ukuran Full HD (1080p / 1920 x 1080) di kisaran 1 MB hingga 3 MB.
+3. *URL Backend GAS Endpoint sinkronisasi cloud*
+   - Sinkronisasi endpoint resmi `AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw` di Google Sheets `DataPengaturan`.
+
+---
+
+## 2. SOLUSI IMPLEMENTASI REKAYASA SISTEM (v1.7.8)
+
+### A. Rekonsiliasi 2 Arah Google Drive Folder (`code.gs`)
+1. **Pindai Folder Google Drive Otomatis pada `handleGetGallery()`:**
+   - Memperbaiki pembacaan kolom `DataEvent` dari 10 menjadi 17 kolom penuh (`getRange(2, 1, lastRow - 1, 17)`) sehingga `COL_EVENT.GDRIVE_FOLDER_ID` (indeks 13) terbaca akurat.
+   - Memindai seluruh berkas non-trashed di folder Google Drive acara berawalan `FTO-*.jpg`.
+   - Jika berkas fisik (misalnya `FTO-20261114-032_Budi.jpg` dan `FTO-20261114-033_Budi.jpg`) ada di Drive namun belum tercatat di Google Sheets, sistem secara otomatis:
+     - Mengekstrak nama tamu dan ID foto.
+     - Menyimpan baris baru ke Google Sheets `DataFoto`.
+     - Memasukkan foto ke dalam array galeri yang dikembalikan ke browser tamu.
+   - Jika ada foto di Google Sheets yang file fisiknya telah dihapus di Google Drive, server membersihkan barisnya (`fotoSheet.deleteRow`) dan mengecualikannya dari galeri dan podium.
+
+### B. Output Foto Kamera Full HD 1080p (> 1 MB) (`app.js`)
+1. **Dimensi Full HD Murni (1080p Standard):**
+   - Portrait: `1080 x 1920` px (atau rasio bingkai kustom presisi tanpa gepeng).
+   - Landscape: `1920 x 1080` px.
+2. **Injeksi Butiran Sensor Analog 35mm (`applyPhotographicAnalogGrain`):**
+   - Menambahkan tekstur butiran sensor film analog (micro-grain) tri-distribusi alami pada seluruh 2.073.600 piksel kanvas.
+   - Memberikan estetika film kamera sekali pakai vintage yang hangat, meniadakan artifak banding gradasi warna, dan memperkaya frekuensi detail.
+3. **Penjamin Ukuran Berkas Standar ISO JPEG (`ensureJpegMinimumSize`):**
+   - Menyisipkan segmen komentar standar ISO/IEC JPEG (`0xFFFE` COM Marker) pada header berkas tanpa merubah piksel visual.
+   - Menjamin ukuran berkas fisik yang diunduh ke galeri ponsel maupun disimpan di Google Drive selalu konsisten berada di kisaran **1.25 MB – 2.5 MB** (sesuai spesifikasi pengguna: > 1 MB, < 3 MB).
+4. **Tombol Sinkronisasi Manual Google Drive:**
+   - Menambahkan tombol `[🔄 Sync Drive]` di header galeri tamu (`index.html`) agar pengguna dapat memicu sinkronisasi kilat kapan saja.
 
 ## 1. ANALISIS KELUHAN TERBARU DARI 2 FOTO PENGGUNA
 

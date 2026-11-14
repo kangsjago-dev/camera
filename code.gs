@@ -125,7 +125,7 @@ function doGet(e) {
       return createJsonResponse(handleGetEventDetails(eventId, guestId));
     }
 
-    if (action === "getGallery") {
+    if (action === "getGallery" || action === "reconcileDrive" || action === "syncDriveFolder") {
       const eventId = params.eventId || "";
       const guestId = params.guestId || "";
       return createJsonResponse(handleGetGallery(eventId, guestId));
@@ -203,8 +203,10 @@ function doPost(e) {
       return createJsonResponse(handleAdminUpdateGlobalConfig(payload));
     }
 
-    if (action === "adminCleanDeletedPhotos" || action === "cleanDeletedPhotos") {
-      return createJsonResponse(handleAdminCleanDeletedPhotos(payload));
+    if (action === "adminCleanDeletedPhotos" || action === "cleanDeletedPhotos" || action === "reconcileDrive" || action === "syncDriveFolder") {
+      const eventId = payload.eventId || "";
+      const guestId = payload.guestId || "";
+      return createJsonResponse(handleGetGallery(eventId, guestId));
     }
 
     return createJsonResponse({
@@ -478,19 +480,23 @@ function handleGetGallery(eventId, guestId) {
 
   // Ambil info status reveal event & resolusi Event ID resmi (Mendukung ID maupun Slug)
   let resolvedEventId = eventId;
+  let eventNama = "Acara";
+  let eventFolderId = "";
   let isRevealed = true;
   let revealMode = "SEGERA";
   let likeEnabled = true;
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
         resolvedEventId = evRows[i][COL_EVENT.ID];
+        eventNama = evRows[i][COL_EVENT.NAMA];
         revealMode = evRows[i][COL_EVENT.REVEAL_MODE];
         const revFlag = evRows[i][COL_EVENT.IS_REVEALED];
         isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
         likeEnabled = evRows[i][COL_EVENT.LIKE_ENABLED] !== "FALSE" && evRows[i][COL_EVENT.LIKE_ENABLED] !== "false";
+        eventFolderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
         break;
       }
     }
@@ -504,6 +510,68 @@ function handleGetGallery(eventId, guestId) {
       message: "Foto-foto sedang disimpan rapi di rol film! Galeri akan terbuka secara resmi setelah acara selesai.",
       photos: []
     };
+  }
+
+  // 1. CARI TARGET FOLDER GOOGLE DRIVE ACARA (Untuk Sinkronisasi 2 Arah Folder & Galeri)
+  let targetFolder = null;
+  if (eventFolderId && eventFolderId.trim() !== "") {
+    try {
+      targetFolder = DriveApp.getFolderById(eventFolderId);
+    } catch (eFolder) {
+      Logger.log("handleGetGallery getFolderById warn: " + eFolder.message);
+    }
+  }
+
+  // Fallback pencarian folder berdasarkan master drive jika folderId kosong
+  if (!targetFolder) {
+    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+    if (configSheet && configSheet.getLastRow() > 1) {
+      const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+      cRows.forEach(function(cr) {
+        if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
+      });
+    }
+    if (masterFolderId) {
+      try {
+        const mFolder = DriveApp.getFolderById(masterFolderId);
+        const folderSlug = (eventNama || resolvedEventId).replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
+        const subFolders = mFolder.getFolders();
+        while (subFolders.hasNext()) {
+          const sf = subFolders.next();
+          const sfSlug = sf.getName().replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
+          if (sfSlug === folderSlug || sf.getName() === eventNama || sf.getName().indexOf(folderSlug) !== -1) {
+            targetFolder = sf;
+            break;
+          }
+        }
+      } catch (eMaster) {}
+    }
+  }
+
+  // 2. PINDAI BERKAS FISIK DI GOOGLE DRIVE (Mendeteksi Foto Asli & Foto yang Dihapus)
+  const driveFilesById = {};
+  const driveFilesByName = {};
+  const drivePhotoFiles = [];
+
+  if (targetFolder) {
+    try {
+      const fileIter = targetFolder.getFiles();
+      while (fileIter.hasNext()) {
+        const df = fileIter.next();
+        if (!df.isTrashed()) {
+          const dfId = df.getId();
+          const dfName = df.getName();
+          driveFilesById[dfId] = df;
+          driveFilesByName[dfName] = df;
+          if (dfName.indexOf("FTO-") === 0) {
+            drivePhotoFiles.push(df);
+          }
+        }
+      }
+    } catch (iterErr) {
+      Logger.log("handleGetGallery Drive iteration warn: " + iterErr.message);
+    }
   }
 
   // Agregasi Suara per Kategori dari DataVoting (Menghitung like per kategori untuk tiap foto)
@@ -538,8 +606,12 @@ function handleGetGallery(eventId, guestId) {
     }
   }
 
-  // Ambil daftar foto
+  // 3. AMBIL DAFTAR FOTO DARI DATAFOTO & FILTER FOTO MATI / RUSAK / TERHAPUS
+  const recordedPhotoIds = {};
+  const recordedFileIds = {};
   const photos = [];
+  const rowsToDelete = [];
+
   if (fotoSheet && fotoSheet.getLastRow() > 1) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
@@ -554,22 +626,30 @@ function handleGetGallery(eventId, guestId) {
         const curPhotoId = fr[COL_FOTO.ID];
         const gdriveId = fr[COL_FOTO.GDRIVE_FILE_ID];
 
-        // Validasi Cepat: Buang foto jika file fisiknya sudah dihapus permanen atau di Trash Google Drive
+        // Validasi Fisik: Buang foto jika file fisiknya sudah dihapus permanen atau di Trash Google Drive
         let isFileValid = true;
         if (gdriveId) {
-          try {
-            const driveFile = DriveApp.getFileById(gdriveId);
-            if (driveFile.isTrashed()) {
+          if (targetFolder && !driveFilesById[gdriveId]) {
+            // File tidak ada di folder target acara, periksa keberadaan globalnya di Drive
+            try {
+              const testFile = DriveApp.getFileById(gdriveId);
+              if (testFile.isTrashed()) {
+                isFileValid = false;
+              }
+            } catch (fileErr) {
               isFileValid = false;
             }
-          } catch (fileErr) {
-            // File tidak ditemukan atau telah dihapus di Google Drive
-            isFileValid = false;
           }
         }
+
         if (!isFileValid) {
+          // File fisik telah dihapus dari Google Drive! Tandai baris untuk dibersihkan
+          rowsToDelete.push(j + 2);
           continue; // Lewati agar tidak pernah muncul sebagai kartu hitam kosong di galeri dan podium!
         }
+
+        recordedPhotoIds[curPhotoId] = true;
+        if (gdriveId) recordedFileIds[gdriveId] = true;
 
         const catLikes = photoCatLikes[curPhotoId] || {};
         photos.push({
@@ -578,7 +658,7 @@ function handleGetGallery(eventId, guestId) {
           caption: fr[COL_FOTO.CAPTION],
           cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
           frameStyle: fr[COL_FOTO.FRAME_STYLE],
-          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
+          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + gdriveId),
           totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
           categoryLikes: catLikes,
           isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
@@ -586,6 +666,80 @@ function handleGetGallery(eventId, guestId) {
         });
       }
     }
+  }
+
+  // 4. REKONSILIASI 2 ARAH: INGEST OTOMATIS FOTO DI DRIVE YANG BELUM TERCATAT DI SHEETS
+  // Menyelesaikan masalah: "file ada di Google Drive (misal FTO-032 & FTO-033) tapi tidak kelihatan di galeri"
+  if (targetFolder && drivePhotoFiles.length > 0) {
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+    drivePhotoFiles.forEach(function(df) {
+      const dfId = df.getId();
+      const dfName = df.getName();
+      const idMatch = dfName.match(/^(FTO-\d+-\d+)/i);
+      const parsedPhotoId = idMatch ? idMatch[1] : ("FTO-" + dfId.slice(-8));
+
+      // Jika file fisik ada di Drive tapi belum pernah dicatat di Google Sheets
+      if (!recordedPhotoIds[parsedPhotoId] && !recordedFileIds[dfId]) {
+        let guestNama = "Tamu";
+        const nameMatch = dfName.match(/^FTO-[^_]+_(.+)\.[a-zA-Z0-9]+$/i);
+        if (nameMatch && nameMatch[1]) {
+          guestNama = nameMatch[1];
+        }
+        const viewUrl = "https://lh3.googleusercontent.com/d/" + dfId;
+        let createdStr = "";
+        try {
+          createdStr = Utilities.formatDate(df.getDateCreated(), timeZone, "yyyy-MM-dd HH:mm:ss");
+        } catch (eDate) {
+          createdStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+        }
+
+        // Catat ke DataFoto Sheets secara otomatis
+        fotoSheet.appendRow([
+          sanitizeCellValue(parsedPhotoId),
+          sanitizeCellValue(resolvedEventId),
+          "GUEST-RECON",
+          sanitizeCellValue(guestNama),
+          "Momen seru!",
+          "800T",
+          "CUSTOM_EVENT",
+          sanitizeCellValue(dfId),
+          sanitizeCellValue(viewUrl),
+          0,
+          false,
+          sanitizeCellValue(createdStr)
+        ]);
+
+        // Masukkan langsung ke hasil galeri agar seketika tampil di layar tamu
+        photos.push({
+          idFoto: parsedPhotoId,
+          guestNama: guestNama,
+          caption: "Momen seru!",
+          cameraStyle: "800T",
+          frameStyle: "CUSTOM_EVENT",
+          gdriveViewUrl: viewUrl,
+          totalLikes: 0,
+          categoryLikes: {},
+          isFeatured: false,
+          createdAt: createdStr
+        });
+
+        recordedPhotoIds[parsedPhotoId] = true;
+        recordedFileIds[dfId] = true;
+      }
+    });
+  }
+
+  // Bersihkan baris foto yang file Drive-nya sudah dihapus (dari bawah ke atas agar indeks aman)
+  if (rowsToDelete.length > 0) {
+    for (let d = rowsToDelete.length - 1; d >= 0; d--) {
+      try {
+        fotoSheet.deleteRow(rowsToDelete[d]);
+      } catch (eDel) {}
+    }
+  }
+
+  if (rowsToDelete.length > 0 || drivePhotoFiles.length > 0) {
+    try { SpreadsheetApp.flush(); } catch (eF) {}
   }
 
   // Balik urutan agar foto terbaru tampil di paling atas
