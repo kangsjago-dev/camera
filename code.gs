@@ -203,7 +203,7 @@ function doPost(e) {
       return createJsonResponse(handleAdminUpdateGlobalConfig(payload));
     }
 
-    if (action === "adminCleanDeletedPhotos" || action === "cleanDeletedPhotos" || action === "reconcileDrive" || action === "syncDriveFolder") {
+    if (action === "adminCleanDeletedPhotos" || action === "cleanDeletedPhotos") {
       const eventId = payload.eventId || "";
       const guestId = payload.guestId || "";
       return createJsonResponse(handleGetGallery(eventId, guestId));
@@ -487,7 +487,7 @@ function handleGetGallery(eventId, guestId) {
   let likeEnabled = true;
 
   if (eventSheet && eventSheet.getLastRow() > 1) {
-    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
     for (let i = 0; i < evRows.length; i++) {
       if (evRows[i][COL_EVENT.ID] === eventId || evRows[i][COL_EVENT.SLUG] === eventId) {
         resolvedEventId = evRows[i][COL_EVENT.ID];
@@ -606,7 +606,7 @@ function handleGetGallery(eventId, guestId) {
     }
   }
 
-  // 3. AMBIL DAFTAR FOTO DARI DATAFOTO & FILTER FOTO MATI / RUSAK / TERHAPUS
+  // Ambil daftar foto
   const recordedPhotoIds = {};
   const recordedFileIds = {};
   const photos = [];
@@ -626,11 +626,10 @@ function handleGetGallery(eventId, guestId) {
         const curPhotoId = fr[COL_FOTO.ID];
         const gdriveId = fr[COL_FOTO.GDRIVE_FILE_ID];
 
-        // Validasi Fisik: Buang foto jika file fisiknya sudah dihapus permanen atau di Trash Google Drive
+        // Validasi Cepat: Buang foto jika file fisiknya sudah dihapus permanen atau di Trash Google Drive
         let isFileValid = true;
         if (gdriveId) {
           if (targetFolder && !driveFilesById[gdriveId]) {
-            // File tidak ada di folder target acara, periksa keberadaan globalnya di Drive
             try {
               const testFile = DriveApp.getFileById(gdriveId);
               if (testFile.isTrashed()) {
@@ -658,7 +657,7 @@ function handleGetGallery(eventId, guestId) {
           caption: fr[COL_FOTO.CAPTION],
           cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
           frameStyle: fr[COL_FOTO.FRAME_STYLE],
-          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + gdriveId),
+          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
           totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
           categoryLikes: catLikes,
           isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
