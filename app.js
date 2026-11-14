@@ -975,10 +975,19 @@ function activateEvent(idEvent) {
   STATE.activeEventId = idEvent;
   localStorage.setItem('snapevent_active_event_id', idEvent);
 
+  if (Array.isArray(STATE.events)) {
+    STATE.events.forEach(e => {
+      e.statusEvent = (e.idEvent === idEvent ? 'AKTIF' : 'INAKTIF');
+    });
+    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  }
+
   const ev = (STATE.events && STATE.events.find(e => e.idEvent === idEvent)) || 
              (idEvent === MOCK_DATA.event.idEvent ? MOCK_DATA.event : null);
   if (ev) {
+    ev.statusEvent = 'AKTIF';
     STATE.activeEvent = ev;
+    localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
   }
 
   // RESET SESI TAMU: Website direset untuk ketikkan nama seperti pada tampilan awal (Screen 1)
@@ -1005,7 +1014,8 @@ function activateEvent(idEvent) {
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'adminSetActiveEvent',
-        idEvent: idEvent
+        idEvent: idEvent,
+        eventId: idEvent
       })
     }).catch(err => console.warn("GAS setActiveEvent error:", err.message));
   }
@@ -2475,6 +2485,21 @@ function renderGallery() {
   const countBadge = document.getElementById('galleryPhotoCountBadge');
   const winnersContainer = document.getElementById('galleryWinnersContainer');
   const spotlightContainer = document.getElementById('galleryWinnerSpotlight');
+  const lockedNotice = document.getElementById('galleryLockedNotice');
+
+  // Mode Penguncian Galeri Berdasarkan Pengaturan Event
+  const isLocked = STATE.activeEvent && (STATE.activeEvent.isRevealed === false || (STATE.activeEvent.revealMode === 'SETELAH' && !STATE.activeEvent.isRevealed));
+  if (isLocked) {
+    if (lockedNotice) lockedNotice.classList.remove('hidden');
+    if (grid) grid.classList.add('hidden');
+    if (empty) empty.classList.add('hidden');
+    if (spotlightContainer) spotlightContainer.classList.add('hidden');
+    if (winnersContainer) winnersContainer.classList.add('hidden');
+    if (countBadge) countBadge.textContent = '0 Foto (Terkunci)';
+    return;
+  } else {
+    if (lockedNotice) lockedNotice.classList.add('hidden');
+  }
 
   if (STATE.activeGalleryFilter === 'WINNERS') {
     if (grid) grid.classList.add('hidden');
@@ -3543,25 +3568,60 @@ function renderAdminDashboard() {
           switchAdminTab('create');
         });
 
-        card.querySelector('.btn-toggle-reveal').addEventListener('click', async () => {
-          ev.isRevealed = !ev.isRevealed;
+        card.querySelector('.btn-toggle-reveal').addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const origHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.style.opacity = '0.7';
+
+          const newRevealedState = !ev.isRevealed;
+          ev.isRevealed = newRevealedState;
+          ev.revealMode = newRevealedState ? 'SEGERA' : 'SETELAH';
+
+          if (ev.idEvent === STATE.activeEventId && STATE.activeEvent) {
+            STATE.activeEvent.isRevealed = newRevealedState;
+            STATE.activeEvent.revealMode = ev.revealMode;
+            localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
+          }
+
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-          showToast(ev.isRevealed ? "Galeri resmi dibuka untuk semua tamu!" : "Galeri ditutup kembali.", "info");
           renderAdminDashboard();
+          showToast(newRevealedState ? `Galeri "${ev.namaEvent}" resmi dibuka!` : `Galeri "${ev.namaEvent}" dikunci (ditahan).`, "info");
 
           if (STATE.gasApiUrl) {
             try {
-              await fetch(STATE.gasApiUrl, {
+              const resp = await fetch(STATE.gasApiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({
                   action: 'adminToggleReveal',
+                  eventId: ev.idEvent,
                   idEvent: ev.idEvent,
-                  isRevealed: ev.isRevealed
+                  isRevealed: newRevealedState
                 })
               });
+              let res = null;
+              try { res = await resp.json(); } catch (jErr) {}
+
+              if (res && res.status === 'success') {
+                const finalRevealed = (res.isRevealed === true || res.isRevealed === 'true');
+                ev.isRevealed = finalRevealed;
+                ev.revealMode = finalRevealed ? 'SEGERA' : 'SETELAH';
+                if (ev.idEvent === STATE.activeEventId && STATE.activeEvent) {
+                  STATE.activeEvent.isRevealed = finalRevealed;
+                  STATE.activeEvent.revealMode = ev.revealMode;
+                  localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
+                }
+                localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+                renderAdminDashboard();
+                showToast(finalRevealed ? `✅ Galeri "${ev.namaEvent}" berhasil dibuka di server Google Sheets!` : `🔒 Galeri "${ev.namaEvent}" berhasil dikunci di server Google Sheets!`, "success");
+              } else {
+                console.warn("GAS reveal sync response warning:", res);
+                showToast(`Gagal update status di server: ${res?.message || 'Error'}`, "error");
+              }
             } catch (err) {
               console.warn("GAS reveal sync warn:", err.message);
+              showToast("Gagal terhubung ke Cloud: " + err.message, "warning");
             }
           }
         });
@@ -3827,6 +3887,10 @@ async function saveAdminEventForm() {
     if (activeFrames.length === 0) activeFrames = ['GOLD_DECO', 'POLAROID', 'MINIMAL'];
   }
 
+  const isRevPreserved = (revealMode === 'SEGERA') 
+    ? true 
+    : (existingEv && existingEv.isRevealed !== undefined ? existingEv.isRevealed : false);
+
   const savedEvent = Object.assign({}, existingEv, {
     idEvent: targetEventId,
     namaEvent: nama,
@@ -3836,7 +3900,7 @@ async function saveAdminEventForm() {
     maxFotoPerGuest: maxFoto,
     maxVotePerGuest: maxVote,
     revealMode: revealMode,
-    isRevealed: (revealMode === 'SEGERA'),
+    isRevealed: isRevPreserved,
     likeEnabled: likeEnabled,
     publicVisible: publicVisible,
     gdriveFolderId: driveFolder,
@@ -3892,6 +3956,7 @@ async function saveAdminEventForm() {
         body: JSON.stringify({
           action: 'adminSaveEvent',
           idEvent: savedEvent.idEvent,
+          eventId: savedEvent.idEvent,
           namaEvent: nama,
           slugEvent: savedEvent.slugEvent,
           tanggalEvent: tanggal,

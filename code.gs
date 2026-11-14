@@ -411,6 +411,16 @@ function handleGetAllEvents() {
           }
         }
 
+        const revFlag = String(r[COL_EVENT.IS_REVEALED] || "").trim().toUpperCase();
+        let isRev = false;
+        if (revFlag === "TRUE") {
+          isRev = true;
+        } else if (revFlag === "FALSE") {
+          isRev = false;
+        } else {
+          isRev = (r[COL_EVENT.REVEAL_MODE] === "SEGERA");
+        }
+
         events.push({
           idEvent: r[COL_EVENT.ID],
           namaEvent: r[COL_EVENT.NAMA] || "Acara",
@@ -420,7 +430,7 @@ function handleGetAllEvents() {
           maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
           maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
           revealMode: r[COL_EVENT.REVEAL_MODE] || "SEGERA",
-          isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
+          isRevealed: isRev,
           likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
           publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
           activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
@@ -523,6 +533,16 @@ function handleGetEventDetails(eventId, guestId) {
     }
   }
 
+  const revFlag = String(r[COL_EVENT.IS_REVEALED] || "").trim().toUpperCase();
+  let isRev = false;
+  if (revFlag === "TRUE") {
+    isRev = true;
+  } else if (revFlag === "FALSE") {
+    isRev = false;
+  } else {
+    isRev = (r[COL_EVENT.REVEAL_MODE] === "SEGERA");
+  }
+
   const matchedEvent = {
     idEvent: r[COL_EVENT.ID],
     namaEvent: r[COL_EVENT.NAMA],
@@ -532,7 +552,7 @@ function handleGetEventDetails(eventId, guestId) {
     maxFotoPerGuest: Number(r[COL_EVENT.MAX_FOTO]) || 10,
     maxVotePerGuest: Number(r[COL_EVENT.MAX_VOTE]) || 3,
     revealMode: r[COL_EVENT.REVEAL_MODE],
-    isRevealed: r[COL_EVENT.IS_REVEALED] === "TRUE" || r[COL_EVENT.IS_REVEALED] === "true",
+    isRevealed: isRev,
     likeEnabled: r[COL_EVENT.LIKE_ENABLED] !== "FALSE" && r[COL_EVENT.LIKE_ENABLED] !== "false",
     publicVisible: r[COL_EVENT.PUBLIC_VISIBLE] !== "FALSE" && r[COL_EVENT.PUBLIC_VISIBLE] !== "false",
     activeCameraStyles: parseJsonSafe(r[COL_EVENT.CAMERA_STYLES], ["RAW", "800T", "WARM", "BW"]),
@@ -642,9 +662,15 @@ function handleGetGallery(eventId, guestId) {
     }
     if (matchedEvRow) {
       canonicalEventId = matchedEvRow[COL_EVENT.ID];
-      revealMode = matchedEvRow[COL_EVENT.REVEAL_MODE];
-      const revFlag = matchedEvRow[COL_EVENT.IS_REVEALED];
-      isRevealed = (revFlag === "TRUE" || revFlag === "true" || revealMode === "SEGERA");
+      revealMode = matchedEvRow[COL_EVENT.REVEAL_MODE] || "SEGERA";
+      const revFlag = String(matchedEvRow[COL_EVENT.IS_REVEALED] || "").trim().toUpperCase();
+      if (revFlag === "FALSE") {
+        isRevealed = false;
+      } else if (revFlag === "TRUE") {
+        isRevealed = true;
+      } else {
+        isRevealed = (revealMode === "SEGERA");
+      }
       folderId = extractDriveFolderId(matchedEvRow[COL_EVENT.GDRIVE_FOLDER_ID]);
       eventSlug = matchedEvRow[COL_EVENT.SLUG];
       eventName = matchedEvRow[COL_EVENT.NAMA];
@@ -1424,7 +1450,7 @@ function handleAdminSaveEvent(payload) {
   }
 
   try {
-    const idEvent = String(payload.idEvent || "").trim();
+    const idEvent = String(payload.idEvent || payload.eventId || "").trim();
     const namaEvent = String(payload.namaEvent || "Event Baru").trim();
     const slugEvent = String(payload.slugEvent || createSlug(namaEvent)).trim();
     const tanggalEvent = String(payload.tanggalEvent || "").trim();
@@ -1432,7 +1458,9 @@ function handleAdminSaveEvent(payload) {
     const maxFoto = Number(payload.maxFotoPerGuest) || 10;
     const maxVote = Number(payload.maxVotePerGuest) || 3;
     const revealMode = payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA";
-    const isRevealed = payload.isRevealed === true || payload.isRevealed === "true";
+    const isRevealed = payload.isRevealed !== undefined 
+      ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
+      : (revealMode === "SEGERA");
     const likeEnabled = payload.likeEnabled !== false && payload.likeEnabled !== "false";
     const publicVisible = payload.publicVisible !== false && payload.publicVisible !== "false";
     const cameraStyles = JSON.stringify(payload.activeCameraStyles || ["RAW", "800T", "WARM", "BW"]);
@@ -1592,7 +1620,7 @@ function handleAdminSaveEvent(payload) {
 }
 
 function handleAdminToggleReveal(payload) {
-  const eventId = String(payload.eventId || "").trim();
+  const eventId = String(payload.eventId || payload.idEvent || "").trim();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
 
@@ -1600,26 +1628,36 @@ function handleAdminToggleReveal(payload) {
     return { status: "error", message: "Sheet DataEvent kosong." };
   }
 
-  const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 10).getDisplayValues();
+  const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][COL_EVENT.ID] === eventId || rows[i][COL_EVENT.SLUG] === eventId) {
       const cur = rows[i][COL_EVENT.IS_REVEALED];
-      const newVal = (cur === "TRUE" || cur === "true") ? false : true;
-      eventSheet.getRange(i + 2, COL_EVENT.IS_REVEALED + 1).setValue(newVal);
+      let newVal;
+      if (payload.isRevealed !== undefined && payload.isRevealed !== null) {
+        newVal = (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE");
+      } else {
+        newVal = (cur === "TRUE" || cur === "true") ? false : true;
+      }
+
+      eventSheet.getRange(i + 2, COL_EVENT.IS_REVEALED + 1).setValue(newVal ? "TRUE" : "FALSE");
+      eventSheet.getRange(i + 2, COL_EVENT.REVEAL_MODE + 1).setValue(newVal ? "SEGERA" : "SETELAH");
       SpreadsheetApp.flush();
+
       return {
         status: "success",
+        idEvent: rows[i][COL_EVENT.ID],
         isRevealed: newVal,
-        message: newVal ? "Galeri resmi dibuka untuk tamu!" : "Galeri dikunci."
+        revealMode: newVal ? "SEGERA" : "SETELAH",
+        message: newVal ? "Galeri foto resmi DIBUKA untuk tamu!" : "Galeri foto resmi DIKUNCI (ditahan)."
       };
     }
   }
 
-  return { status: "error", message: "Event tidak ditemukan." };
+  return { status: "error", message: "Event ID '" + eventId + "' tidak ditemukan." };
 }
 
 function handleAdminSetActiveEvent(payload) {
-  const idEvent = String(payload.idEvent || "").trim();
+  const idEvent = String(payload.idEvent || payload.eventId || "").trim();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
 
@@ -1636,7 +1674,7 @@ function handleAdminSetActiveEvent(payload) {
   }
 
   SpreadsheetApp.flush();
-  return { status: "success", message: "Event '" + idEvent + "' sekarang aktif!" };
+  return { status: "success", idEvent: idEvent, message: "Event '" + idEvent + "' sekarang aktif!" };
 }
 
 function handleAdminUpdateGlobalConfig(payload) {
