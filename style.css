@@ -33,89 +33,14 @@
   background: linear-gradient(135deg, #F3E5AB 0%, #D4AF37 50%, #997F24 100%);
 }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-/* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit & Zero Overlap Navigasi) */
+/* 1 Halaman Utuh (Zero-Scroll Mobile Layout Fit) */
 .camera-page-container {
-  height: calc(100dvh - 8.5rem);
-  max-height: calc(100dvh - 8.5rem);
+  height: calc(100dvh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
-  padding-bottom: 0.75rem;
-}
-
-/* Kamera Viewfinder Viewport - Full Bleed Immersive Fit (Anti-Letterbox / Anti-Bilah Hitam) */
-#viewfinderViewport {
-  position: relative !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
-  background-color: #000000 !important;
-}
-
-#viewfinderViewport video#cameraVideo {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-width: 100% !important;
-  min-height: 100% !important;
-  object-fit: cover !important;
-  object-position: center center !important;
-  z-index: 1 !important;
-}
-
-/* ==============================================================================
- * PODIUM & VOTING WINNERS SHOWCASE (LUXURY GOLD & SILVER CUSTOM)
- * ============================================================================== */
-.podium-card-gold {
-  background: radial-gradient(circle at top, rgba(212, 175, 55, 0.28) 0%, rgba(20, 18, 12, 0.95) 70%, #0d0b06 100%);
-  border: 2px solid #D4AF37;
-  box-shadow: 0 0 25px rgba(212, 175, 55, 0.35), inset 0 0 15px rgba(212, 175, 55, 0.15);
-}
-
-.podium-card-silver {
-  background: radial-gradient(circle at top, rgba(220, 225, 235, 0.22) 0%, rgba(18, 20, 24, 0.95) 70%, #090a0d 100%);
-  border: 2px solid rgba(200, 210, 225, 0.7);
-  box-shadow: 0 0 20px rgba(200, 210, 225, 0.25), inset 0 0 12px rgba(255, 255, 255, 0.1);
-}
-
-.podium-card-bronze {
-  background: radial-gradient(circle at top, rgba(217, 119, 6, 0.22) 0%, rgba(24, 16, 12, 0.95) 70%, #0d0806 100%);
-  border: 2px solid rgba(217, 119, 6, 0.65);
-  box-shadow: 0 0 20px rgba(217, 119, 6, 0.25), inset 0 0 12px rgba(217, 119, 6, 0.1);
-}
-
-.podium-card-gold, .podium-card-silver, .podium-card-bronze {
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
-  cursor: pointer;
-}
-
-.podium-card-gold:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 0 35px rgba(212, 175, 55, 0.5);
-}
-
-.podium-card-silver:hover {
-  transform: translateY(-3px) scale(1.02);
-  box-shadow: 0 0 25px rgba(200, 210, 225, 0.4);
-}
-
-.podium-card-bronze:hover {
-  transform: translateY(-3px) scale(1.02);
-  box-shadow: 0 0 25px rgba(217, 119, 6, 0.4);
 }
 
 /* Live Camera Filters (CSS Real-time Video Stream Preview) */
@@ -185,7 +110,46 @@
   animation: kenBurns 7s ease-in-out infinite alternate;
 }
 
+/* ==============================================================================
+ * PODIUM & VOTING WINNERS SHOWCASE
+ * ============================================================================== */
+.podium-card-gold {
+  background: linear-gradient(145deg, rgba(212, 175, 55, 0.15) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(212, 175, 55, 0.7);
+  box-shadow: 0 0 25px rgba(212, 175, 55, 0.25);
+}
 
+.podium-card-silver {
+  background: linear-gradient(145deg, rgba(192, 192, 205, 0.12) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(192, 192, 205, 0.5);
+  box-shadow: 0 0 18px rgba(192, 192, 205, 0.15);
+}
+
+.podium-card-bronze {
+  background: linear-gradient(145deg, rgba(205, 127, 50, 0.12) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border: 1.5px solid rgba(205, 127, 50, 0.5);
+  box-shadow: 0 0 18px rgba(205, 127, 50, 0.15);
+}
+
+.podium-card-gold, .podium-card-silver, .podium-card-bronze {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  cursor: pointer;
+}
+
+.podium-card-gold:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 0 35px rgba(212, 175, 55, 0.4);
+}
+
+.podium-card-silver:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 0 25px rgba(192, 192, 205, 0.3);
+}
+
+.podium-card-bronze:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 0 25px rgba(205, 127, 50, 0.3);
+}
 
 /* Floating Filter Selector Pills in Viewfinder */
 #filterListContainer {

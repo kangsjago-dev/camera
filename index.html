@@ -38,17 +38,11 @@
     }
   </script>
 
-  <!-- Modular Stylesheet (Dark Gold Luxury, Full-Bleed Viewfinder & Ken Burns Animations) -->
-  <link rel="stylesheet" href="style.css?v=1.8.0" />
+  <!-- Modular Stylesheet (Dark Gold Luxury, Flash & Ken Burns Animations) -->
+  <link rel="stylesheet" href="style.css?v=1.6.6" />
 
-  <!-- Modular JavaScript Architecture (Lightweight, High-Performance, Asynchronous) -->
-  <script src="js/config.js?v=1.8.0" defer></script>
-  <script src="js/utils.js?v=1.8.0" defer></script>
-  <script src="js/camera.js?v=1.8.0" defer></script>
-  <script src="js/gallery.js?v=1.8.0" defer></script>
-  <script src="js/slideshow.js?v=1.8.0" defer></script>
-  <script src="js/admin.js?v=1.8.0" defer></script>
-  <script src="js/main.js?v=1.8.0" defer></script>
+  <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
+  <script src="app.js?v=1.6.6" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -194,29 +188,10 @@
         </div>
       </div>
 
-      <!-- LIVE CAMERA FRAME SELECTOR & STATUS BAR (TAMPILAN BINGKAI KUSTOM & PILIHAN DINAMIS) -->
-      <div id="liveCamFrameSelectorWrap" class="shrink-0 flex items-center justify-between gap-1.5 px-2.5 py-1 my-1 rounded-xl bg-brand-surfaceLight/90 border border-brand-surfaceBorder backdrop-blur-sm">
-        <div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-200 shrink-0">
-          <span>🖼️</span>
-          <span class="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Bingkai:</span>
-        </div>
-        
-        <!-- Multi-Frame Mode: Scrollable Frame Pills (Termasuk Thumbnail Bingkai Kustom Acara) -->
-        <div id="frameListContainer" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 flex-1">
-          <!-- Dynamic Frame Pills diinjeksi via app.js -->
-        </div>
-
-        <!-- Single Lock Mode: Badge Resmi Bingkai Terkunci Acara -->
-        <div id="camSingleFrameBadge" class="hidden flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-brand-gold/15 text-brand-gold border border-brand-gold/40 text-[10px] font-bold shrink-0">
-          <span>🔒</span>
-          <span id="camSingleFrameName" class="truncate max-w-[130px]">Bingkai Acara</span>
-        </div>
-      </div>
-
       <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT WITH INTEGRATED FILTERS) -->
-      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-0.5 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center select-none">
-        <!-- Live Video Element with Realtime CSS Filter Effect & Autoplay (Full Bleed Immersive Fit) -->
-        <video id="cameraVideo" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover filter-live-800t"></video>
+      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-1 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center select-none">
+        <!-- Live Video Element with Realtime CSS Filter Effect & Autoplay -->
+        <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
 
         <!-- Custom Frame Image Overlay (PNG) -->
         <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
@@ -232,24 +207,24 @@
             <div class="w-2 h-2 bg-brand-gold/60 rounded-full animate-pulse"></div>
           </div>
 
-          <div class="text-center pb-10">
+          <div class="text-center pb-12">
             <p id="vfFrameBottomTitle" class="font-serif italic text-sm text-amber-200 drop-shadow">The Wedding of Sarah & Kevin</p>
             <p id="vfFrameBottomHashtag" class="text-[10px] text-white/80 font-hand tracking-wider">#SarahKevinEverAfter</p>
           </div>
         </div>
 
         <!-- Floating Filter Selector Pills (Inside Viewfinder Frame) -->
-        <div class="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 max-w-[94%] w-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-white/20 shadow-xl overflow-x-auto" id="filterListContainer">
-          <button data-filter="RAW" class="filter-pill shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+        <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 max-w-[94%] w-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 shadow-xl overflow-x-auto" id="filterListContainer">
+          <button data-filter="RAW" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
             RAW
           </button>
-          <button data-filter="800T" class="filter-pill shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
+          <button data-filter="800T" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
             800T Cine
           </button>
-          <button data-filter="WARM" class="filter-pill shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+          <button data-filter="WARM" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
             Warm Sun
           </button>
-          <button data-filter="BW" class="filter-pill shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
+          <button data-filter="BW" class="filter-pill shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition">
             B&W Noir
           </button>
         </div>
@@ -273,8 +248,9 @@
         <input type="file" id="nativeCameraInput" accept="image/*" capture="environment" class="hidden" />
       </div>
 
-      <!-- Hidden compatibility elements -->
+      <!-- Hidden container for filter name & frame compatibility -->
       <div id="activeFilterName" class="hidden">800T CINE</div>
+      <div id="frameListContainer" class="hidden"></div>
       <div id="activeFrameName" class="hidden">GOLD ART DECO</div>
       <div id="vfActiveFrameBadge" class="hidden"></div>
 
@@ -316,16 +292,8 @@
       <!-- Gallery Header Banner -->
       <div class="bg-gradient-to-r from-brand-surfaceLight via-[#1A1A24] to-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4 mb-4">
         <div class="flex items-center justify-between mb-1.5">
-          <div class="flex items-center gap-2">
-            <span class="text-[11px] font-bold text-brand-gold uppercase tracking-widest">Album Foto Bersama</span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[10px] text-emerald-400 font-medium"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Auto-Sync</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <button id="btnSyncGalleryManual" type="button" class="text-[11px] bg-brand-gold/15 hover:bg-brand-gold/25 text-brand-gold border border-brand-gold/40 px-2.5 py-0.5 rounded-full flex items-center gap-1 font-semibold transition active:scale-95" title="Sinkronkan dengan folder Google Drive">
-              <span>🔄</span><span>Sync Drive</span>
-            </button>
-            <span id="galleryPhotoCountBadge" class="text-xs bg-white/10 px-2.5 py-0.5 rounded-full text-zinc-300 font-semibold">0 Foto</span>
-          </div>
+          <span class="text-[11px] font-bold text-brand-gold uppercase tracking-widest">Album Foto Bersama</span>
+          <span id="galleryPhotoCountBadge" class="text-xs bg-white/10 px-2.5 py-0.5 rounded-full text-zinc-300 font-semibold">0 Foto</span>
         </div>
         <h2 id="galleryEventTitle" class="font-serif text-xl font-bold text-white mb-1">The Wedding of Sarah & Kevin</h2>
         <p id="galleryEventHashtag" class="text-xs text-zinc-400">Semua foto yang dijepret tamu akan berkumpul di sini.</p>
@@ -335,6 +303,7 @@
       <div class="mb-4">
         <div class="flex items-center justify-between text-xs font-semibold text-zinc-400 mb-2">
           <span>Kategori Voting Foto</span>
+          <span id="userVoteQuotaInfo" class="text-brand-gold text-[11px]">Sisa Suara: 3</span>
         </div>
         <div class="flex items-center gap-2 overflow-x-auto pb-1" id="galleryCategoryTabs">
           <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-brand-gold text-black border border-brand-gold transition shadow-sm">
@@ -660,31 +629,6 @@
               </div>
             </div>
 
-            <!-- Kustomisasi Kata-kata Gelar Juara Podium (Juara 1 Emas, Juara 2 Perak, dll) -->
-            <div class="border border-brand-gold/30 rounded-xl p-3.5 bg-brand-gold/5 space-y-3">
-              <div class="flex items-center justify-between">
-                <label class="block text-xs font-bold text-brand-gold flex items-center gap-1.5">
-                  <span>🏆</span> Kustomisasi Kata-Kata Gelar Juara Podium
-                </label>
-                <span class="text-[10px] text-zinc-400">Bisa Diedit Bebas</span>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label class="block text-[10px] font-semibold text-amber-300 mb-1">🥇 Gelar Juara 1 (Emas)</label>
-                  <input type="text" id="formEventPodiumP1" placeholder="👑 JUARA 1 EMAS" class="w-full bg-[#111116] border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-semibold text-zinc-300 mb-1">🥈 Gelar Juara 2 (Perak)</label>
-                  <input type="text" id="formEventPodiumP2" placeholder="⭐ JUARA 2 PERAK" class="w-full bg-[#111116] border border-zinc-400/40 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-semibold text-amber-600 mb-1">🥉 Gelar Juara 3 (Perunggu)</label>
-                  <input type="text" id="formEventPodiumP3" placeholder="🥉 JUARA 3 PERUNGGU" class="w-full bg-[#111116] border border-amber-700/40 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" />
-                </div>
-              </div>
-              <p class="text-[10px] text-zinc-400">Kata-kata ini akan tampil di kartu podium emas, perak, dan perunggu pada halaman Pemenang Voting.</p>
-            </div>
-
             <!-- Folder Google Drive Tujuan Upload Acara -->
             <div class="border border-white/10 rounded-xl p-3.5 bg-black/20">
               <label class="block text-xs font-semibold text-zinc-200 mb-1">Folder Google Drive Tujuan Upload Acara</label>
@@ -711,13 +655,8 @@
       <div id="adminTabLeaderboard" class="hidden space-y-4">
         <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-4">
           <div class="flex items-center justify-between mb-3">
-            <div>
-              <h3 class="font-serif text-base font-bold text-white">Peringkat Foto Terfavorit</h3>
-              <span class="text-[11px] text-brand-gold font-semibold">Hasil Poling Tamu</span>
-            </div>
-            <button type="button" id="btnAdminEditPodiumTitles" class="text-xs px-3 py-1.5 rounded-xl bg-brand-gold/15 border border-brand-gold/30 text-brand-gold hover:bg-brand-gold/25 font-bold transition flex items-center gap-1 shadow-sm">
-              <span>✏️</span> Edit Kata Gelar Juara
-            </button>
+            <h3 class="font-serif text-base font-bold text-white">Peringkat Foto Terfavorit</h3>
+            <span class="text-[11px] text-brand-gold font-semibold">Hasil Poling Tamu</span>
           </div>
           <div id="adminLeaderboardList" class="space-y-2.5"></div>
         </div>
@@ -762,7 +701,7 @@
                   <span>⚡ Tes Koneksi & Sinkronisasi</span>
                 </button>
               </div>
-              <input type="text" id="cfgGasUrl" value="" placeholder="https://script.google.com/macros/s/AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw/exec" class="w-full bg-[#111116] border border-amber-500/40 focus:border-brand-gold rounded-xl px-3.5 py-2.5 text-xs text-white outline-none" />
+              <input type="text" id="cfgGasUrl" value="https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec" placeholder="https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec" class="w-full bg-[#111116] border border-amber-500/40 focus:border-brand-gold rounded-xl px-3.5 py-2.5 text-xs text-white outline-none" />
               <p class="text-[10px] text-amber-300/80 mt-1">⚠️ Wajib diisi agar settingan, nama brand, folder Drive, dan foto tamu tersimpan ke Google Sheets & berubah di semua perangkat/HP tamu.</p>
             </div>
 
@@ -802,15 +741,10 @@
               </div>
             </div>
 
-            <div class="pt-2 flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-3">
-                <button type="button" id="btnAdminPurgeOfflineCache" class="text-xs px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 font-semibold transition flex items-center gap-1">
-                  <span>🧹</span> Bersihkan Cache Offline & Sync Ulang
-                </button>
-                <button type="button" id="btnResetDemoData" class="text-xs text-zinc-400 hover:text-red-400 hover:underline">
-                  Reset Demo
-                </button>
-              </div>
+            <div class="pt-2 flex items-center justify-between">
+              <button type="button" id="btnResetDemoData" class="text-xs text-red-400 hover:underline">
+                Reset ke Contoh Demo
+              </button>
               <button type="submit" id="btnSaveGlobalSettings" class="px-5 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold transition">
                 Simpan Konfigurasi
               </button>
@@ -862,7 +796,7 @@
       <h3 class="font-serif text-base font-bold text-white mb-2">Pratinjau Foto Acara</h3>
       
       <!-- Rendered Image Display Container -->
-      <div id="reviewPhotoContainer" class="relative max-w-full bg-black rounded-xl overflow-hidden border border-white/10 mb-2.5 flex items-center justify-center">
+      <div class="relative w-full aspect-[4/5] bg-black rounded-xl overflow-hidden border border-white/10 mb-2.5 flex items-center justify-center">
         <canvas id="photoRenderCanvas" class="hidden"></canvas>
         <img id="reviewPhotoImg" src="" alt="Pratinjau Foto" class="w-full h-full object-contain" />
       </div>
@@ -942,16 +876,16 @@
     </div>
   </div>
 
-  <!-- MODAL: LIVE VENUE SLIDESHOW (PROYEKTOR / TV SCREEN BALLROOM - TRUE DEAD-CENTER STAGE) -->
-  <div id="modalSlideshow" class="hidden fixed inset-0 z-[60] bg-[#07070A] overflow-hidden select-none">
+  <!-- MODAL: LIVE VENUE SLIDESHOW (PROYEKTOR / TV SCREEN BALLROOM) -->
+  <div id="modalSlideshow" class="hidden fixed inset-0 z-[60] bg-black flex flex-col justify-between overflow-hidden select-none">
     
     <!-- Dynamic Ambient Backdrop Blur Image (Eliminates Empty Black Void) -->
     <img id="slideshowBackdropImg" src="" alt="" class="absolute inset-0 w-full h-full object-cover blur-3xl opacity-35 scale-110 pointer-events-none transition-opacity duration-1000 z-0" />
     
-    <!-- Top Bar: Grand Event Branding & Fullscreen Close (Non-blocking Overlay) -->
-    <div class="absolute top-0 inset-x-0 z-30 flex items-center justify-between p-4 sm:p-6 md:p-8 bg-gradient-to-b from-black/95 via-black/40 to-transparent pointer-events-none">
-      <div class="pointer-events-auto">
-        <div class="flex items-center gap-2 mb-1">
+    <!-- Top Bar: Grand Event Branding & Fullscreen Close -->
+    <div class="relative z-20 flex items-center justify-between p-6 md:p-8 bg-gradient-to-b from-black/90 via-black/40 to-transparent">
+      <div>
+        <div class="flex items-center gap-2.5 mb-1">
           <span class="flex h-3 w-3 relative">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -961,36 +895,33 @@
         <h2 id="slideshowTitle" class="font-serif text-2xl sm:text-3xl md:text-5xl font-extrabold text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">The Wedding of Sarah & Kevin</h2>
         <p id="slideshowHashtag" class="text-sm sm:text-base md:text-lg text-brand-gold font-semibold tracking-wider drop-shadow">#SarahKevinEverAfter</p>
       </div>
-      <button id="btnCloseSlideshow" class="pointer-events-auto p-3 rounded-full bg-black/70 hover:bg-black/90 text-white border border-white/20 backdrop-blur-md transition shadow-xl" title="Tutup Layar Penuh">
+      <button id="btnCloseSlideshow" class="p-3 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 backdrop-blur-md transition shadow-xl" title="Tutup Layar Penuh">
         <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
       </button>
     </div>
 
-    <!-- Center Stage: Scaled Up Grand Photo Exactly in Center (True Dead-Center) -->
-    <div class="absolute inset-0 z-10 flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 pointer-events-none">
-      <div class="relative flex flex-col items-center justify-center max-h-[84vh] max-w-[90vw] sm:max-w-[80vw] md:max-w-[70vw] pointer-events-auto">
-        <img id="slideshowImg" src="" alt="Live Event Photo" class="w-auto max-h-[70vh] sm:max-h-[74vh] md:max-h-[77vh] max-w-full object-contain rounded-2xl drop-shadow-[0_25px_60px_rgba(0,0,0,0.95)] border-2 border-brand-gold/40 shadow-2xl transition-all duration-700 opacity-0 ken-burns" />
-        
-        <div id="slideshowEmptyMsg" class="hidden text-center text-zinc-300 bg-black/70 p-8 rounded-2xl border border-white/10 backdrop-blur-md">
-          <div class="text-5xl mb-3">🎞️</div>
-          <p class="font-serif text-2xl text-white font-bold mb-2">Live Photo Stream</p>
-          <p class="text-sm text-zinc-400">Foto yang diunggah para tamu akan otomatis tampil bergantian di layar panggung ini.</p>
-        </div>
+    <!-- Center Stage: Scaled Up Grand Photo & Ken Burns Pan/Zoom -->
+    <div class="relative flex-1 flex items-center justify-center p-2 sm:p-4 md:p-6 z-10 min-h-0">
+      <img id="slideshowImg" src="" alt="Live Event Photo" class="w-auto h-[68vh] sm:h-[76vh] md:h-[82vh] max-w-[94vw] md:max-w-[72vw] object-contain rounded-2xl drop-shadow-[0_25px_60px_rgba(0,0,0,0.9)] border border-white/20 transition-opacity duration-1000 opacity-0 ken-burns" />
+      <div id="slideshowEmptyMsg" class="hidden text-center text-zinc-300 bg-black/60 p-8 rounded-2xl border border-white/10 backdrop-blur-md">
+        <div class="text-5xl mb-3">🎞️</div>
+        <p class="font-serif text-2xl text-white font-bold mb-2">Live Photo Stream</p>
+        <p class="text-sm text-zinc-400">Foto yang diunggah para tamu akan otomatis tampil bergantian di layar panggung ini.</p>
+      </div>
 
-        <!-- Kartu Informasi Uploader & Pesan/Ucapan Tamu (Live Event Floating Badge) -->
-        <div id="slideshowInfoOverlay" class="mt-2.5 sm:mt-3 max-w-xl w-11/12 sm:w-auto px-4 sm:px-6 py-2 sm:py-2.5 bg-black/85 backdrop-blur-xl border border-brand-gold/50 rounded-2xl text-center shadow-[0_10px_35px_rgba(0,0,0,0.85)] transition-all duration-500">
-          <div class="flex items-center justify-center gap-2 mb-1.5">
-            <span id="slideshowUploaderBadge" class="text-xs sm:text-sm px-3.5 py-0.5 rounded-full bg-brand-gold text-black font-extrabold shadow-md">Oleh Tamu</span>
-            <span id="slideshowTimeBadge" class="text-xs text-zinc-300">Baru Saja</span>
-          </div>
-          <p id="slideshowCaptionText" class="font-serif italic text-base sm:text-lg md:text-xl text-white drop-shadow font-medium">"Momen seru bersama para sahabat!"</p>
+      <!-- Kartu Informasi Uploader & Pesan/Ucapan Tamu (Live Event Overlay) -->
+      <div id="slideshowInfoOverlay" class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 max-w-xl w-11/12 bg-black/80 backdrop-blur-xl border border-brand-gold/50 rounded-2xl p-4 sm:p-5 text-center shadow-[0_10px_35px_rgba(0,0,0,0.8)] transition-all duration-500">
+        <div class="flex items-center justify-center gap-2 mb-2">
+          <span id="slideshowUploaderBadge" class="text-xs sm:text-sm px-3.5 py-1 rounded-full bg-brand-gold text-black font-extrabold shadow-md">Oleh Tamu</span>
+          <span id="slideshowTimeBadge" class="text-xs text-zinc-300">Baru Saja</span>
         </div>
+        <p id="slideshowCaptionText" class="font-serif italic text-base sm:text-lg md:text-xl text-white drop-shadow font-medium">"Momen seru bersama para sahabat!"</p>
       </div>
     </div>
 
-    <!-- Bottom Bar: Live Indicator & Stasiun Scan QR Raksasa (Non-blocking Overlay) -->
-    <div class="absolute bottom-0 inset-x-0 z-30 flex items-end justify-between p-4 sm:p-6 md:p-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent pointer-events-none">
-      <div class="pointer-events-auto flex items-center gap-2 text-xs font-semibold text-zinc-400 bg-black/70 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10">
+    <!-- Bottom Bar: Live Indicator & Stasiun Scan QR Raksasa -->
+    <div class="relative z-20 flex items-end justify-between p-4 sm:p-6 md:p-8 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none">
+      <div class="pointer-events-auto flex items-center gap-2 text-xs font-semibold text-zinc-400 bg-black/60 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10">
         <span>📸 SnapEvent Live System</span>
       </div>
 

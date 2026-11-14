@@ -274,7 +274,7 @@ const ENTERPRISE_CONFIGS = [
   ["default_max_foto", "10", "Default Kuota Jepret per Tamu"],
   ["default_max_vote", "1", "Default Kuota Suara per Kategori (Strict 1x)"],
   ["master_drive_folder_id", "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw", "ID Folder Induk Google Drive Resmi (Master)"],
-  ["gas_webapp_url", "https://script.google.com/macros/s/AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw/exec", "URL Backend Web App Endpoint Resmi (GAS)"]
+  ["gas_webapp_url", "https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec", "URL Backend Web App Endpoint Resmi (GAS)"]
 ];
 
 /**
