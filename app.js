@@ -127,7 +127,14 @@ function loadEventPhotos(eventId) {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
-      STATE.photos = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      // Bersihkan status upload macet dari cache lokal sesi sebelumnya
+      STATE.photos = Array.isArray(parsed) ? parsed.map(p => {
+        if (p && p.isUploading && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) {
+          return { ...p, isUploading: false };
+        }
+        return p;
+      }) : [];
     } else {
       // Migrasi atau fallback ke mock data sample jika event default demo
       const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
@@ -230,31 +237,21 @@ function handleGalleryImgError(img) {
     img.src = tertiary;
     return;
   }
-  // Pertahankan foto di galeri dan jangan pernah menghapus data dari STATE.photos saat thumbnail sedang diproses cloud
+  // Seluruh mirror Google Drive gagal (file fisik tidak ditemukan / dihapus dari Drive):
+  // Sesuai instruksi: "jangan tampilkan apabila tidak ditemukan, buat menjadi online"
   img.onerror = null;
-  img.classList.remove('opacity-0');
-  const container = img.parentElement;
-  if (container && !container.querySelector('.img-retry-badge')) {
-    const badge = document.createElement('div');
-    badge.className = 'img-retry-badge absolute inset-0 bg-zinc-900/90 flex flex-col items-center justify-center p-2 text-center z-15';
-    badge.innerHTML = `
-      <svg class="w-6 h-6 text-brand-gold opacity-80 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="3.5" ry="3.5"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-      <span class="text-[10px] text-zinc-300 font-medium">Memuat dari Cloud...</span>
-      <button type="button" class="mt-1 px-2 py-0.5 text-[9px] bg-brand-gold/20 text-brand-gold border border-brand-gold/30 rounded font-bold hover:bg-brand-gold/30 transition">Segarkan</button>
-    `;
-    badge.querySelector('button')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      badge.remove();
-      img.setAttribute('data-step', '0');
-      const card = img.closest('.group');
-      const photoId = card?.getAttribute('data-id');
-      const p = (STATE.photos || []).find(item => item.idFoto === photoId);
-      if (p) {
-        const urls = getDriveImageUrls(p.gdriveViewUrl);
-        img.src = urls[0] || p.gdriveViewUrl;
+  const card = img.closest('.group');
+  if (card) {
+    const photoId = card.getAttribute('data-id');
+    if (photoId) {
+      STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photoId);
+      saveEventPhotos(STATE.activeEventId);
+      const countBadge = document.getElementById('galleryPhotoCountBadge');
+      if (countBadge) {
+        countBadge.textContent = `${(STATE.photos || []).length} Foto`;
       }
-    });
-    container.appendChild(badge);
+    }
+    card.remove();
   }
 }
 
@@ -1213,21 +1210,25 @@ async function loadGallery() {
       const serverPhotos = Array.isArray(res.photos) ? res.photos : [];
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
 
-      // Pertahankan foto lokal terkini yang belum muncul di respons server agar tidak hilang saat polling
+      // Pertahankan HANYA foto lokal yang sedang aktif dalam antrean upload saat ini
+      // Foto zombie/stuck dari sesi sebelumnya otomatis dibersihkan agar hanya foto online valid yang tampil
       const now = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => {
         if (!p) return false;
         if (serverIds.has(p.idFoto)) return false;
-        if (p.isUploading || IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
-        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) return true;
-        const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
-        if (tsMatch && tsMatch[1]) {
-          return (now - parseInt(tsMatch[1], 10)) < 120000;
+        // Hanya pertahankan jika proses upload aktif sedang berjalan di memori
+        if (IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
+        // Atau jika foto offline baru saja diambil kurang dari 25 detik lalu
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) {
+          const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
+          if (tsMatch && tsMatch[1]) {
+            return (now - parseInt(tsMatch[1], 10)) < 25000;
+          }
         }
         return false;
       });
 
-      // Gabungkan: foto lokal yang baru diambil di HP tetap tampil di depan, disusul seluruh foto server
+      // Gabungkan: foto lokal terkini yang sedang aktif diunggah di depan, disusul seluruh foto server resmi Google Drive
       let finalPhotos = [...pendingLocalPhotos, ...serverPhotos];
 
       // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
@@ -1240,9 +1241,9 @@ async function loadGallery() {
       saveEventPhotos(targetId);
       renderGallery();
 
-      // Unggah otomatis HANYA untuk foto offline murni (data: URL yang belum pernah mulai diunggah)
+      // Unggah otomatis untuk foto offline murni yang belum ada di antrean
       const offlineUnstarted = pendingLocalPhotos.filter(p => 
-        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto) && !p.isUploading
+        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)
       );
       if (offlineUnstarted.length > 0) {
         autoUploadPendingPhotos(offlineUnstarted);
@@ -4175,9 +4176,14 @@ function bindEvents() {
   document.getElementById('btnConfirmVoteCategory')?.addEventListener('click', handleConfirmVoteCategory);
 
   // Tombol Sinkronisasi Manual Galeri
-  document.getElementById('btnSyncGalleryManual')?.addEventListener('click', () => {
-    loadGallery();
-    showToast("🔄 Menyinkronkan galeri dengan database cloud...", "info");
+  document.getElementById('btnSyncGalleryManual')?.addEventListener('click', async () => {
+    showToast("🔄 Menyinkronkan seluruh galeri dari Google Drive...", "info");
+    const targetId = getResolvedEventId(STATE.activeEventId);
+    // Bersihkan kartu lokal zombie/gagal yang belum terunggah agar galeri 100% online
+    STATE.photos = (STATE.photos || []).filter(p => p && !p.isUploading && p.gdriveViewUrl && !p.gdriveViewUrl.startsWith('data:'));
+    saveEventPhotos(targetId);
+    await loadGallery();
+    showToast("✅ Galeri berhasil disinkronkan 100% online dari Google Drive!", "success");
   });
 
   // Review Frame Selector Pills (Pilih Bingkai Pasca-Foto)

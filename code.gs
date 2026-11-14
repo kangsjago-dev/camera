@@ -749,6 +749,7 @@ function handleGetGallery(eventId, guestId) {
   const photos = [];
   const existingFileIds = new Set();
   const seenPhotoIds = new Set();
+  const rowsToDelete = [];
   const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
   const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
 
@@ -758,8 +759,8 @@ function handleGetGallery(eventId, guestId) {
       const fr = fRows[j];
       const rowEventId = fr[COL_FOTO.ID_EVENT];
       if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
-        const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
-        let fileExists = true;
+        const fileId = String(fr[COL_FOTO.GDRIVE_FILE_ID] || "").trim();
+        let fileExists = false;
 
         if (fileId) {
           if (liveDriveFilesMap.has(fileId)) {
@@ -768,8 +769,8 @@ function handleGetGallery(eventId, guestId) {
             // Verifikasi langsung ke Drive jika file berada di luar subfolder kandidat
             try {
               const checkF = DriveApp.getFileById(fileId);
-              if (!checkF || checkF.isTrashed()) {
-                fileExists = false;
+              if (checkF && !checkF.isTrashed()) {
+                fileExists = true;
               }
             } catch (dErr) {
               fileExists = false;
@@ -796,9 +797,21 @@ function handleGetGallery(eventId, guestId) {
             isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
             createdAt: fr[COL_FOTO.CREATED_AT] || nowStr
           });
+        } else {
+          // File fisik tidak ditemukan di Google Drive -> Jangan tampilkan & bersihkan baris hantu dari DataFoto
+          rowsToDelete.push(j + 2);
         }
-        // File yang sudah terhapus di Drive diabaikan tanpa operasi deleteRow destruktif pada GET polling
       }
+    }
+
+    // Bersihkan baris hantu di DataFoto dari bawah ke atas agar indeks baris tidak bergeser
+    if (rowsToDelete.length > 0) {
+      for (let d = rowsToDelete.length - 1; d >= 0; d--) {
+        try {
+          fotoSheet.deleteRow(rowsToDelete[d]);
+        } catch (delErr) {}
+      }
+      SpreadsheetApp.flush();
     }
   }
 
