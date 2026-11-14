@@ -226,8 +226,16 @@ function handleGalleryImgError(img) {
     img.src = tertiary;
     return;
   }
-  // Semua mirror gagal / file sudah dihapus di Drive -> hapus kartu secara rapi tanpa layar hitam
-  img.closest('.group')?.remove();
+  // Semua mirror gagal / file fisik sudah dihapus di Google Drive -> hapus kartu secara rapi dan update cache
+  const card = img.closest('.group');
+  if (card) {
+    const photoId = card.getAttribute('data-id');
+    if (photoId) {
+      STATE.photos = (STATE.photos || []).filter(p => p.idFoto !== photoId);
+      saveEventPhotos(STATE.activeEventId);
+    }
+    card.remove();
+  }
 }
 
 function handlePodiumImgError(img) {

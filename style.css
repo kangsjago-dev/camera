@@ -135,9 +135,45 @@ body.camera-lock-scroll #viewCamera:not(.hidden) {
   transition: filter 0.3s ease;
 }
 
-/* Shutter Press Haptic Feel */
+/* Shutter Press Haptic Feel & Shutter Button Design */
 .shutter-press:active {
   transform: scale(0.92);
+}
+
+.custom-shutter-btn {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 3.5px solid #d4af37;
+  padding: 4.5px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 24px rgba(212, 175, 55, 0.45), inset 0 0 10px rgba(212, 175, 55, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.custom-shutter-btn:active {
+  transform: scale(0.92);
+  box-shadow: 0 0 14px rgba(212, 175, 55, 0.7);
+}
+
+.custom-shutter-core {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #ffe684 0%, #d4af37 55%, #a87910 100%);
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.5), inset 0 -2px 4px rgba(0, 0, 0, 0.35), 0 4px 10px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+
+.custom-shutter-btn:active .custom-shutter-core {
+  transform: scale(0.95);
+  filter: brightness(0.9);
 }
 
 /* Camera Blitz Flash Effect */

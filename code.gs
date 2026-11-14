@@ -623,7 +623,14 @@ function handleGetGallery(eventId, guestId) {
   if (masterFolderId) {
     try {
       const masterF = DriveApp.getFolderById(masterFolderId);
-      const searchNames = [eventSlug, "SnapEvent_" + eventSlug, eventName, "SnapEvent_" + eventName.replace(/[^a-zA-Z0-9]/g, "_")];
+      const searchNames = [
+        eventSlug, 
+        "SnapEvent_" + eventSlug, 
+        eventName, 
+        "SnapEvent_" + eventName.replace(/[^a-zA-Z0-9]/g, "_"),
+        canonicalEventId,
+        "ilham---sherwin"
+      ];
       searchNames.forEach(function(name) {
         if (!name) return;
         const it = masterF.getFoldersByName(name);
@@ -634,88 +641,152 @@ function handleGetGallery(eventId, guestId) {
           }
         }
       });
+      // Cari jika ada folder yang memuat slug di namanya
+      if (candidateFolders.length === 0 && eventSlug) {
+        const allSubFolders = masterF.getFolders();
+        while (allSubFolders.hasNext()) {
+          const sf = allSubFolders.next();
+          if (sf.getName().toLowerCase().indexOf(eventSlug.toLowerCase()) !== -1) {
+            candidateFolders.push(sf);
+          }
+        }
+      }
     } catch (e) {}
   }
 
-  // 1. Data foto di Spreadsheet adalah Single Source of Truth yang aman (Tidak menghapus paksa foto valid saat getGallery)
-  // Penghapusan file yang sudah trashed/hilang ditangani secara aman di UI client (handleGalleryImgError)
-
-  // 2. Auto-ingest file foto yang ada di Google Drive tapi belum ada di Sheet (misal: 032, 033)
-  if (fotoSheet && candidateFolders.length > 0) {
-    const existingFileIds = new Set();
-    const existingPhotoIds = new Set();
-    if (fotoSheet.getLastRow() > 1) {
-      const curRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 8).getDisplayValues();
-      curRows.forEach(function(r) {
-        if (r[COL_FOTO.ID]) existingPhotoIds.add(r[COL_FOTO.ID]);
-        if (r[COL_FOTO.GDRIVE_FILE_ID]) existingFileIds.add(r[COL_FOTO.GDRIVE_FILE_ID]);
-      });
-    }
-
-    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
-    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
-
-    candidateFolders.forEach(function(targetF) {
-      try {
-        const filesIter = targetF.getFiles();
-        while (filesIter.hasNext()) {
-          const file = filesIter.next();
-          if (file.isTrashed()) continue;
-          const fId = file.getId();
-          const fName = file.getName();
-
-          if (!existingFileIds.has(fId) && fName.indexOf("FTO-") === 0) {
-            try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
-            const directUrl = "https://lh3.googleusercontent.com/d/" + fId;
-            const parts = fName.split("_");
-            const photoIdCandidate = parts[0] || ("FTO-" + Date.now());
-            const guestCandidate = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
-
-            fotoSheet.appendRow([
-              photoIdCandidate,
-              canonicalEventId,
-              "GUEST-CLOUD",
-              guestCandidate,
-              "Momen seru!",
-              "RAW",
-              "POLAROID",
-              fId,
-              directUrl,
-              0,
-              false,
-              nowStr
-            ]);
-            existingFileIds.add(fId);
-            existingPhotoIds.add(photoIdCandidate);
-          }
+  // 1. Sinkronisasi Mutlak Google Drive & Spreadsheet DataFoto:
+  // - Kumpulkan seluruh file yang aktif (bukan trashed) di folder acara Google Drive
+  // - Hapus baris di DataFoto jika file fisiknya sudah dihapus di Google Drive
+  // - Otomatis tambahkan file yang ada di Google Drive ke DataFoto jika belum tercatat
+  const liveDriveFilesMap = new Map();
+  candidateFolders.forEach(function(targetF) {
+    try {
+      const filesIter = targetF.getFiles();
+      while (filesIter.hasNext()) {
+        const file = filesIter.next();
+        if (file.isTrashed()) continue;
+        const fId = file.getId();
+        const fName = file.getName();
+        const lower = fName.toLowerCase();
+        if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp') || fName.indexOf('FTO-') === 0) {
+          liveDriveFilesMap.set(fId, {
+            id: fId,
+            name: fName,
+            created: file.getDateCreated()
+          });
         }
-      } catch (err) {}
-    });
-    SpreadsheetApp.flush();
-  }
+      }
+    } catch (e) {}
+  });
 
-  // 3. Ambil data foto final yang sudah bersih
   const photos = [];
+  const existingFileIds = new Set();
+  const rowsToDelete = [];
+  const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+  const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+
   if (fotoSheet && fotoSheet.getLastRow() > 1) {
     const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
       const rowEventId = fr[COL_FOTO.ID_EVENT];
       if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
-        photos.push({
-          idFoto: fr[COL_FOTO.ID],
-          guestNama: fr[COL_FOTO.GUEST_NAMA],
-          caption: fr[COL_FOTO.CAPTION],
-          cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
-          frameStyle: fr[COL_FOTO.FRAME_STYLE],
-          gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
-          totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
-          isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
-          createdAt: fr[COL_FOTO.CREATED_AT]
-        });
+        const fileId = fr[COL_FOTO.GDRIVE_FILE_ID];
+        let fileExists = false;
+
+        if (fileId) {
+          if (liveDriveFilesMap.has(fileId)) {
+            fileExists = true;
+          } else {
+            // Verifikasi langsung ke Drive jika file berada di luar subfolder kandidat
+            try {
+              const checkF = DriveApp.getFileById(fileId);
+              if (checkF && !checkF.isTrashed()) {
+                fileExists = true;
+              }
+            } catch (dErr) {
+              fileExists = false;
+            }
+          }
+        }
+
+        if (fileExists) {
+          existingFileIds.add(fileId);
+          photos.push({
+            idFoto: fr[COL_FOTO.ID],
+            guestNama: fr[COL_FOTO.GUEST_NAMA],
+            caption: fr[COL_FOTO.CAPTION],
+            cameraStyle: fr[COL_FOTO.CAMERA_STYLE],
+            frameStyle: fr[COL_FOTO.FRAME_STYLE],
+            gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL],
+            totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
+            isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
+            createdAt: fr[COL_FOTO.CREATED_AT]
+          });
+        } else {
+          // File fisik di Google Drive sudah tidak ada / telah dihapus -> hapus dari DataFoto!
+          rowsToDelete.push(j + 2);
+        }
       }
     }
   }
+
+  // 2. Auto-ingest foto yang ada di Google Drive tapi belum ada di Spreadsheet
+  liveDriveFilesMap.forEach(function(dfInfo, fId) {
+    if (!existingFileIds.has(fId)) {
+      try {
+        const fObj = DriveApp.getFileById(fId);
+        fObj.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      } catch (e) {}
+
+      const directUrl = "https://lh3.googleusercontent.com/d/" + fId;
+      const parts = dfInfo.name.split("_");
+      const photoIdCandidate = (parts[0] && parts[0].indexOf("FTO-") === 0) ? parts[0] : ("FTO-" + Date.now());
+      const guestCandidate = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
+      const createdDateStr = dfInfo.created ? Utilities.formatDate(dfInfo.created, timeZone, "yyyy-MM-dd HH:mm:ss") : nowStr;
+
+      if (fotoSheet) {
+        fotoSheet.appendRow([
+          sanitizeCellValue(photoIdCandidate),
+          sanitizeCellValue(canonicalEventId),
+          "GUEST-CLOUD",
+          sanitizeCellValue(guestCandidate),
+          "Momen seru!",
+          "RAW",
+          "POLAROID",
+          sanitizeCellValue(fId),
+          sanitizeCellValue(directUrl),
+          0,
+          false,
+          createdDateStr
+        ]);
+      }
+
+      photos.push({
+        idFoto: photoIdCandidate,
+        guestNama: guestCandidate,
+        caption: "Momen seru!",
+        cameraStyle: "RAW",
+        frameStyle: "POLAROID",
+        gdriveViewUrl: directUrl,
+        totalLikes: 0,
+        isFeatured: false,
+        createdAt: createdDateStr
+      });
+      existingFileIds.add(fId);
+    }
+  });
+
+  // 3. Eksekusi penghapusan baris yang filenya sudah terhapus di Drive (dari bawah ke atas)
+  if (fotoSheet && rowsToDelete.length > 0) {
+    for (let d = rowsToDelete.length - 1; d >= 0; d--) {
+      try {
+        fotoSheet.deleteRow(rowsToDelete[d]);
+      } catch (delErr) {}
+    }
+  }
+
+  SpreadsheetApp.flush();
 
   photos.reverse();
 
