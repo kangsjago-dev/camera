@@ -1009,7 +1009,7 @@ function handleGetGallery(eventId, guestId) {
   if (katSheet && katSheet.getLastRow() > 1) {
     const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
     kRows.forEach(function(kr) {
-      if (kr[COL_KAT.ID_EVENT] === eventId || kr[COL_KAT.ID_EVENT] === eventSlug) {
+      if (kr[COL_KAT.ID_EVENT] === canonicalEventId || kr[COL_KAT.ID_EVENT] === eventId || kr[COL_KAT.ID_EVENT] === eventSlug) {
         categories.push({
           idKategori: kr[COL_KAT.ID],
           namaKategori: kr[COL_KAT.NAMA],

@@ -131,6 +131,49 @@ function getEventVotedCategoriesKey(eventId) {
   return 'snapevent_voted_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
+function getEventCategoriesKey(eventId) {
+  return 'snapevent_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
+}
+
+function loadEventCategories(eventId) {
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  try {
+    const saved = localStorage.getItem(getEventCategoriesKey(id));
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+
+  const allEvents = [...(STATE.events || []), ...(typeof MOCK_DATA !== 'undefined' && MOCK_DATA.events ? MOCK_DATA.events : [])];
+  const ev = allEvents.find(e => e && e.idEvent === id);
+  if (ev && Array.isArray(ev.categories) && ev.categories.length > 0) {
+    return ev.categories;
+  }
+
+  // Standar default untuk Hans & Yurike
+  if (id === 'EVT-202611-392') {
+    return [
+      { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", urutan: 1 },
+      { idKategori: "KAT-2", namaKategori: "The Best Groupie", urutan: 2 },
+      { idKategori: "KAT-3", namaKategori: "Senyum Terhangat", urutan: 3 }
+    ];
+  }
+
+  if (typeof MOCK_DATA !== 'undefined' && Array.isArray(MOCK_DATA.categories) && MOCK_DATA.categories.length > 0) {
+    return MOCK_DATA.categories;
+  }
+  return [];
+}
+
+function saveEventCategories(eventId, categories) {
+  if (!Array.isArray(categories)) return;
+  const id = getResolvedEventId(eventId || STATE.activeEventId);
+  try {
+    localStorage.setItem(getEventCategoriesKey(id), JSON.stringify(categories));
+  } catch (e) {}
+}
+
 // --- REGISTRY FOTO YANG DIHAPUS (PERSISTENT TOMBSTONE ANTI-REAPPEAR TANPA DEPLOY ULANG) ---
 function getDeletedPhotosSet(eventId) {
   const set = new Set();
@@ -627,8 +670,13 @@ const MOCK_DATA = {
       singleLockedFrame: "POLAROID",
       activeFrames: ["POLAROID"],
       gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
-      statusEvent: "INAKTIF",
-      customFrameUrl: ""
+      statusEvent: "AKTIF",
+      customFrameUrl: "",
+      categories: [
+        { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+        { idKategori: "KAT-2", namaKategori: "The Best Groupie", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
+        { idKategori: "KAT-3", namaKategori: "Senyum Terhangat", deskripsi: "Senyum paling ceria dan memikat", urutan: 3 }
+      ]
     },
     {
       idEvent: "EVT-202612-105",
@@ -734,9 +782,9 @@ const MOCK_DATA = {
     customFrameUrl: ""
   },
   categories: [
-    { idKategori: "KAT-001", namaKategori: "Best Outfit", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-    { idKategori: "KAT-002", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru", urutan: 2 },
-    { idKategori: "KAT-003", namaKategori: "Momen Terbaper", deskripsi: "Momen paling romantis dan menyentuh", urutan: 3 }
+    { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+    { idKategori: "KAT-2", namaKategori: "The Best Groupie", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
+    { idKategori: "KAT-3", namaKategori: "Senyum Terhangat", deskripsi: "Senyum paling ceria dan memikat", urutan: 3 }
   ],
   samplePhotos: [
     {
@@ -871,6 +919,10 @@ async function initApp() {
   // 1. Muat data foto & voting terisolasi untuk event aktif (Instan dari localStorage < 2ms)
   loadEventPhotos(STATE.activeEventId);
   loadEventVotes(STATE.activeEventId);
+  STATE.activeCategories = loadEventCategories(STATE.activeEventId);
+  if (STATE.activeEvent && (!STATE.activeEvent.categories || STATE.activeEvent.categories.length === 0)) {
+    STATE.activeEvent.categories = STATE.activeCategories;
+  }
 
   // Pastikan koleksi bingkai kustom terisi template preset jika belum ada dan bebas dari duplikat
   if (!Array.isArray(STATE.customFrames) || STATE.customFrames.length === 0) {
@@ -1067,7 +1119,30 @@ async function loadEventData() {
           customFrameUrl: activeCustomUrl
         };
         localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
-        STATE.activeCategories = res.categories || [];
+        // Cerdas sinkronkan kategori poling / voting:
+        // Prioritaskan kategori spesifik (misal 3 kategori dari konfigurasi admin)
+        // Jangan pernah men-downgrade 3 kategori lokal menjadi 1 kategori generic!
+        const localSavedCats = loadEventCategories(res.event.idEvent || STATE.activeEventId);
+        if (Array.isArray(res.categories) && res.categories.length > 1) {
+          STATE.activeCategories = res.categories;
+          saveEventCategories(res.event.idEvent || STATE.activeEventId, res.categories);
+        } else if (localSavedCats.length > 1 && (!Array.isArray(res.categories) || res.categories.length <= 1)) {
+          STATE.activeCategories = localSavedCats;
+          // Trigger background sync ke cloud jika belum ada
+          callGasApiSafe('adminSaveEvent', {
+            idEvent: res.event.idEvent || STATE.activeEventId,
+            eventId: res.event.idEvent || STATE.activeEventId,
+            categories: localSavedCats
+          }).catch(() => {});
+        } else if (Array.isArray(res.categories) && res.categories.length > 0) {
+          STATE.activeCategories = res.categories;
+          saveEventCategories(res.event.idEvent || STATE.activeEventId, res.categories);
+        } else if (localSavedCats.length > 0) {
+          STATE.activeCategories = localSavedCats;
+        }
+        if (STATE.activeEvent) {
+          STATE.activeEvent.categories = STATE.activeCategories;
+        }
 
         if (res.metrics) {
           STATE.metrics = res.metrics;
@@ -1208,7 +1283,7 @@ async function loadEventData() {
 
   // Fallback ke Koleksi Acara Lokal (Isolasi Mandiri per Acara)
   STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || MOCK_DATA.event;
-  STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || MOCK_DATA.categories;
+  STATE.activeCategories = (STATE.activeEvent && STATE.activeEvent.categories) || loadEventCategories(STATE.activeEventId);
   loadEventPhotos(STATE.activeEventId);
   applyGlobalConfigToUI();
   applyEventToUI();
@@ -1245,6 +1320,10 @@ function activateEvent(idEvent) {
   // LOAD ISOLATED DATA: Galeri & Voting khusus event ini
   loadEventPhotos(idEvent);
   loadEventVotes(idEvent);
+  STATE.activeCategories = loadEventCategories(idEvent);
+  if (ev && (!ev.categories || ev.categories.length === 0)) {
+    ev.categories = STATE.activeCategories;
+  }
 
   applyEventToUI();
   renderGallery();
@@ -1745,13 +1824,21 @@ function applyEventToUI() {
   // Render Kategori Voting di Galeri (Sesuai Kategori Poling yang Dikonfigurasi)
   const catContainer = document.getElementById('galleryCategoryTabs');
   if (catContainer) {
-    const isAll = (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL' || STATE.activeGalleryFilter === 'WINNERS' || STATE.activeGalleryFilter === 'POPULAR');
+    const isWinners = STATE.activeGalleryFilter === 'WINNERS';
+    const isPopular = STATE.activeGalleryFilter === 'POPULAR';
+    const isAll = (!isWinners && !isPopular && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
+
+    const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+      ? STATE.activeCategories
+      : loadEventCategories(STATE.activeEventId);
 
     catContainer.innerHTML = `
       <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer">Semua Foto</button>
+      <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isWinners ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer flex items-center gap-1.5">🏆 Pemenang Voting</button>
+      <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isPopular ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer flex items-center gap-1">🔥 Paling Populer</button>
     `;
 
-    (STATE.activeCategories || []).forEach(cat => {
+    catsToRender.forEach(cat => {
       const isSelected = STATE.activeGalleryFilter === cat.idKategori;
       const btn = document.createElement('button');
       btn.setAttribute('data-cat', cat.idKategori);
@@ -2800,7 +2887,7 @@ function openVoteCategoryModal(idFoto) {
 
   const categories = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
     ? STATE.activeCategories
-    : MOCK_DATA.categories;
+    : loadEventCategories(STATE.activeEventId);
 
   container.innerHTML = categories.map((cat, idx) => {
     const alreadyVoted = Array.isArray(STATE.votedCategoryIds) && STATE.votedCategoryIds.includes(cat.idKategori);
@@ -4527,7 +4614,8 @@ function populateEditEventForm(ev) {
   const singleSelect = document.getElementById('formEventSingleFrameSelect');
   renderAdminFrameSettings(ev);
 
-  renderCategoryInputRows(STATE.activeCategories);
+  const evCats = loadEventCategories(ev.idEvent);
+  renderCategoryInputRows(evCats.length > 0 ? evCats : (ev.categories || STATE.activeCategories));
 
   // Tampilkan tombol Hapus Acara di form edit
   const btnDeleteForm = document.getElementById('btnDeleteCurrentEvent');
@@ -4729,6 +4817,10 @@ async function adminDeletePhoto(idFoto) {
       }).then(res => {
         if (res && res.status === 'success') {
           showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
+        } else if (res && res.status === 'error') {
+          if (res.message && res.message.includes('tidak dikenali')) {
+            showToast("ℹ️ Foto dihapus di perangkat ini. Deploy versi terbaru Google Apps Script di web app Anda agar sinkron ke Google Drive.", "info");
+          }
         }
       });
     } catch (err) {
@@ -5002,6 +5094,8 @@ async function saveAdminEventForm() {
     STATE.events.unshift(savedEvent);
   }
   localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+
+  saveEventCategories(savedEvent.idEvent, cats);
 
   // Jika yang diedit adalah event aktif (atau satu-satunya event), perbarui STATE.activeEvent
   if (savedEvent.idEvent === STATE.activeEventId || STATE.events.length === 1) {
