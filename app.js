@@ -10,7 +10,7 @@ const GLOBAL_CONFIG = {
   // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
   DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
   DEFAULT_APP_TITLE: 'SnapEvent Enterprise Studio',
-  DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw/exec'
+  DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };
 
 // URL Query Param Overrides (untuk sinkronisasi instan antar perangkat / link QR)
@@ -19,9 +19,15 @@ if (URL_PARAMS.get('gas') && URL_PARAMS.get('gas').trim().startsWith('http')) {
   localStorage.setItem('snapevent_gas_url', URL_PARAMS.get('gas').trim());
 }
 
+// Auto-migrasi URL lama yang dead/404 ke endpoint GAS yang aktif
+const savedGasUrl = localStorage.getItem('snapevent_gas_url');
+if (savedGasUrl && (savedGasUrl.includes('AKfycbPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw') || savedGasUrl.includes('AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw'))) {
+  localStorage.setItem('snapevent_gas_url', GLOBAL_CONFIG.DEFAULT_GAS_URL);
+}
+
 const STATE = {
   // Configuration & Custom Branding (Cloud Persistent)
-  gasApiUrl: (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http')) 
+  gasApiUrl: (localStorage.getItem('snapevent_gas_url') && localStorage.getItem('snapevent_gas_url').trim().startsWith('http') && !localStorage.getItem('snapevent_gas_url').includes('AKfycbPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw'))
     ? localStorage.getItem('snapevent_gas_url').trim() 
     : GLOBAL_CONFIG.DEFAULT_GAS_URL,
   appTitle: localStorage.getItem('snapevent_app_title') || GLOBAL_CONFIG.DEFAULT_APP_TITLE,
@@ -211,12 +217,12 @@ function getDriveImageUrls(rawUrl) {
 
   if (!fileId) return [str];
 
-  // Mirror 1: Google Drive Official Thumbnail API (Instan tanpa jeda CDN lh3)
-  // Mirror 2: Google usercontent CDN (lh3)
+  // Mirror 1: Google usercontent CDN (lh3) - Stabil, cepat, dan tanpa proteksi login cross-origin
+  // Mirror 2: Google Drive Official Thumbnail API
   // Mirror 3: Direct Export Stream (uc?export=view)
   return [
-    `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`,
     `https://lh3.googleusercontent.com/d/${fileId}`,
+    `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`,
     `https://drive.google.com/uc?export=view&id=${fileId}`
   ];
 }
