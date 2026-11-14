@@ -39,10 +39,10 @@
   </script>
 
   <!-- Modular Stylesheet (Dark Gold Luxury, Flash & Ken Burns Animations) -->
-  <link rel="stylesheet" href="style.css?v=2.0.5" />
+  <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.0.5" defer></script>
+  <script src="app.js?v=2.0.7" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -71,14 +71,8 @@
       </div>
     </div>
 
-    <!-- Right Quick Actions: QR Code, Kontak, Slideshow Proyektor & Admin -->
+    <!-- Right Quick Actions: Kontak, Slideshow Proyektor & Admin -->
     <div class="flex items-center gap-1.5">
-      <button id="btnHeaderQr" title="Tampilkan QR Code untuk Difoto / Pindai Tamu" class="p-2 rounded-lg bg-brand-gold/15 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 transition flex items-center gap-1 font-bold text-xs shadow-sm">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M2 2h8v8H2V2zm2 2v4h4V4H4zm10-2h8v8h-8V2zm2 2v4h4V4h-4zM2 14h8v8H2v-8zm2 2v4h4v-4H4zm14-2h4v4h-4v-4zm-4 0h2v2h-2v-2zm2 4h2v4h-2v-4zm2 2h2v2h-2v-2zm-6-2h2v4h-2v-4z"/>
-        </svg>
-        <span class="hidden sm:inline">QR Acara</span>
-      </button>
 
       <button id="btnHeaderContact" title="Kontak / WhatsApp" class="hidden p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -198,13 +192,9 @@
           </div>
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
-          <button id="btnCamShowQr" type="button" title="Tampilkan QR Code di Layar untuk Difoto Tamu Lain" class="flex items-center gap-1 text-[11px] font-bold text-black bg-brand-gold hover:brightness-110 px-2 py-1 rounded-lg shadow-sm transition active:scale-95">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M2 2h8v8H2V2zm2 2v4h4V4H4zm10-2h8v8h-8V2zm2 2v4h4V4h-4zM2 14h8v8H2v-8zm2 2v4h4v-4H4zm14-2h4v4h-4v-4zm-4 0h2v2h-2v-2zm2 4h2v4h-2v-4zm2 2h2v2h-2v-2zm-6-2h2v4h-2v-4z"/></svg>
-            <span class="text-[10px]">QR</span>
-          </button>
-          <button id="btnCamChangeGuest" type="button" title="Ganti / Reset Nama Tamu" class="flex items-center gap-1 text-[11px] font-medium text-amber-200 bg-brand-gold/10 hover:bg-brand-gold/20 px-2 py-1 rounded-lg border border-brand-gold/30 transition active:scale-95">
+          <button id="btnCamChangeGuest" type="button" title="Ganti / Reset Nama Tamu" class="flex items-center gap-1 text-[11px] font-medium text-amber-200 bg-brand-gold/10 hover:bg-brand-gold/20 px-2.5 py-1 rounded-lg border border-brand-gold/30 transition active:scale-95">
             <span>👤</span>
-            <span id="camGuestNameDisplay" class="max-w-[70px] truncate">Tamu</span>
+            <span id="camGuestNameDisplay" class="max-w-[85px] truncate">Tamu</span>
             <span class="text-[9px] text-zinc-400">🔄</span>
           </button>
           <div id="camEventBadge" class="hidden sm:inline-block text-xs font-medium text-brand-gold bg-brand-gold/10 px-2.5 py-0.5 rounded-full border border-brand-gold/20">
@@ -219,7 +209,7 @@
         <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
 
         <!-- Custom Frame Image Overlay (PNG) -->
-        <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-cover pointer-events-none z-10" />
+        <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
 
         <!-- Live Frame Overlay Preview (Built-in) -->
         <div id="viewfinderFrameOverlay" class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3.5 z-10">

@@ -1253,19 +1253,36 @@ function handleUploadCustomFrame(payload) {
       try { oldFiles.next().setTrashed(true); } catch(e) {}
     }
 
-    let pureBase64 = imageBase64;
-    let mimeType = "image/png";
-    if (pureBase64.indexOf("data:") === 0) {
-      const parts = pureBase64.split(",");
-      pureBase64 = parts[1];
+    let directUrl = "";
+    if (imageBase64.indexOf("http") === 0) {
+      directUrl = imageBase64;
+    } else {
+      let pureData = imageBase64;
+      let mimeType = "image/png";
+      let isBase64 = true;
+      if (pureData.indexOf("data:") === 0) {
+        const commaIdx = pureData.indexOf(",");
+        const meta = pureData.substring(0, commaIdx);
+        pureData = pureData.substring(commaIdx + 1);
+        if (meta.indexOf("image/svg") !== -1) {
+          mimeType = "image/svg+xml";
+          isBase64 = (meta.indexOf(";base64") !== -1);
+        } else if (meta.indexOf(";base64") === -1) {
+          isBase64 = false;
+        }
+      }
+
+      let blob;
+      if (isBase64) {
+        const decodedBytes = Utilities.base64Decode(pureData);
+        blob = Utilities.newBlob(decodedBytes, mimeType, "FRAME_" + eventId + (mimeType === "image/svg+xml" ? ".svg" : ".png"));
+      } else {
+        blob = Utilities.newBlob(pureData, mimeType, "FRAME_" + eventId + ".svg");
+      }
+      const newFile = targetFolder.createFile(blob);
+      try { newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(sErr) {}
+      directUrl = "https://lh3.googleusercontent.com/d/" + newFile.getId();
     }
-
-    const decodedBytes = Utilities.base64Decode(pureBase64);
-    const blob = Utilities.newBlob(decodedBytes, mimeType, "FRAME_" + eventId + ".png");
-    const newFile = targetFolder.createFile(blob);
-    newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-    const directUrl = "https://lh3.googleusercontent.com/d/" + newFile.getId();
 
     // Simpan direct URL ke DataEvent kolom CUSTOM_FRAME_URL (Dukung match via ID atau Slug)
     if (eventSheet && eventSheet.getLastRow() > 1) {
@@ -1557,24 +1574,50 @@ function handleAdminSaveEvent(payload) {
       if (targetRow !== -1) {
         const updateRange = eventSheet.getRange(targetRow, 1, 1, 17);
         const curVals = updateRange.getValues()[0];
+
+        const finalNama = payload.namaEvent ? String(payload.namaEvent).trim() : (curVals[COL_EVENT.NAMA] || "Event");
+        const finalSlug = payload.slugEvent ? String(payload.slugEvent).trim() : (curVals[COL_EVENT.SLUG] || createSlug(finalNama));
+        const finalTanggal = payload.tanggalEvent ? String(payload.tanggalEvent).trim() : (curVals[COL_EVENT.TANGGAL] || "");
+        const finalHashtag = payload.hashtagEvent ? String(payload.hashtagEvent).trim() : (curVals[COL_EVENT.HASHTAG] || "");
+        const finalMaxFoto = (payload.maxFotoPerGuest !== undefined && payload.maxFotoPerGuest !== null && payload.maxFotoPerGuest !== "")
+          ? Number(payload.maxFotoPerGuest) : (Number(curVals[COL_EVENT.MAX_FOTO]) || 10);
+        const finalMaxVote = (payload.maxVotePerGuest !== undefined && payload.maxVotePerGuest !== null && payload.maxVotePerGuest !== "")
+          ? Number(payload.maxVotePerGuest) : (Number(curVals[COL_EVENT.MAX_VOTE]) || 3);
+        const finalRevealMode = payload.revealMode ? (payload.revealMode === "SETELAH" ? "SETELAH" : "SEGERA") : (curVals[COL_EVENT.REVEAL_MODE] || "SEGERA");
+        const finalIsRevealed = payload.isRevealed !== undefined 
+          ? (payload.isRevealed === true || payload.isRevealed === "true" || payload.isRevealed === "TRUE")
+          : (curVals[COL_EVENT.IS_REVEALED] !== undefined ? curVals[COL_EVENT.IS_REVEALED] : true);
+        const finalLike = payload.likeEnabled !== undefined 
+          ? (payload.likeEnabled !== false && payload.likeEnabled !== "false") 
+          : (curVals[COL_EVENT.LIKE_ENABLED] !== false);
+        const finalPublic = payload.publicVisible !== undefined 
+          ? (payload.publicVisible !== false && payload.publicVisible !== "false") 
+          : (curVals[COL_EVENT.PUBLIC_VISIBLE] !== false);
+        const finalStyles = payload.activeCameraStyles ? JSON.stringify(payload.activeCameraStyles) : (curVals[COL_EVENT.CAMERA_STYLES] || JSON.stringify(["RAW", "800T", "WARM", "BW"]));
+        const finalFrames = (payload.frameLockMode || payload.activeFrames || payload.singleLockedFrame) ? frames : (curVals[COL_EVENT.FRAMES] || frames);
+        const finalFolder = folderId || curVals[COL_EVENT.GDRIVE_FOLDER_ID] || "";
+        const finalStatus = curVals[COL_EVENT.STATUS] || "AKTIF";
+        const finalCreated = curVals[COL_EVENT.CREATED_AT] || nowStr;
+        const finalFrameUrl = customFrameUrl || curVals[COL_EVENT.CUSTOM_FRAME_URL] || "";
+
         updateRange.setValues([[
           sanitizeCellValue(idEvent),
-          sanitizeCellValue(namaEvent),
-          sanitizeCellValue(slugEvent),
-          sanitizeCellValue(tanggalEvent),
-          sanitizeCellValue(hashtagEvent),
-          maxFoto,
-          maxVote,
-          revealMode,
-          isRevealed,
-          likeEnabled,
-          publicVisible,
-          sanitizeCellValue(cameraStyles),
-          sanitizeCellValue(frames),
-          sanitizeCellValue(folderId || curVals[COL_EVENT.GDRIVE_FOLDER_ID]),
-          curVals[COL_EVENT.STATUS] || "AKTIF",
-          curVals[COL_EVENT.CREATED_AT] || nowStr,
-          sanitizeCellValue(customFrameUrl || curVals[COL_EVENT.CUSTOM_FRAME_URL], 500)
+          sanitizeCellValue(finalNama),
+          sanitizeCellValue(finalSlug),
+          sanitizeCellValue(finalTanggal),
+          sanitizeCellValue(finalHashtag),
+          finalMaxFoto,
+          finalMaxVote,
+          finalRevealMode,
+          finalIsRevealed,
+          finalLike,
+          finalPublic,
+          sanitizeCellValue(finalStyles),
+          sanitizeCellValue(finalFrames),
+          sanitizeCellValue(finalFolder),
+          finalStatus,
+          finalCreated,
+          sanitizeCellValue(finalFrameUrl, 500)
         ]]);
       }
     }
