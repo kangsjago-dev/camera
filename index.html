@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.0.9" defer></script>
+  <script src="app.js?v=2.1.0" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -65,7 +65,6 @@
       <div>
         <h1 class="text-sm font-semibold tracking-wide text-zinc-100 flex items-center gap-1.5">
           <span id="headerAppTitle">SnapEvent</span>
-          <span class="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-brand-gold/15 text-brand-gold border border-brand-gold/30">Camera</span>
         </h1>
         <p id="headerEventHashtag" class="text-[11px] text-zinc-400 font-medium">#SarahKevinEverAfter</p>
       </div>
@@ -675,14 +674,22 @@
               </p>
             </div>
 
-            <!-- Submit Button -->
-            <div class="pt-2 flex items-center justify-end gap-2">
-              <button type="button" id="btnCancelEditEvent" class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold transition">
-                Batal
-              </button>
-              <button type="submit" id="btnSubmitSaveEvent" class="px-5 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 transition flex items-center gap-1.5">
-                <span>Simpan Pengaturan Acara</span>
-              </button>
+            <!-- Submit Button & Delete Event -->
+            <div class="pt-2 flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <button type="button" id="btnDeleteCurrentEvent" class="hidden px-4 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer">
+                  <span>🗑️</span>
+                  <span>Hapus Acara Ini</span>
+                </button>
+              </div>
+              <div class="flex items-center gap-2">
+                <button type="button" id="btnCancelEditEvent" class="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold transition cursor-pointer">
+                  Batal
+                </button>
+                <button type="submit" id="btnSubmitSaveEvent" class="px-5 py-2.5 rounded-xl gold-gradient-bg text-black text-xs font-bold shadow-md hover:brightness-110 transition flex items-center gap-1.5 cursor-pointer">
+                  <span>Simpan Pengaturan Acara</span>
+                </button>
+              </div>
             </div>
           </form>
         </div>

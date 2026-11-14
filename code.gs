@@ -309,6 +309,10 @@ function doGet(e) {
       return createJsonResponse(handleAdminTogglePhotoVisibility(params));
     }
 
+    if (action === "adminDeleteEvent") {
+      return createJsonResponse(handleAdminDeleteEvent(params));
+    }
+
     return createJsonResponse({
       status: "error",
       message: "Action GET '" + action + "' tidak dikenali."
@@ -377,6 +381,10 @@ function doPost(e) {
 
     if (action === "adminTogglePhotoVisibility") {
       return createJsonResponse(handleAdminTogglePhotoVisibility(payload));
+    }
+
+    if (action === "adminDeleteEvent") {
+      return createJsonResponse(handleAdminDeleteEvent(payload));
     }
 
     return createJsonResponse({
@@ -1906,6 +1914,70 @@ function handleAdminTogglePhotoVisibility(payload) {
     }
 
     return { status: "error", message: "Foto ID '" + idFoto + "' tidak ditemukan." };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * HAPUS ACARA SECARA PERMANEN DARI GOOGLE SHEETS
+ */
+function handleAdminDeleteEvent(payload) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return { status: "error", message: "Server sibuk, silakan coba sesaat lagi." };
+  }
+
+  try {
+    const idEvent = String(payload.idEvent || payload.eventId || "").trim();
+    if (!idEvent) {
+      return { status: "error", message: "Parameter idEvent wajib disertakan." };
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+    const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+
+    if (!eventSheet || eventSheet.getLastRow() <= 1) {
+      return { status: "error", message: "Sheet DataEvent kosong." };
+    }
+
+    let deleted = false;
+    let deletedName = "";
+    const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
+
+    for (let r = evRows.length - 1; r >= 0; r--) {
+      if (evRows[r][COL_EVENT.ID] === idEvent || evRows[r][COL_EVENT.SLUG] === idEvent) {
+        deletedName = evRows[r][COL_EVENT.NAMA];
+        eventSheet.deleteRow(r + 2);
+        deleted = true;
+        break;
+      }
+    }
+
+    // Hapus juga kategori untuk event ini di DataKategori
+    if (katSheet && katSheet.getLastRow() > 1 && deleted) {
+      const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 3).getDisplayValues();
+      for (let kr = kRows.length - 1; kr >= 0; kr--) {
+        if (kRows[kr][COL_KAT.ID_EVENT] === idEvent) {
+          try { katSheet.deleteRow(kr + 2); } catch (e) {}
+        }
+      }
+    }
+
+    SpreadsheetApp.flush();
+
+    if (deleted) {
+      return {
+        status: "success",
+        message: "Acara '" + (deletedName || idEvent) + "' berhasil dihapus permanen.",
+        idEvent: idEvent
+      };
+    } else {
+      return { status: "error", message: "Acara ID '" + idEvent + "' tidak ditemukan." };
+    }
   } finally {
     lock.releaseLock();
   }

@@ -3779,6 +3779,12 @@ function resetCreateEventForm() {
   document.getElementById('customFramePreviewBox').classList.add('hidden');
   document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
   renderCustomFramesList();
+
+  const btnDeleteForm = document.getElementById('btnDeleteCurrentEvent');
+  if (btnDeleteForm) {
+    btnDeleteForm.classList.add('hidden');
+    btnDeleteForm.onclick = null;
+  }
 }
 
 function renderAdminDashboard() {
@@ -3845,18 +3851,21 @@ function renderAdminDashboard() {
             <span class="px-2 py-0.5 rounded bg-brand-gold/10 text-brand-gold border border-brand-gold/20">${frameText}</span>
           </div>
           
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5">
-            <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-white/5">
+            <button class="btn-edit-event py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition cursor-pointer">
               ✏️ Edit Acara
             </button>
-            <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition">
+            <button class="btn-toggle-reveal py-2 px-3 rounded-xl ${ev.isRevealed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} text-xs font-semibold text-center transition cursor-pointer">
               ${ev.isRevealed ? '🔒 Kunci' : '🔓 Buka'}
             </button>
-            <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition">
+            <button class="btn-open-slideshow py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-semibold text-center transition cursor-pointer">
               📺 Proyektor
             </button>
-            <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition">
+            <button class="btn-share-qr py-2 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold text-center transition cursor-pointer">
               📲 Link & QR
+            </button>
+            <button class="btn-delete-event col-span-2 sm:col-span-1 py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/20 text-xs font-semibold text-center transition flex items-center justify-center gap-1 cursor-pointer" title="Hapus Acara">
+              🗑️ Hapus
             </button>
           </div>
         `;
@@ -3865,6 +3874,14 @@ function renderAdminDashboard() {
         if (btnActivate) {
           btnActivate.addEventListener('click', () => {
             activateEvent(ev.idEvent);
+          });
+        }
+
+        const btnDeleteEv = card.querySelector('.btn-delete-event');
+        if (btnDeleteEv) {
+          btnDeleteEv.addEventListener('click', (e) => {
+            e.stopPropagation();
+            adminDeleteEvent(ev.idEvent);
           });
         }
 
@@ -4080,6 +4097,15 @@ function populateEditEventForm(ev) {
   renderAdminFrameSettings(ev);
 
   renderCategoryInputRows(STATE.activeCategories);
+
+  // Tampilkan tombol Hapus Acara di form edit
+  const btnDeleteForm = document.getElementById('btnDeleteCurrentEvent');
+  if (btnDeleteForm) {
+    btnDeleteForm.classList.remove('hidden');
+    btnDeleteForm.onclick = () => {
+      adminDeleteEvent(ev.idEvent);
+    };
+  }
 }
 
 function renderCategoryInputRows(cats) {
@@ -4268,7 +4294,11 @@ async function adminDeletePhoto(idFoto) {
       if (res && res.status === 'success') {
         showToast("✅ Foto berhasil dihapus permanen dari Google Sheets & Drive!", "success");
       } else if (res && res.status === 'error') {
-        showToast(`Catatan server: ${res.message}`, "warning");
+        if (res.message && res.message.includes('tidak dikenali')) {
+          showToast("ℹ️ Foto dihapus di perangkat ini. Harap deploy versi terbaru Google Apps Script di web app Anda agar sinkron ke Google Drive.", "info");
+        } else {
+          showToast(`Catatan server: ${res.message}`, "warning");
+        }
       }
     } catch (err) {
       console.warn("GAS delete photo sync warn:", err);
@@ -4315,9 +4345,91 @@ async function adminTogglePhotoVisibility(idFoto) {
       try { res = await resp.json(); } catch(e) {}
       if (res && res.status === 'success') {
         showToast("✅ Status visibilitas foto tersimpan di Google Sheets!", "success");
+      } else if (res && res.status === 'error') {
+        if (res.message && res.message.includes('tidak dikenali')) {
+          showToast("ℹ️ Status visibilitas diperbarui secara lokal. Deploy versi terbaru Google Apps Script agar sinkron di cloud.", "info");
+        }
       }
     } catch (err) {
       console.warn("GAS toggle visibility warn:", err);
+    }
+  }
+}
+
+/**
+ * HAPUS ACARA (ADMIN DELETE EVENT)
+ */
+async function adminDeleteEvent(idEvent) {
+  if (!idEvent) return;
+  const ev = (STATE.events || []).find(e => e.idEvent === idEvent);
+  const evName = ev?.namaEvent || idEvent;
+
+  if (!confirm(`⚠️ Apakah Anda yakin ingin menghapus acara "${evName}" secara permanen?\n\nSemua data lokal dan referensi acara ini akan dihapus.`)) {
+    return;
+  }
+
+  // 1. Hapus dari STATE.events lokal
+  if (Array.isArray(STATE.events)) {
+    STATE.events = STATE.events.filter(e => e.idEvent !== idEvent);
+  }
+  localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+
+  // Hapus cache foto acara ini jika ada
+  try {
+    localStorage.removeItem(`snapevent_photos_${idEvent}`);
+  } catch (e) {}
+
+  // Jika acara yang dihapus adalah acara aktif, pindahkan ke acara lain jika ada
+  if (STATE.activeEventId === idEvent) {
+    const nextEv = (STATE.events && STATE.events.length > 0) ? STATE.events[0] : null;
+    if (nextEv) {
+      STATE.activeEventId = nextEv.idEvent;
+      STATE.activeEvent = nextEv;
+      localStorage.setItem('snapevent_active_event_id', nextEv.idEvent);
+      localStorage.setItem('snapevent_active_event', JSON.stringify(nextEv));
+    } else {
+      STATE.activeEventId = null;
+      STATE.activeEvent = null;
+      localStorage.removeItem('snapevent_active_event_id');
+      localStorage.removeItem('snapevent_active_event');
+    }
+  }
+
+  // Bersihkan form edit jika sedang membuka event ini
+  resetCreateEventForm();
+
+  // Kembali ke tab events & re-render
+  switchAdminTab('events');
+  renderAdminDashboard();
+  applyEventToUI();
+  showToast(`🗑️ Acara "${evName}" berhasil dihapus.`, "info");
+
+  // 2. Sinkronkan hapus acara ke Google Apps Script / Google Sheets
+  if (STATE.gasApiUrl) {
+    try {
+      const resp = await fetch(STATE.gasApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminDeleteEvent',
+          idEvent: idEvent,
+          eventId: idEvent
+        })
+      });
+      let res = null;
+      try { res = await resp.json(); } catch(e) {}
+
+      if (res && res.status === 'success') {
+        showToast(`✅ Acara "${evName}" berhasil dihapus dari Google Sheets!`, "success");
+      } else if (res && res.status === 'error') {
+        if (res.message && res.message.includes('tidak dikenali')) {
+          showToast(`ℹ️ Acara dihapus di browser. Deploy versi terbaru Google Apps Script agar terhapus otomatis di Google Sheets.`, "info");
+        } else {
+          showToast(`Catatan server: ${res.message}`, "warning");
+        }
+      }
+    } catch (err) {
+      console.warn("GAS delete event sync warn:", err);
     }
   }
 }
