@@ -165,11 +165,12 @@ function loadEventCategories(eventId) {
     result = result.map((c, idx) => {
       const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
       let finalName = name;
-      if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') {
+      const lower = name.toLowerCase().trim();
+      if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'best picture' || lower === 'paling populer') {
         finalName = 'Best Dressed Guest';
-      } else if (name.toLowerCase().trim() === 'senyum terhangat') {
+      } else if (lower === 'senyum terhangat') {
         finalName = 'Best Outfit';
-      } else if (name.toLowerCase().trim() === 'gaya terunik') {
+      } else if (lower === 'gaya terunik') {
         finalName = 'Pose Terheboh';
       }
       return {
@@ -181,11 +182,25 @@ function loadEventCategories(eventId) {
     });
   }
 
+  // Hapus duplikat nama kategori
+  const uniqueList = [];
+  const seenNames = new Set();
+  (result || []).forEach(cat => {
+    if (!cat || !cat.namaKategori) return;
+    const k = cat.namaKategori.toLowerCase().trim();
+    if (!seenNames.has(k)) {
+      seenNames.add(k);
+      uniqueList.push(cat);
+    }
+  });
+  result = uniqueList;
+
   if (!Array.isArray(result) || result.length === 0) {
     result = defaultStandard3;
   } else if (result.length < 3) {
     defaultStandard3.forEach(std => {
-      if (result.length < 3 && !result.some(r => r && r.namaKategori && r.namaKategori.toLowerCase().trim() === std.namaKategori.toLowerCase().trim())) {
+      if (result.length < 3 && !seenNames.has(std.namaKategori.toLowerCase().trim())) {
+        seenNames.add(std.namaKategori.toLowerCase().trim());
         result.push({
           idKategori: `KAT-${result.length + 1}`,
           namaKategori: std.namaKategori,
@@ -1341,25 +1356,29 @@ async function loadEventData() {
         ];
 
         let finalCats = [];
-        if (Array.isArray(cfgCats) && cfgCats.length > 0) {
-          finalCats = cfgCats;
-        } else if (Array.isArray(localSavedCats) && localSavedCats.length > 0) {
+        // Prioritaskan simpanan lokal jika pengguna telah mengatur minimal 3 kategori valid
+        if (Array.isArray(localSavedCats) && localSavedCats.length >= 3 && !localSavedCats.some(c => c && c.namaKategori && c.namaKategori.toLowerCase().trim() === 'best picture')) {
           finalCats = localSavedCats;
-        } else if (Array.isArray(res.categories) && res.categories.length > 0) {
+        } else if (Array.isArray(cfgCats) && cfgCats.length >= 3) {
+          finalCats = cfgCats;
+        } else if (Array.isArray(res.categories) && res.categories.length >= 3) {
           finalCats = res.categories;
+        } else if (Array.isArray(cfgCats) && cfgCats.length > 0) {
+          finalCats = cfgCats;
         } else {
-          finalCats = standard3Categories;
+          finalCats = localSavedCats;
         }
 
         // Normalisasi kategori: migrasi nama template lama & pastikan minimal 3 kategori tersinkron
         finalCats = finalCats.map((c, idx) => {
           const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
           let finalName = name;
-          if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') {
+          const lower = name.toLowerCase().trim();
+          if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'best picture' || lower === 'paling populer') {
             finalName = 'Best Dressed Guest';
-          } else if (name.toLowerCase().trim() === 'senyum terhangat') {
+          } else if (lower === 'senyum terhangat') {
             finalName = 'Best Outfit';
-          } else if (name.toLowerCase().trim() === 'gaya terunik') {
+          } else if (lower === 'gaya terunik') {
             finalName = 'Pose Terheboh';
           }
           return {
@@ -1370,9 +1389,23 @@ async function loadEventData() {
           };
         });
 
+        // Hapus duplikat
+        const uniqueF = [];
+        const seenF = new Set();
+        finalCats.forEach(c => {
+          if (!c || !c.namaKategori) return;
+          const k = c.namaKategori.toLowerCase().trim();
+          if (!seenF.has(k)) {
+            seenF.add(k);
+            uniqueF.push(c);
+          }
+        });
+        finalCats = uniqueF;
+
         if (finalCats.length < 3) {
           standard3Categories.forEach(std => {
-            if (finalCats.length < 3 && !finalCats.some(fc => fc.namaKategori.toLowerCase().trim() === std.namaKategori.toLowerCase().trim())) {
+            if (finalCats.length < 3 && !seenF.has(std.namaKategori.toLowerCase().trim())) {
+              seenF.add(std.namaKategori.toLowerCase().trim());
               finalCats.push({
                 idKategori: `KAT-${finalCats.length + 1}`,
                 namaKategori: std.namaKategori,
@@ -2122,9 +2155,10 @@ function applyEventToUI() {
     const isWinners = STATE.activeGalleryFilter === 'WINNERS';
     const isAll = (!isWinners && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
 
-    const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+    const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length >= 3 && !STATE.activeCategories.some(c => c && c.namaKategori && c.namaKategori.toLowerCase().trim() === 'best picture'))
       ? STATE.activeCategories
       : loadEventCategories(STATE.activeEventId);
+    STATE.activeCategories = catsToRender;
 
     catContainer.innerHTML = `
       <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer">Semua Foto</button>
@@ -3179,20 +3213,7 @@ function openVoteCategoryModal(idFoto) {
     descEl.textContent = `Pilih kategori penghargaan untuk foto ini (Maks. ${maxVotesAllowed}x vote per tamu • Tersisa: ${remaining} suara):`;
   }
 
-  const rawCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
-    ? STATE.activeCategories
-    : loadEventCategories(STATE.activeEventId);
-  const categories = rawCats.map((c, idx) => {
-    const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
-    let finalName = name;
-    if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') finalName = 'Best Dressed Guest';
-    else if (name.toLowerCase().trim() === 'senyum terhangat') finalName = 'Best Outfit';
-    else if (name.toLowerCase().trim() === 'gaya terunik') finalName = 'Pose Terheboh';
-    return {
-      idKategori: (typeof c === 'object' && c.idKategori) ? c.idKategori : `KAT-${idx + 1}`,
-      namaKategori: finalName
-    };
-  });
+  const categories = loadEventCategories(STATE.activeEventId);
 
   let hasChecked = false;
   container.innerHTML = categories.map((cat) => {
@@ -4924,22 +4945,26 @@ function renderLeaderboard() {
 }
 
 function populateEditEventForm(ev) {
-  document.getElementById('formEventTitle').textContent = "Edit Detail Acara";
+  if (!ev) return;
+  document.getElementById('formEventTitle').textContent = `Edit Detail Acara: ${ev.namaEvent || ev.idEvent}`;
   document.getElementById('formEventId').value = ev.idEvent;
-  document.getElementById('formEventNama').value = ev.namaEvent;
-  document.getElementById('formEventHashtag').value = ev.hashtagEvent;
+  document.getElementById('formEventNama').value = ev.namaEvent || '';
+  document.getElementById('formEventHashtag').value = ev.hashtagEvent || '';
   let evDateFormatted = formatDateForInput(ev.tanggalEvent);
   if (!evDateFormatted) {
     const localEv = (STATE.events || []).find(e => e.idEvent === ev.idEvent);
     if (localEv && localEv.tanggalEvent) evDateFormatted = formatDateForInput(localEv.tanggalEvent);
+  }
+  if (!evDateFormatted && STATE.activeEvent && STATE.activeEvent.tanggalEvent) {
+    evDateFormatted = formatDateForInput(STATE.activeEvent.tanggalEvent);
   }
   if (!evDateFormatted) {
     const now = new Date();
     evDateFormatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }
   document.getElementById('formEventTanggal').value = evDateFormatted;
-  document.getElementById('formEventMaxFoto').value = ev.maxFotoPerGuest;
-  document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest;
+  document.getElementById('formEventMaxFoto').value = ev.maxFotoPerGuest || 10;
+  document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest || 1;
   document.getElementById('formEventDriveFolder').value = ev.gdriveFolderId || '';
 
   // Custom Frame Preview
@@ -5490,20 +5515,23 @@ async function saveAdminEventForm() {
 
   saveEventCategories(savedEvent.idEvent, cats);
 
-  // Jika yang diedit adalah event aktif (atau satu-satunya event), perbarui STATE.activeEvent
-  if (savedEvent.idEvent === STATE.activeEventId || STATE.events.length === 1) {
-    STATE.activeEventId = savedEvent.idEvent;
-    STATE.activeEvent = savedEvent;
-    STATE.activeCategories = cats;
-    localStorage.setItem('snapevent_active_event_id', savedEvent.idEvent);
-    localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
-    applyEventToUI();
-    const avail = getAvailableFrames();
-    if (!avail.some(f => f.id === STATE.activeFrame)) {
-      STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
-    }
-    applyActiveFrame(STATE.activeFrame);
+  // Selalu jadikan event yang baru saja diedit/disimpan sebagai activeEvent
+  // agar perubahan kategori poling, bingkai, kuota, dsb langsung aktif seketika di seluruh halaman!
+  STATE.activeEventId = savedEvent.idEvent;
+  STATE.activeEvent = savedEvent;
+  STATE.activeCategories = cats;
+  localStorage.setItem('snapevent_active_event_id', savedEvent.idEvent);
+  localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
+  localStorage.setItem('snapevent_active_categories', JSON.stringify(cats));
+  localStorage.setItem('snapevent_categories_' + savedEvent.idEvent, JSON.stringify(cats));
+  localStorage.setItem('snapevent_categories_updated_at_' + savedEvent.idEvent, String(Date.now()));
+  applyEventToUI();
+  const avail = getAvailableFrames();
+  if (!avail.some(f => f.id === STATE.activeFrame)) {
+    STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
   }
+  applyActiveFrame(STATE.activeFrame);
+  renderGallery();
 
   // Sinkronisasi ke Backend GAS dengan Resilient Multi-Tier (Kebal NetworkError & CORS)
   if (STATE.gasApiUrl) {
@@ -6147,12 +6175,25 @@ function bindEvents() {
     syncEventsFromBackend(true);
   });
 
+  // Tombol Buat Acara Baru (Header Tab Events)
+  document.getElementById('btnAddNewEventTop')?.addEventListener('click', () => {
+    resetCreateEventForm();
+    switchAdminTab('create');
+  });
+
   // Admin Tab Switchers (+ Buat Event Baru Handler)
   document.querySelectorAll('.adm-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.getAttribute('data-admintab');
       if (tab === 'create') {
-        resetCreateEventForm();
+        const currentFormId = document.getElementById('formEventId')?.value;
+        if (!currentFormId) {
+          if (STATE.activeEvent) {
+            populateEditEventForm(STATE.activeEvent);
+          } else {
+            resetCreateEventForm();
+          }
+        }
       }
       switchAdminTab(tab);
     });
