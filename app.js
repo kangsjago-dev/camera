@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ==============================================================================
  * SNAPEVENT: APP.JS
  * Universal Client Architecture for Event Disposable Camera & Live Gallery
@@ -80,6 +80,11 @@ const STATE = {
   votedPhotoIds: [],
   votedCategoryIds: [],
   activeGalleryFilter: 'ALL',
+
+  // Stage Photos Gallery (Online Cloud Synced)
+  stagePhotosEnabled: (localStorage.getItem('snapevent_stage_photos_enabled') === 'true'),
+  stagePhotosTitle: localStorage.getItem('snapevent_stage_photos_title') || 'Foto Panggung',
+  stagePhotosLink: localStorage.getItem('snapevent_stage_photos_link') || '',
 
   // Slideshow State
   slideshowIndex: 0,
@@ -858,16 +863,13 @@ function getAvailableFrames() {
     }
 
     const isCustomMatch = (id, frame) => {
-      if (!frame) return false;
+      if (!frame || !id) return false;
       if (frame.id === id) return true;
       if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
         return (frame.id === 'CUSTOM_EVENT' || (activeCustomData && frame.dataUrl === activeCustomData) || frame.scope === 'event');
       }
-      if (String(id).startsWith('frame_') || String(id).startsWith('FRAME_')) {
-        if (frame.id === id) return true;
-        if (frame.id === 'CUSTOM_EVENT') return true;
-        if (activeCustomData && frame.dataUrl === activeCustomData) return true;
-        if (frame.scope === 'event') return true;
+      if (frame.id === 'CUSTOM_EVENT') {
+        return (id === 'CUSTOM_EVENT' || id === 'CUSTOM');
       }
       return false;
     };
@@ -1761,6 +1763,18 @@ async function loadEventData() {
             STATE.podiumDisplayMode = res.globalConfig.podium_display_mode;
             localStorage.setItem('snapevent_podium_mode', STATE.podiumDisplayMode);
           }
+          if (res.globalConfig.stage_photos_enabled !== undefined) {
+            STATE.stagePhotosEnabled = (res.globalConfig.stage_photos_enabled === 'true' || res.globalConfig.stage_photos_enabled === true);
+            localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
+          }
+          if (res.globalConfig.stage_photos_title) {
+            STATE.stagePhotosTitle = res.globalConfig.stage_photos_title;
+            localStorage.setItem('snapevent_stage_photos_title', STATE.stagePhotosTitle);
+          }
+          if (res.globalConfig.stage_photos_link) {
+            STATE.stagePhotosLink = res.globalConfig.stage_photos_link;
+            localStorage.setItem('snapevent_stage_photos_link', STATE.stagePhotosLink);
+          }
           if (res.globalConfig.deleted_photos) {
             try {
               const serverDeleted = JSON.parse(res.globalConfig.deleted_photos);
@@ -2037,6 +2051,18 @@ async function syncEventsFromBackend(showToastNotice = false) {
             localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
           } catch (e) { }
         }
+        if (res.globalConfig.stage_photos_enabled !== undefined) {
+          STATE.stagePhotosEnabled = (res.globalConfig.stage_photos_enabled === 'true' || res.globalConfig.stage_photos_enabled === true);
+          localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
+        }
+        if (res.globalConfig.stage_photos_title) {
+          STATE.stagePhotosTitle = res.globalConfig.stage_photos_title;
+          localStorage.setItem('snapevent_stage_photos_title', STATE.stagePhotosTitle);
+        }
+        if (res.globalConfig.stage_photos_link) {
+          STATE.stagePhotosLink = res.globalConfig.stage_photos_link;
+          localStorage.setItem('snapevent_stage_photos_link', STATE.stagePhotosLink);
+        }
         applyGlobalConfigToUI();
       }
 
@@ -2236,11 +2262,22 @@ async function autoUploadPendingPhotos(pendingList) {
   if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
   for (const photo of pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
-    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue; // KUNCI MUTLAK: Mencegah upload file kembar ke Google Drive!
+    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue;
+
+    // KUNCI ANTI-DUPLIKASI: Jika foto sedang dalam proses upload atau baru dicapture < 60 detik lalu, lewati agar tidak dobel saat pindah app
+    const sessionInflight = sessionStorage.getItem('snapevent_inflight_' + photo.idFoto);
+    const timeSinceStarted = Date.now() - (photo.uploadStartedAt || Number(sessionInflight) || 0);
+    if ((photo.isUploading || sessionInflight) && timeSinceStarted < 60000) {
+      continue;
+    }
+
     IN_FLIGHT_PHOTO_UPLOADS.add(photo.idFoto);
+    sessionStorage.setItem('snapevent_inflight_' + photo.idFoto, String(Date.now()));
+
     try {
       const payload = {
         action: "uploadPhoto",
+        clientPhotoId: photo.idFoto,
         eventId: getResolvedEventId(photo.eventId || STATE.activeEventId),
         guestId: photo.guestId || STATE.guestId,
         guestNama: photo.guestNama || "Tamu",
@@ -2259,6 +2296,7 @@ async function autoUploadPendingPhotos(pendingList) {
         if (res.idFoto) photo.idFoto = res.idFoto;
         if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
         photo.isUploading = false;
+        sessionStorage.removeItem('snapevent_inflight_' + photo.idFoto);
         saveEventPhotos(STATE.activeEventId);
         renderGallery();
       }
@@ -2318,6 +2356,50 @@ function applyGlobalConfigToUI() {
   if (p3El) p3El.value = STATE.podiumTitleP3 || '🥉 Juara 3 (Perunggu)';
   const modeEl = document.getElementById('cfgPodiumDisplayMode');
   if (modeEl) modeEl.value = STATE.podiumDisplayMode || 'all';
+
+  // Sinkronisasi Menu & Pengaturan Foto Panggung (Stage Photos)
+  const stageEnabled = Boolean(STATE.stagePhotosEnabled);
+  const stageTitle = STATE.stagePhotosTitle || 'Foto Panggung';
+  const stageLink = STATE.stagePhotosLink || '';
+
+  const navBtnStage = document.getElementById('navBtnStagePhotos');
+  if (navBtnStage) {
+    if (stageEnabled) navBtnStage.classList.remove('hidden');
+    else navBtnStage.classList.add('hidden');
+  }
+  const navLabel = document.getElementById('navStagePhotosLabel');
+  if (navLabel) navLabel.textContent = stageTitle;
+
+  const bannerStage = document.getElementById('galleryStagePhotosBanner');
+  if (bannerStage) {
+    if (stageEnabled) {
+      bannerStage.classList.remove('hidden');
+      const bTitle = document.getElementById('stagePhotosBannerTitle');
+      if (bTitle) bTitle.textContent = stageTitle;
+    } else {
+      bannerStage.classList.add('hidden');
+    }
+  }
+
+  const spTitleEl = document.getElementById('stagePhotosViewTitle');
+  if (spTitleEl) spTitleEl.textContent = stageTitle;
+
+  const spDriveLink = document.getElementById('btnStagePhotosDriveLink');
+  if (spDriveLink) {
+    if (stageLink) {
+      spDriveLink.href = stageLink;
+      spDriveLink.classList.remove('hidden');
+    } else {
+      spDriveLink.classList.add('hidden');
+    }
+  }
+
+  const cfgEnabled = document.getElementById('cfgStagePhotosEnabled');
+  if (cfgEnabled) cfgEnabled.checked = stageEnabled;
+  const cfgTitle = document.getElementById('cfgStagePhotosTitle');
+  if (cfgTitle) cfgTitle.value = stageTitle;
+  const cfgLink = document.getElementById('cfgStagePhotosLink');
+  if (cfgLink) cfgLink.value = stageLink;
 }
 
 function applyEventToUI() {
@@ -2426,6 +2508,120 @@ function applyEventToUI() {
   updateGuestIdentityUI();
 }
 
+// --- 3B. STAGE PHOTOS (FOTO PANGGUNG) GALLERY & LIGHTBOX ---
+let STAGE_PHOTOS_DATA = [];
+let IS_LOADING_STAGE_PHOTOS = false;
+
+async function loadStagePhotos(forceRefresh = false) {
+  const grid = document.getElementById('stagePhotosGrid');
+  const loading = document.getElementById('stagePhotosLoading');
+  const empty = document.getElementById('stagePhotosEmpty');
+
+  const stageLink = STATE.stagePhotosLink || localStorage.getItem('snapevent_stage_photos_link');
+  const driveBtn = document.getElementById('btnStagePhotosDriveLink');
+  if (driveBtn) {
+    if (stageLink) {
+      driveBtn.href = stageLink;
+      driveBtn.classList.remove('hidden');
+    } else {
+      driveBtn.classList.add('hidden');
+    }
+  }
+
+  if (!stageLink) {
+    if (loading) loading.classList.add('hidden');
+    if (grid) grid.innerHTML = '';
+    if (empty) {
+      empty.classList.remove('hidden');
+      const emptyDesc = empty.querySelector('p');
+      if (emptyDesc) emptyDesc.textContent = 'Tautan Google Drive belum diatur oleh admin di Pengaturan Global.';
+    }
+    return;
+  }
+
+  if (STAGE_PHOTOS_DATA.length > 0 && !forceRefresh) {
+    renderStagePhotos(STAGE_PHOTOS_DATA);
+    return;
+  }
+
+  if (IS_LOADING_STAGE_PHOTOS) return;
+  IS_LOADING_STAGE_PHOTOS = true;
+
+  if (loading) loading.classList.remove('hidden');
+  if (empty) empty.classList.add('hidden');
+
+  try {
+    const res = await callGasApiSafe('getStagePhotos', { driveFolderUrl: stageLink });
+    if (res && res.status === 'success' && Array.isArray(res.photos) && res.photos.length > 0) {
+      STAGE_PHOTOS_DATA = res.photos;
+      renderStagePhotos(res.photos);
+    } else {
+      STAGE_PHOTOS_DATA = [];
+      if (grid) grid.innerHTML = '';
+      if (empty) {
+        empty.classList.remove('hidden');
+        const emptyDesc = empty.querySelector('p');
+        if (emptyDesc) emptyDesc.textContent = res?.message || 'Belum ada foto yang diunggah ke folder Google Drive ini.';
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal memuat Foto Panggung:', err);
+    if (STAGE_PHOTOS_DATA.length > 0) {
+      renderStagePhotos(STAGE_PHOTOS_DATA);
+    } else {
+      if (empty) empty.classList.remove('hidden');
+    }
+  } finally {
+    IS_LOADING_STAGE_PHOTOS = false;
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+function renderStagePhotos(photos) {
+  const grid = document.getElementById('stagePhotosGrid');
+  const empty = document.getElementById('stagePhotosEmpty');
+  if (!grid) return;
+
+  if (!photos || photos.length === 0) {
+    grid.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+
+  if (empty) empty.classList.add('hidden');
+  grid.innerHTML = photos.map(photo => `
+    <div class="stage-photo-card group relative aspect-[4/5] rounded-xl overflow-hidden bg-zinc-900 border border-white/10 hover:border-brand-gold/60 transition cursor-pointer shadow-lg" data-url="${photo.viewUrl || photo.thumbnailUrl}" data-name="${photo.name || 'Foto Panggung'}">
+      <img src="${photo.thumbnailUrl || photo.viewUrl}" alt="${photo.name || 'Foto Panggung'}" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+      <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2.5">
+        <span class="text-[11px] font-medium text-white truncate drop-shadow">${photo.name || 'Foto Panggung'}</span>
+      </div>
+      <div class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full p-1.5 text-zinc-300 group-hover:text-brand-gold transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
+      </div>
+    </div>
+  `).join('');
+
+  grid.querySelectorAll('.stage-photo-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const url = card.getAttribute('data-url');
+      const name = card.getAttribute('data-name');
+      openStagePhotoZoom(url, name);
+    });
+  });
+}
+
+function openStagePhotoZoom(url, name) {
+  const modal = document.getElementById('modalStagePhotoZoom');
+  const img = document.getElementById('stagePhotoZoomImg');
+  const nameEl = document.getElementById('stagePhotoZoomName');
+  const dlBtn = document.getElementById('btnDownloadStagePhotoZoom');
+
+  if (img) img.src = url;
+  if (nameEl) nameEl.textContent = name || 'Foto Panggung';
+  if (dlBtn) dlBtn.href = url;
+  if (modal) modal.classList.remove('hidden');
+}
+
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
   const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
@@ -2446,7 +2642,7 @@ function showView(viewId) {
   }
 
   // Hide all views first with both class and explicit style.display
-  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
+  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewStagePhotos', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.classList.add('hidden');
@@ -2512,6 +2708,10 @@ function showView(viewId) {
       document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
       renderGallery();
       loadGallery();
+    } else if (viewId === 'viewStagePhotos') {
+      document.getElementById('navBtnStagePhotos')?.classList.add('text-brand-gold');
+      document.getElementById('navBtnStagePhotos')?.classList.remove('text-zinc-400');
+      loadStagePhotos();
     } else if (viewId === 'viewWelcome') {
       document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
       document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
@@ -2570,8 +2770,14 @@ function applyActiveFrame(frameId) {
 
   const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT' || String(selected.id).indexOf('frame_') === 0 || String(selected.id).indexOf('FRAME_') === 0 || customUrl));
 
+  const vfContainer = document.getElementById('viewfinderFrameContainer');
   if (isCustomFrame && customUrl) {
     if (customImgEl) {
+      customImgEl.onload = () => {
+        if (vfContainer && customImgEl.naturalWidth && customImgEl.naturalHeight) {
+          vfContainer.style.aspectRatio = `${customImgEl.naturalWidth} / ${customImgEl.naturalHeight}`;
+        }
+      };
       customImgEl.onerror = () => {
         if (customUrl && customUrl.includes('googleusercontent.com/d/')) {
           const fileId = customUrl.split('/d/')[1];
@@ -2588,10 +2794,16 @@ function applyActiveFrame(frameId) {
       builtInOverlayEl.classList.add('hidden'); // Sembunyikan overlay teks built-in sepenuhnya saat custom PNG aktif
     }
     preloadFrameImage(customUrl).then(img => {
-      if (img) STATE.customFrameImgObj = img;
+      if (img) {
+        STATE.customFrameImgObj = img;
+        if (vfContainer && img.naturalWidth && img.naturalHeight) {
+          vfContainer.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        }
+      }
     });
   } else {
     STATE.customFrameImgObj = null;
+    if (vfContainer) vfContainer.style.aspectRatio = '4 / 5';
     if (customImgEl) customImgEl.classList.add('hidden');
     if (builtInOverlayEl) {
       if (selected && selected.id === 'NONE') {
@@ -2893,9 +3105,36 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
   STATE.rawCapturedImageObj = imgSource;
 
-  // Aspect ratio 4:5 Portrait Standard FHD (1080 x 1350)
-  canvas.width = 1080;
-  canvas.height = 1350;
+  // JANGAN DI UBAH UKURAN FRAMENYA: Ambil resolusi asli bingkai kustom jika sedang aktif
+  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
+  }
+  STATE.activeFrame = frameToUse;
+
+  let customFrameImg = null;
+  const avail = getAvailableFrames();
+  const customObj = avail.find(f => f.id === frameToUse && (f.type === 'custom' || f.dataUrl)) ||
+    (Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameToUse) : null);
+  let customDataUrl = customObj ? customObj.dataUrl : null;
+  if (!customDataUrl && (frameToUse !== 'GOLD_DECO' && frameToUse !== 'POLAROID' && frameToUse !== 'MINIMAL' && frameToUse !== 'NONE')) {
+    customDataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+  }
+  if (customDataUrl) {
+    customFrameImg = await preloadFrameImage(customDataUrl);
+  }
+  if (!customFrameImg && STATE.customFrameImgObj) {
+    customFrameImg = STATE.customFrameImgObj;
+  }
+
+  if (customFrameImg && customFrameImg.naturalWidth && customFrameImg.naturalHeight) {
+    canvas.width = customFrameImg.naturalWidth;
+    canvas.height = customFrameImg.naturalHeight;
+  } else {
+    // Aspect ratio 4:5 Portrait Standard FHD (1080 x 1350)
+    canvas.width = 1080;
+    canvas.height = 1350;
+  }
 
   // Optimasi Rendering HD: Smoothing Tajam & Berkualitas Tinggi
   ctx.imageSmoothingEnabled = true;
@@ -2905,8 +3144,8 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const isLiveVideo = (imgSource && imgSource.tagName === 'VIDEO') || (imgSource === document.getElementById('cameraVideo'));
   const zoomFactor = (isLiveVideo && (STATE.cameraZoom || 1.0) > 1.0) ? STATE.cameraZoom : 1.0;
 
-  const rawW = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
-  const rawH = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
+  const rawW = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || canvas.width;
+  const rawH = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || canvas.height;
 
   const cropW = rawW / zoomFactor;
   const cropH = rawH / zoomFactor;
@@ -3292,8 +3531,11 @@ async function handleSavePhotoToDrive() {
       categoryLikes: {},
       isFeatured: false,
       isUploading: true,
+      uploadStartedAt: Date.now(),
       createdAt: "Baru Saja"
     };
+
+    sessionStorage.setItem('snapevent_inflight_' + tempPhotoId, String(Date.now()));
 
     STATE.photos = [tempLocalPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
     saveEventPhotos(targetEventId);
@@ -3312,6 +3554,7 @@ async function handleSavePhotoToDrive() {
     // 4. JALANKAN PROSES UPLOAD DI LATAR BELAKANG DENGAN KUNCI ANTI-DUPLIKASI
     uploadPhotoInBackground({
       action: "uploadPhoto",
+      clientPhotoId: tempPhotoId,
       eventId: targetEventId,
       guestId: STATE.guestId,
       guestNama: STATE.guestNama || "Tamu",
@@ -3364,6 +3607,7 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
         createdAt: "Baru Saja"
       };
 
+      sessionStorage.removeItem('snapevent_inflight_' + tempPhotoId);
       const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
       if (idx !== -1) {
         STATE.photos[idx] = cloudPhoto;
@@ -4708,15 +4952,17 @@ function renderAdminFrameSettings(eventObj) {
   const currentEvId = eventObj ? getResolvedEventId(eventObj.idEvent) : getResolvedEventId(STATE.activeEventId);
 
   const isCustomMatch = (id, f) => {
-    if (!f) return false;
+    if (!f || !id) return false;
     if (f.id === id) return true;
-    const isCustomId = (id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).startsWith('frame_') || String(id).startsWith('FRAME_'));
-    const isEvCustom = (f.type === 'custom' || f.id === 'CUSTOM_EVENT' || String(f.id).startsWith('frame_') || String(f.id).startsWith('FRAME_') || (eventCustomData && f.dataUrl === eventCustomData));
-    if (isCustomId && isEvCustom) {
-      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') return true;
+    if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
       if (f.id === 'CUSTOM_EVENT') return true;
       if (f.scope === 'event' && (!f.eventId || getResolvedEventId(f.eventId) === currentEvId)) return true;
       if (eventCustomData && f.dataUrl === eventCustomData) return true;
+      return false;
+    }
+    if (f.id === 'CUSTOM_EVENT') {
+      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') return true;
+      return false;
     }
     return false;
   };
@@ -4763,7 +5009,7 @@ function renderAdminFrameSettings(eventObj) {
   if (container) {
     container.innerHTML = '';
     sortedFrames.forEach((frame) => {
-      const isChecked = activeOrder.some(a => isCustomMatch(a, frame)) || (!eventObj && frame.id !== 'NONE');
+      const isChecked = activeOrder.includes(frame.id) || activeOrder.some(a => isCustomMatch(a, frame)) || (!eventObj && frame.id !== 'NONE');
       const row = document.createElement('div');
       row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
       row.setAttribute('draggable', 'true');
@@ -4860,9 +5106,21 @@ function syncFrameSettingsFromDOM() {
     }
   }
 
-  // Sinkronkan daftar visual single lock
+  // Sinkronkan daftar visual single lock & update activeFrames
   const targetEventId = document.getElementById('formEventId')?.value;
   const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+  if (currentEv) {
+    const checkedFrames = [];
+    document.querySelectorAll('#adminFrameSortableList .frame-sortable-item').forEach(item => {
+      const chk = item.querySelector('.adm-frame-check');
+      if (chk && chk.checked) {
+        checkedFrames.push(chk.value);
+      }
+    });
+    if (checkedFrames.length > 0) {
+      currentEv.activeFrames = checkedFrames;
+    }
+  }
   const candidateFrames = getAllAdminCandidateFrames(currentEv);
   const currentLocked = singleSelect?.value || 'GOLD_DECO';
   renderSingleLockCustomFrameList(candidateFrames, currentLocked);
@@ -6719,6 +6977,19 @@ function bindEvents() {
     const podiumP3 = document.getElementById('cfgPodiumTitleP3')?.value.trim() || '🥉 Juara 3 (Perunggu)';
     const podiumMode = document.getElementById('cfgPodiumDisplayMode')?.value || 'all';
 
+    // Pengaturan Foto Panggung (Stage Photos)
+    const stagePhotosEnabled = document.getElementById('cfgStagePhotosEnabled')?.checked ? 'true' : 'false';
+    const stagePhotosTitle = document.getElementById('cfgStagePhotosTitle')?.value.trim() || 'Foto Panggung';
+    const stagePhotosLink = document.getElementById('cfgStagePhotosLink')?.value.trim() || '';
+
+    STATE.stagePhotosEnabled = (stagePhotosEnabled === 'true');
+    STATE.stagePhotosTitle = stagePhotosTitle;
+    STATE.stagePhotosLink = stagePhotosLink;
+
+    localStorage.setItem('snapevent_stage_photos_enabled', stagePhotosEnabled);
+    localStorage.setItem('snapevent_stage_photos_title', stagePhotosTitle);
+    localStorage.setItem('snapevent_stage_photos_link', stagePhotosLink);
+
     STATE.gasApiUrl = url;
     STATE.appTitle = appTitle;
     STATE.appLogoUrl = appLogoUrl;
@@ -6763,6 +7034,9 @@ function bindEvents() {
         podium_title_p2: podiumP2,
         podium_title_p3: podiumP3,
         podium_display_mode: podiumMode,
+        stage_photos_enabled: stagePhotosEnabled,
+        stage_photos_title: stagePhotosTitle,
+        stage_photos_link: stagePhotosLink,
         gas_webapp_url: url,
         user_accounts: JSON.stringify(STATE.userAccounts)
       };
@@ -6793,6 +7067,64 @@ function bindEvents() {
   });
 
   // Tombol Hapus Cache Offline & Sinkronkan Ulang (Admin)
+  // Listener Menu & Modal Foto Panggung (Stage Photos)
+  document.getElementById('navBtnStagePhotos')?.addEventListener('click', () => showView('viewStagePhotos'));
+  document.getElementById('galleryStagePhotosBanner')?.addEventListener('click', () => showView('viewStagePhotos'));
+  document.getElementById('btnRefreshStagePhotos')?.addEventListener('click', () => loadStagePhotos(true));
+  document.getElementById('btnCloseStageZoom')?.addEventListener('click', () => {
+    document.getElementById('modalStagePhotoZoom')?.classList.add('hidden');
+  });
+
+  // Tombol Uji Tautan Foto Panggung di Admin Pengaturan Global
+  document.getElementById('btnTestStagePhotos')?.addEventListener('click', async () => {
+    const link = document.getElementById('cfgStagePhotosLink')?.value.trim() || STATE.stagePhotosLink;
+    const resEl = document.getElementById('txtStagePhotosTestResult');
+    if (!link) {
+      if (resEl) {
+        resEl.textContent = '⚠️ Masukkan link folder Google Drive terlebih dahulu!';
+        resEl.className = 'text-xs text-amber-400 font-medium';
+        resEl.classList.remove('hidden');
+      }
+      return;
+    }
+    if (resEl) {
+      resEl.textContent = '⏳ Menguji tautan Google Drive...';
+      resEl.className = 'text-xs text-zinc-400 font-medium';
+      resEl.classList.remove('hidden');
+    }
+    try {
+      const resp = await callGasApiSafe('getStagePhotos', { driveFolderUrl: link });
+      if (resp && resp.status === 'success') {
+        const count = Array.isArray(resp.photos) ? resp.photos.length : 0;
+        if (resEl) {
+          resEl.textContent = `✅ Berhasil! Terhubung ke Google Drive. Ditemukan ${count} foto.`;
+          resEl.className = 'text-xs text-emerald-400 font-medium';
+        }
+      } else {
+        if (resEl) {
+          resEl.textContent = `⚠️ Respon server: ${resp?.message || 'Folder kosong atau belum dibagikan secara publik (Anyone with the link can view)'}`;
+          resEl.className = 'text-xs text-amber-400 font-medium';
+        }
+      }
+    } catch (e) {
+      if (resEl) {
+        resEl.textContent = `❌ Gagal menghubungi server: ${e.message}`;
+        resEl.className = 'text-xs text-rose-400 font-medium';
+      }
+    }
+  });
+
+  // Listener Salin Link QR di Halaman Sambutan
+  document.getElementById('btnWelcomeCopyLink')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
+    } catch (e) {
+      prompt("Salin link acara ini:", shareUrl);
+    }
+  });
+
   document.getElementById('btnAdminPurgeOfflineCache')?.addEventListener('click', async () => {
     const targetId = getResolvedEventId(STATE.activeEventId);
     localStorage.removeItem('snapevent_photos_' + targetId);

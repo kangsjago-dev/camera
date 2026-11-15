@@ -301,6 +301,10 @@ function doGet(e) {
       return createJsonResponse(handleCleanDeletedPhotos(eventId));
     }
 
+    if (action === "getStagePhotos") {
+      return createJsonResponse(handleGetStagePhotos(params));
+    }
+
     if (action === "adminDeletePhoto") {
       return createJsonResponse(handleAdminDeletePhoto(params));
     }
@@ -425,6 +429,10 @@ function doPost(e) {
       return createJsonResponse(handleAdminDeleteEvent(payload));
     }
 
+    if (action === "getStagePhotos") {
+      return createJsonResponse(handleGetStagePhotos(payload));
+    }
+
     return createJsonResponse({
       status: "error",
       message: "Action POST '" + action + "' tidak dikenali."
@@ -467,10 +475,7 @@ function handleGetAllEvents() {
           fList = Array.isArray(rawFrames.frames) ? rawFrames.frames : [fLocked];
         } else if (Array.isArray(rawFrames)) {
           fList = rawFrames;
-          if (rawFrames.length === 1) {
-            fMode = "single";
-            fLocked = rawFrames[0];
-          }
+          fLocked = rawFrames[0] || "GOLD_DECO";
         }
 
         const revFlag = String(r[COL_EVENT.IS_REVEALED] || "").trim().toUpperCase();
@@ -588,10 +593,7 @@ function handleGetEventDetails(eventId, guestId) {
     fList = Array.isArray(rawFrames.frames) ? rawFrames.frames : [fLocked];
   } else if (Array.isArray(rawFrames)) {
     fList = rawFrames;
-    if (rawFrames.length === 1) {
-      fMode = "single";
-      fLocked = rawFrames[0];
-    }
+    fLocked = rawFrames[0] || "GOLD_DECO";
   }
 
   const revFlag = String(r[COL_EVENT.IS_REVEALED] || "").trim().toUpperCase();
@@ -1172,8 +1174,17 @@ function handleUploadPhoto(payload) {
     }
 
     // Anti-Duplicate Idempotency Cache: Mencegah upload file kembar dari retry / auto-sync bersamaan
+    const clientPhotoId = payload.clientPhotoId ? String(payload.clientPhotoId).trim() : "";
     const imgFingerprint = "UPL_" + canonicalEventId + "_" + guestId + "_" + pureBase64.length + "_" + pureBase64.substring(0, 32);
     const cache = CacheService.getScriptCache();
+    if (clientPhotoId) {
+      const cachedByClientId = cache.get("CLIENT_UPL_" + clientPhotoId);
+      if (cachedByClientId) {
+        try {
+          return JSON.parse(cachedByClientId);
+        } catch(e) {}
+      }
+    }
     const cachedResponse = cache.get(imgFingerprint);
     if (cachedResponse) {
       try {
@@ -1302,7 +1313,10 @@ function handleUploadPhoto(payload) {
     };
 
     try {
-      cache.put(imgFingerprint, JSON.stringify(resultSuccess), 180);
+      cache.put(imgFingerprint, JSON.stringify(resultSuccess), 300);
+      if (clientPhotoId) {
+        cache.put("CLIENT_UPL_" + clientPhotoId, JSON.stringify(resultSuccess), 600);
+      }
     } catch(eCache) {}
 
     return resultSuccess;
@@ -2110,5 +2124,76 @@ function handleAdminDeleteEvent(payload) {
     }
   } finally {
     lock.releaseLock();
+  }
+}
+
+/**
+ * AMBIL DAFTAR FOTO PANGGUNG DARI FOLDER GOOGLE DRIVE
+ */
+function handleGetStagePhotos(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+  let stageLink = (payload && (payload.folderUrl || payload.folderId || payload.link)) || "";
+  let stageTitle = (payload && payload.title) || "Foto Panggung";
+  let stageEnabled = true;
+
+  if (configSheet && configSheet.getLastRow() > 1) {
+    const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
+    cRows.forEach(function(cr) {
+      if (cr[0] === "stage_photos_link" && !stageLink) stageLink = cr[1];
+      if (cr[0] === "stage_photos_title") stageTitle = cr[1] || stageTitle;
+      if (cr[0] === "stage_photos_enabled") stageEnabled = (cr[1] === "true" || cr[1] === true || cr[1] === "TRUE");
+    });
+  }
+
+  const folderId = extractDriveFolderId(stageLink);
+  if (!folderId) {
+    return {
+      status: "error",
+      message: "Folder ID Google Drive untuk Foto Panggung tidak ditemukan.",
+      enabled: stageEnabled,
+      title: stageTitle,
+      photos: []
+    };
+  }
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const filesIter = folder.getFiles();
+    const photos = [];
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+
+    while (filesIter.hasNext() && photos.length < 150) {
+      const f = filesIter.next();
+      if (f.isTrashed()) continue;
+      const fName = f.getName();
+      const lower = fName.toLowerCase();
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp') || fName.indexOf('FTO-') === 0) {
+        photos.push({
+          id: f.getId(),
+          name: fName,
+          url: "https://lh3.googleusercontent.com/d/" + f.getId(),
+          viewUrl: f.getUrl(),
+          createdAt: Utilities.formatDate(f.getDateCreated(), timeZone, "dd MMM yyyy HH:mm")
+        });
+      }
+    }
+
+    return {
+      status: "success",
+      enabled: stageEnabled,
+      title: stageTitle,
+      photos: photos,
+      folderUrl: folder.getUrl(),
+      totalPhotos: photos.length
+    };
+  } catch (e) {
+    return {
+      status: "error",
+      message: "Gagal membaca folder Google Drive: " + e.message,
+      enabled: stageEnabled,
+      title: stageTitle,
+      photos: []
+    };
   }
 }
