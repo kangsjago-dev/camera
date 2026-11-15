@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.2.5" defer></script>
+  <script src="app.js?v=2.2.6" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -638,8 +638,8 @@
 
             <!-- Upload Custom Frame Acara (PNG Transparan - Multi Frame & Scope) -->
             <div class="border border-white/10 rounded-xl p-3.5 bg-black/20">
-              <label class="block text-xs font-semibold text-zinc-200 mb-1">Unggah Bingkai Kustom (Custom Frame PNG)</label>
-              <p class="text-[11px] text-zinc-400 mb-2.5">Unggah bingkai berformat PNG transparan (4:5) dengan bagian tengah tembus pandang.</p>
+              <label class="block text-xs font-semibold text-zinc-200 mb-1">Target Bingkai Kustom (Link URL PNG Transparan)</label>
+              <p class="text-[11px] text-zinc-400 mb-2.5">Masukkan link URL target bingkai berformat PNG transparan (rasio 4:5) dari Google Drive atau link web langsung.</p>
               
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2.5">
                 <div>
@@ -655,16 +655,23 @@
                 </div>
               </div>
 
-              <div class="flex items-center gap-2">
-                <input type="file" id="formEventCustomFrame" accept="image/png" class="text-xs text-zinc-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-gold file:text-black hover:file:brightness-110 cursor-pointer" />
-                <button type="button" id="btnRemoveCustomFrame" class="hidden text-xs text-red-400 hover:underline">Hapus</button>
+              <!-- Input Link Target Bingkai (Menggantikan Upload File) -->
+              <div class="space-y-1 mb-2.5">
+                <label class="block text-[10px] font-semibold text-zinc-400">Link URL Target Bingkai (Google Drive / Direct PNG)</label>
+                <div class="flex items-center gap-2">
+                  <div class="relative flex-1">
+                    <input type="url" id="formEventCustomFrameUrl" placeholder="https://drive.google.com/file/d/... atau https://.../bingkai.png" class="w-full bg-[#111116] border border-white/10 rounded-xl pl-3 pr-9 py-2 text-xs text-white focus:border-brand-gold outline-none font-mono placeholder:font-sans placeholder:text-zinc-500" />
+                    <button type="button" id="btnTestFrameUrl" class="absolute right-2 top-1/2 -translate-y-1/2 text-brand-gold hover:text-white text-xs font-bold px-1 py-0.5" title="Cek & Muat Bingkai">➔</button>
+                  </div>
+                  <button type="button" id="btnRemoveCustomFrame" class="hidden text-xs text-rose-400 hover:text-rose-300 font-semibold px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg border border-rose-500/20 transition">Hapus</button>
+                </div>
               </div>
 
-              <div id="customFramePreviewBox" class="hidden mt-2 p-2 bg-[#111116] rounded-xl border border-white/10 flex items-center gap-3">
+              <div id="customFramePreviewBox" class="hidden mt-2 p-2.5 bg-[#111116] rounded-xl border border-emerald-500/30 flex items-center gap-3">
                 <img id="customFramePreviewImg" src="" class="w-12 h-16 object-contain border border-white/20 rounded bg-zinc-900" alt="Preview Bingkai" />
                 <div class="text-[11px] text-zinc-300">
                   <span class="font-bold text-emerald-400">✓ Bingkai Siap Disimpan</span>
-                  <div class="text-zinc-400 text-[10px]">Akan langsung aktif di live camera & review</div>
+                  <div class="text-zinc-400 text-[10px]">Akan langsung aktif di live camera & review seluruh tamu</div>
                 </div>
               </div>
 

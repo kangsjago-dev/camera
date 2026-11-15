@@ -1,74 +1,42 @@
 # LOG REVISI & STATUS PERBAIKAN SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: RENCANA IMPLEMENTASI (v2.2.5) - 100% ONLINE CLOUD SYNC & ISOLASI KATEGORI
+STATUS: SELESAI DITERAPKAN (VERSION 2.2.6)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 15 November 2026
 ================================================================================
 
-## 1. AKAR MASALAH (ROOT CAUSE) PADA KELUHAN TERBARU
+## 1. RINGKASAN IMPLEMENTASI V2.2.6
 
-### A. Foto yang Disembunyikan & Ditampilkan Kembali Tidak Berubah di Device Lain:
-- **Penyebab Utama 1:** Di `app.js` fungsi `loadEventData()` (baris 1664–1668):
-  ```javascript
-  const serverHidden = JSON.parse(res.globalConfig.hidden_photos);
-  if (Array.isArray(serverHidden) && serverHidden.length > 0) {
-    const localHidden = JSON.parse(localStorage.getItem('snapevent_hidden_photos') || '[]');
-    const merged = Array.from(new Set([...localHidden, ...serverHidden]));
-    localStorage.setItem('snapevent_hidden_photos', JSON.stringify(merged));
-  }
-  ```
-  Ketika Admin di Device 1 **menampilkan kembali (unhide)** sebuah foto, server Google Sheets mengosongkan/menghapus ID foto tersebut dari `hidden_photos` (menjadi `[]` atau daftar tanpa ID foto tersebut). Namun saat Device 2 menyinkronkan data:
-  1. Jika `serverHidden` menjadi kosong (`[]`), kondisi `serverHidden.length > 0` menjadi `false`, sehingga pembaruan dilewati sama sekali.
-  2. Sekalipun dieksekusi, `merged = Array.from(new Set([...localHidden, ...serverHidden]))` tetap mempertahankan ID foto lama yang ada di `localHidden` Device 2, sehingga foto tersebut **tidak pernah bisa muncul kembali di Device 2**.
-- **Penyebab Utama 2:** Panggilan backend `callGasApiSafe('adminTogglePhotoVisibility', ...)` mengembalikan pesan error: `"Action POST 'adminTogglePhotoVisibility' tidak dikenali"` karena action tersebut tidak ada di build GAS backend yang telah dideploy.
+### A. Penggantian Upload File Bingkai Menjadi Input Link Target Bingkai:
+1. **Komponen UI di `index.html`:**
+   - Komponen `<input type="file" id="formEventCustomFrame">` telah sepenuhnya digantikan oleh:
+     `<input type="url" id="formEventCustomFrameUrl" placeholder="https://drive.google.com/file/d/... atau https://.../bingkai.png" ...>`
+   - Dilengkapi tombol cepat uji link `➔` (`#btnTestFrameUrl`) dan tombol `Hapus` (`#btnRemoveCustomFrame`).
+   - Kotak pratinjau `#customFramePreviewBox` langsung memverifikasi dan menampilkan gambar dari URL.
+2. **Normalisasi Cerdas URL Google Drive (`normalizeFrameTargetUrl`):**
+   - Mendukung input link Google Drive publik (`/file/d/ID`, `?id=ID`, `open?id=ID`, `uc?id=ID`).
+   - Otomatis mengubah link Google Drive menjadi direct image CDN URL berkecepatan tinggi:
+     `https://lh3.googleusercontent.com/d/{ID}`
+   - Mendukung link direct PNG/WebP dari server hosting eksternal.
+   - Kebal terhadap batas 50.000 karakter Google Sheets (ukuran link hanya ~100 karakter).
 
-### B. Kategori Foto Masih Belum Berubah di Device Lain:
-- **Penyebab Utama 1:** Di `renderGallery()` (baris 3564–3570):
-  Ketika pengguna mengklik salah satu tombol kategori (misal `👑 Best Dressed Guest`), jika belum ada foto yang terpetakan ke kategori tersebut, kode memiliki fallback:
-  `filtered = [...allEligiblePhotos];`
-  Akibatnya, saat pengguna mengklik tombol kategori manapun, seluruh foto galeri tetap tampil utuh (sehingga di mata pengguna, filter kategori "tidak mau berubah").
-- **Penyebab Utama 2:** Deployed Google Apps Script `getGallery` hanya mengembalikan `idFoto`, `guestNama`, dan `totalLikes`, tanpa menyertakan `idKategori` atau `categoryLikes` rincian per kategori. Akibatnya, pemetaan kategori sebelumnya hanya dibuat acak secara lokal per perangkat lewat fungsi hash pseudo-random (baris 2049 & 3515), yang menghasilkan kategori acak yang saling bertentangan antar perangkat.
-- **Penyebab Utama 3:** Pilihan suara per kategori saat tamu melakukan voting (`handleVotePhoto`) belum disimpan secara online ke cloud config, sehingga Device 2 tidak mengetahui foto mana yang mendapatkan suara di kategori apa.
+### B. Sinkronisasi Online 100% Seluruh Perintah & Konfigurasi ke Google Sheets:
+1. **Bingkai Kustom Tersimpan Online:**
+   - Saat admin menyimpan acara (`formSaveEvent`), sistem menyimpan:
+     * `event_custom_frame_${idEvent}`: Link target URL bingkai acara.
+     * `global_custom_frames`: Seluruh koleksi bingkai kustom lintas acara via `adminUpdateGlobalConfig`.
+   - Di perangkat lain, `loadEventData()` membaca `global_custom_frames` dan `event_custom_frame_${idEvent}` langsung dari sheet `Pengaturan` (`res.globalConfig`).
+2. **Kategori Poling & Penghapusan Kategori Tersinkron Online:**
+   - Penghapusan kategori via tombol `✕` (`recordDeletedCategory`) langsung disinkronkan ke server cloud melalui `deleted_categories_${idEvent}` di `globalConfig`.
+   - Kategori yang sudah dihapus tidak akan muncul kembali saat halaman direfresh atau dibuka di HP lain.
+3. **Penyimpanan Tanggal Acara:**
+   - Proteksi anti-reset tanggal acara: jika tanggal acara sudah lewat atau input tidak diubah, tanggal resmi yang sudah ada tetap dipertahankan.
+   - Validasi format RFC 3339 (`YYYY-MM-DD`) memastikan input tanggal tidak pernah kosong (`mm/dd/yyyy`).
 
-### C. Semua Perintah Masih Disimpan di Local:
-- **Penyebab:** Tindakan seperti hide/unhide foto, pemetaan kategori foto, dan filter kategori sebelumnya mengandalkan `localStorage` lokal tanpa sinkronisasi cloud terpusat.
-- **Solusi:** Seluruh status visibilitas (`hidden_photos`), penghapusan foto (`deleted_photos`), kategori per event (`event_categories_${idEvent}`), pemetaan suara foto per kategori (`event_photo_category_votes_${idEvent}`), dan pengaturan bingkai (`event_frame_settings_${idEvent}`) dialihkan 100% menggunakan `adminUpdateGlobalConfig` di sheet `Pengaturan` Google Sheets sebagai **Single Source of Truth** mutlak.
+### C. Jaminan Nol Regresi (Zero Regression):
+- Live camera stream, switch front/back camera, slider zoom 1x-3x tetap berjalan normal.
+- Fitur watermark Canvas saat foto diambil tetap menggunakan gambar dari link target bingkai.
+- Galeri, kuota foto tamu, kuota voting 2x per tamu, dan podium pemenang tetap aktif 100%.
 
----
-
-## 2. RENCANA PERBAIKAN TEKNIS (SURGICAL IMPLEMENTATION PLAN)
-
-### 1. Sinkronisasi Online Penuh Visibilitas Foto (Hide & Unhide):
-- **Otoritas Cloud Mutlak (Overwrite):** Di `loadEventData()` dan `loadGallery()`, saat `res.globalConfig.hidden_photos` diterima:
-  Langsung timpa `localStorage.setItem('snapevent_hidden_photos', JSON.stringify(serverHidden))` (dan cache event terkait) tanpa penggabungan (`merge`) dengan cache lokal lama.
-- **Registry Single-Source:** `getHiddenPhotosSet()` hanya membaca `snapevent_hidden_photos` yang telah tersinkronkan dari server cloud.
-- **Toggle Online Tanpa Error GAS:** Pada `adminTogglePhotoVisibility(idFoto)`:
-  Hapus pemanggilan POST action `adminTogglePhotoVisibility` yang tidak dikenali GAS.
-  Gunakan `callGasApiSafe('adminUpdateGlobalConfig', { updates: { hidden_photos: JSON.stringify(globalHidden) } })` yang terbukti 100% didukung backend dan langsung tersimpan di sheet `Pengaturan`.
-
-### 2. Sinkronisasi Online Pemetaan Suara Foto per Kategori & Filter Presisi Galeri:
-- **Cloud Vote Mapping:** Pada saat tamu memberikan voting (`handleVotePhoto`):
-  Simpan peta suara foto-kategori ke `event_photo_category_votes_${targetId}` di Google Sheets via `adminUpdateGlobalConfig`.
-- **Konsumsi Cloud Mapping:** Pada `loadGallery()` dan `loadEventData()`, baca `res.globalConfig[`event_photo_category_votes_${targetId}`]` dan sematkan `p.categoryLikes`, `p.idKategori`, dan `p.namaKategori` ke masing-masing objek foto.
-- **Isolasi Filter Galeri (Tanpa Fallback Semua Foto):**
-  Di `renderGallery()`:
-  Jika pengguna memilih filter kategori (misal: `👑 Best Dressed Guest`), hanya tampilkan foto yang memiliki suara di kategori tersebut.
-  Jika belum ada foto di kategori tersebut, tampilkan pemberitahuan elegan:
-  `Belum ada foto yang mendapatkan suara di kategori "${namaKategori}". Jadilah yang pertama memberikan suara!`
-  disertai tombol `[Lihat Semua Foto]` yang mengembalikan filter ke "Semua Foto".
-- **Badge Kategori pada Kartu Galeri:**
-  Sematkan badge elegan pada setiap kartu foto yang telah mendapatkan suara kategori (`👑 Nama Kategori`) agar pengguna dapat melihat dengan jelas kategori dari setiap foto.
-
-### 3. Perlindungan Fitur Berjalan (Zero Regression):
-- Pertahankan fungsi kamera live stream HP dengan switch depan/belakang dan zoom 1x-3x.
-- Pertahankan aturan kuota voting tamu (2x per tamu), pencegahan voting ganda pada foto yang sama, dan kuota 1 vote per kategori.
-- Pertahankan custom frame, modal slideshow ballroom, dan generator QR Code.
-
----
-
-## 3. BERKAS TERDAMPAK
-1. `app.js` (Otoritas cloud `hidden_photos` tanpa stale merge, sinkronisasi cloud `event_photo_category_votes`, isolasi filter kategori galeri + empty state ramah, badge kategori pada kartu foto).
-2. `index.html` (Cache-busting script tag `app.js?v=2.2.5`).
-3. `revisi.md` (Dokumentasi log perubahan dan instruksi pengujian).
 ================================================================================

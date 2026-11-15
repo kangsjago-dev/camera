@@ -162,6 +162,13 @@ function recordDeletedCategory(arg1, arg2) {
   try {
     localStorage.setItem(`snapevent_deleted_categories_${id}`, JSON.stringify(Array.from(delSet)));
   } catch (e) {}
+  if (STATE.gasApiUrl) {
+    callGasApiSafe('adminUpdateGlobalConfig', {
+      updates: {
+        [`deleted_categories_${id}`]: JSON.stringify(Array.from(delSet))
+      }
+    }).catch(() => {});
+  }
 }
 
 function unrecordDeletedCategory(arg1, arg2) {
@@ -177,6 +184,13 @@ function unrecordDeletedCategory(arg1, arg2) {
   try {
     localStorage.setItem(`snapevent_deleted_categories_${id}`, JSON.stringify(Array.from(delSet)));
   } catch (e) {}
+  if (STATE.gasApiUrl) {
+    callGasApiSafe('adminUpdateGlobalConfig', {
+      updates: {
+        [`deleted_categories_${id}`]: JSON.stringify(Array.from(delSet))
+      }
+    }).catch(() => {});
+  }
 }
 
 function loadEventCategories(eventId) {
@@ -735,6 +749,42 @@ function syncBrowserUrlWithActiveEvent(eventId) {
 
 function getQrImageUrl(text, size = 300) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(text)}`;
+}
+
+function normalizeFrameTargetUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let url = rawUrl.trim();
+  if (!url) return '';
+  
+  // Jika berupa base64 data URI (misal SVG atau PNG inline), biarkan
+  if (url.startsWith('data:')) return url;
+
+  // Ekstraksi Google Drive file ID
+  // Pola 1: /file/d/ID/view atau /file/d/ID
+  const matchFileD = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (matchFileD && matchFileD[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchFileD[1]}`;
+  }
+
+  // Pola 2: id=ID atau ?id=ID
+  const matchIdParam = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (matchIdParam && matchIdParam[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchIdParam[1]}`;
+  }
+
+  // Pola 3: drive.google.com/open?id=ID
+  const matchOpenId = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (matchOpenId && matchOpenId[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchOpenId[1]}`;
+  }
+
+  // Pola 4: uc?id=ID atau uc?export=view&id=ID
+  const matchUc = url.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+  if (matchUc && matchUc[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchUc[1]}`;
+  }
+
+  return url;
 }
 
 function getAvailableFrames() {
@@ -1443,8 +1493,27 @@ async function loadEventData() {
           }
         }
 
-        const activeCustomUrl = res.event.customFrameUrl || localActive?.customFrameUrl || '';
-        const activeCustomData = localActive?.customFrameData || activeCustomUrl;
+        let activeCustomUrl = res.event.customFrameUrl || '';
+        const customFrameKey = `event_custom_frame_${res.event.idEvent}`;
+        if (!activeCustomUrl && res.globalConfig && res.globalConfig[customFrameKey]) {
+          activeCustomUrl = res.globalConfig[customFrameKey];
+        }
+        if (!activeCustomUrl) {
+          activeCustomUrl = localActive?.customFrameUrl || '';
+        }
+        activeCustomUrl = normalizeFrameTargetUrl(activeCustomUrl);
+        const activeCustomData = activeCustomUrl;
+
+        // Sinkronisasi seluruh koleksi bingkai kustom dari cloud secara online
+        if (res.globalConfig && res.globalConfig.global_custom_frames) {
+          try {
+            const gcf = JSON.parse(res.globalConfig.global_custom_frames);
+            if (Array.isArray(gcf) && gcf.length > 0) {
+              STATE.customFrames = gcf;
+              localStorage.setItem('snapevent_custom_frames', JSON.stringify(gcf));
+            }
+          } catch(e){}
+        }
 
         if (activeCustomUrl) {
           if (inferredMode === 'single' && (inferredLocked === 'CUSTOM_EVENT' || inferredLocked === 'CUSTOM')) {
@@ -1716,6 +1785,15 @@ async function loadEventData() {
               const serverVotes = JSON.parse(res.globalConfig[voteKey]);
               if (serverVotes && typeof serverVotes === 'object') {
                 localStorage.setItem(`snapevent_photo_cat_votes_${curEvId}`, JSON.stringify(serverVotes));
+              }
+            } catch(e) {}
+          }
+          const delCatKey = `deleted_categories_${curEvId}`;
+          if (res.globalConfig && res.globalConfig[delCatKey]) {
+            try {
+              const serverDelCats = JSON.parse(res.globalConfig[delCatKey]);
+              if (Array.isArray(serverDelCats)) {
+                localStorage.setItem(`snapevent_deleted_categories_${curEvId}`, JSON.stringify(serverDelCats));
               }
             } catch(e) {}
           }
@@ -4583,7 +4661,7 @@ function renderSingleLockCustomFrameList(candidateFrames, currentLockedId) {
     card.setAttribute('data-frame-id', f.id);
 
     const thumbHtml = f.dataUrl 
-      ? `<img src="${f.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
+      ? `<img src="${f.dataUrl}" class="w-8 h-10 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'32\\' height=\\'40\\' viewBox=\\'0 0 32 40\\'><rect width=\\'32\\' height=\\'40\\' fill=\\'%2318181b\\' rx=\\'4\\'/><text x=\\'50%25\\' y=\\'55%25\\' font-size=\\'14\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\'>🖼️</text></svg>';" />`
       : `<span class="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-base shrink-0">${f.icon || '🖼️'}</span>`;
 
     const statusBadge = isLocked 
@@ -4705,7 +4783,7 @@ function renderAdminFrameSettings(eventObj) {
       row.setAttribute('data-frame-id', frame.id);
 
       const previewHtml = frame.dataUrl 
-        ? `<img src="${frame.dataUrl}" class="w-7 h-9 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="Frame" />`
+        ? `<img src="${frame.dataUrl}" class="w-7 h-9 object-contain rounded bg-zinc-900 border border-white/10 shrink-0" alt="" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'28\\' height=\\'36\\' viewBox=\\'0 0 28 36\\'><rect width=\\'28\\' height=\\'36\\' fill=\\'%2318181b\\' rx=\\'4\\'/><text x=\\'50%25\\' y=\\'55%25\\' font-size=\\'12\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\'>🖼️</text></svg>';" />`
         : `<span class="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm shrink-0">${frame.icon || '🖼️'}</span>`;
 
       row.innerHTML = `
@@ -4839,9 +4917,10 @@ function resetCreateEventForm() {
 
   STATE.tempCustomFrameData = null;
   STATE.isNewFrameUploaded = false;
-  document.getElementById('formEventCustomFrame').value = '';
-  document.getElementById('customFramePreviewBox').classList.add('hidden');
-  document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
+  const urlInput = document.getElementById('formEventCustomFrameUrl');
+  if (urlInput) urlInput.value = '';
+  document.getElementById('customFramePreviewBox')?.classList.add('hidden');
+  document.getElementById('btnRemoveCustomFrame')?.classList.add('hidden');
   renderCustomFramesList();
 
   const btnDeleteForm = document.getElementById('btnDeleteCurrentEvent');
@@ -5156,24 +5235,26 @@ function populateEditEventForm(ev) {
   document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest || 1;
   document.getElementById('formEventDriveFolder').value = ev.gdriveFolderId || '';
 
-  // Custom Frame Preview
-  const frameData = ev.customFrameData || ev.customFrameUrl;
+  // Custom Frame Link Target & Preview
+  const frameData = normalizeFrameTargetUrl(ev.customFrameUrl || ev.customFrameData || '');
   const previewBox = document.getElementById('customFramePreviewBox');
   const previewImg = document.getElementById('customFramePreviewImg');
   const btnRemove = document.getElementById('btnRemoveCustomFrame');
+  const urlInput = document.getElementById('formEventCustomFrameUrl');
+
+  if (urlInput) urlInput.value = frameData;
 
   if (frameData) {
-    previewImg.src = frameData;
-    previewBox.classList.remove('hidden');
-    btnRemove.classList.remove('hidden');
+    if (previewImg) previewImg.src = frameData;
+    previewBox?.classList.remove('hidden');
+    btnRemove?.classList.remove('hidden');
     STATE.tempCustomFrameData = frameData;
   } else {
-    previewBox.classList.add('hidden');
-    btnRemove.classList.add('hidden');
+    previewBox?.classList.add('hidden');
+    btnRemove?.classList.add('hidden');
     STATE.tempCustomFrameData = null;
   }
   STATE.isNewFrameUploaded = false;
-  document.getElementById('formEventCustomFrame').value = '';
 
   const radios = document.getElementsByName('revealModeRadio');
   radios.forEach(r => { r.checked = (r.value === ev.revealMode); });
@@ -5794,6 +5875,8 @@ async function saveAdminEventForm() {
             eventId: savedEvent.idEvent,
             categories: cats
           }),
+          [`event_custom_frame_${savedEvent.idEvent}`]: customFrameData || '',
+          global_custom_frames: JSON.stringify(STATE.customFrames || []),
           active_event_id: savedEvent.idEvent
         }
       }).catch(() => {});
@@ -6445,43 +6528,71 @@ function bindEvents() {
     showToast("✅ Galeri foto diperbarui!", "success");
   });
 
-  // Custom Frame File Upload
-  document.getElementById('formEventCustomFrame').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      STATE.tempCustomFrameData = dataUrl;
-      STATE.isNewFrameUploaded = true;
-      document.getElementById('customFramePreviewImg').src = dataUrl;
-      document.getElementById('customFramePreviewBox').classList.remove('hidden');
-      document.getElementById('btnRemoveCustomFrame').classList.remove('hidden');
+  // Custom Frame Target URL Input Handler (Menggantikan File Upload)
+  const frameUrlInput = document.getElementById('formEventCustomFrameUrl');
+  const btnTestFrame = document.getElementById('btnTestFrameUrl');
+  const btnRemoveFrame = document.getElementById('btnRemoveCustomFrame');
 
-      const targetEventId = document.getElementById('formEventId')?.value;
-      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
-      renderAdminFrameSettings(currentEv);
-
-      showToast("Bingkai kustom PNG berhasil diunggah dan masuk ke daftar pilihan!", "info");
-    };
-    reader.readAsDataURL(file);
-  });
-
-  document.getElementById('btnRemoveCustomFrame').addEventListener('click', () => {
-    STATE.tempCustomFrameData = null;
-    STATE.isNewFrameUploaded = false;
-    document.getElementById('formEventCustomFrame').value = '';
-    document.getElementById('customFramePreviewBox').classList.add('hidden');
-    document.getElementById('btnRemoveCustomFrame').classList.add('hidden');
-    if (STATE.activeEvent) {
-      STATE.activeEvent.customFrameData = null;
-      STATE.activeEvent.customFrameUrl = '';
+  function applyCustomFrameFromUrl(rawUrl, showToastNotice = true) {
+    if (!rawUrl || !rawUrl.trim()) {
+      if (showToastNotice) showToast("Masukkan link URL target bingkai terlebih dahulu!", "warning");
+      return;
     }
+    const cleanUrl = normalizeFrameTargetUrl(rawUrl);
+    if (frameUrlInput) frameUrlInput.value = cleanUrl;
+    const previewImg = document.getElementById('customFramePreviewImg');
+    const previewBox = document.getElementById('customFramePreviewBox');
+    
+    STATE.tempCustomFrameData = cleanUrl;
+    STATE.isNewFrameUploaded = true;
+    if (previewImg) previewImg.src = cleanUrl;
+    if (previewBox) previewBox.classList.remove('hidden');
+    if (btnRemoveFrame) btnRemoveFrame.classList.remove('hidden');
+
     const targetEventId = document.getElementById('formEventId')?.value;
     const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
     renderAdminFrameSettings(currentEv);
-    showToast("Bingkai kustom dihapus.", "info");
-  });
+
+    // Test image load
+    const tester = new Image();
+    tester.onload = () => {
+      if (showToastNotice) showToast("✅ Link target bingkai berhasil diverifikasi & siap disimpan!", "success");
+    };
+    tester.onerror = () => {
+      if (showToastNotice) showToast("⚠️ Link target bingkai dimasukkan. Pastikan izin Google Drive diset 'Siapa saja yang memiliki link'!", "info");
+    };
+    tester.src = cleanUrl;
+  }
+
+  if (frameUrlInput) {
+    frameUrlInput.addEventListener('change', (e) => applyCustomFrameFromUrl(e.target.value, true));
+    frameUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyCustomFrameFromUrl(e.target.value, true);
+      }
+    });
+  }
+  if (btnTestFrame) {
+    btnTestFrame.addEventListener('click', () => applyCustomFrameFromUrl(frameUrlInput?.value, true));
+  }
+  if (btnRemoveFrame) {
+    btnRemoveFrame.addEventListener('click', () => {
+      STATE.tempCustomFrameData = null;
+      STATE.isNewFrameUploaded = false;
+      if (frameUrlInput) frameUrlInput.value = '';
+      document.getElementById('customFramePreviewBox')?.classList.add('hidden');
+      btnRemoveFrame.classList.add('hidden');
+      if (STATE.activeEvent) {
+        STATE.activeEvent.customFrameData = null;
+        STATE.activeEvent.customFrameUrl = '';
+      }
+      const targetEventId = document.getElementById('formEventId')?.value;
+      const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+      renderAdminFrameSettings(currentEv);
+      showToast("Bingkai kustom dihapus.", "info");
+    });
+  }
 
   // Admin Event Form Save
   document.getElementById('formSaveEvent').addEventListener('submit', (e) => {
