@@ -1208,6 +1208,35 @@ function getOrCreateGuestId() {
 async function callGasApiSafe(action, payload = {}) {
   if (!STATE.gasApiUrl) return null;
   const url = STATE.gasApiUrl;
+
+  // Optimasi Instan: Aksi pembacaan data (GET) langsung dikirim via GET tanpa buang waktu mencoba POST
+  const isGetAction = (action === 'getEventDetails' || action === 'getGallery' || action === 'getGuestQuota' || action === 'getSlideshowPhotos' || action === 'adminGetSummary');
+
+  if (isGetAction) {
+    try {
+      const qParams = new URLSearchParams();
+      qParams.set('action', action);
+      for (const k in payload) {
+        if (payload[k] !== undefined && payload[k] !== null && payload[k] !== '') {
+          if (typeof payload[k] === 'object') {
+            qParams.set(k, JSON.stringify(payload[k]));
+          } else {
+            qParams.set(k, String(payload[k]));
+          }
+        }
+      }
+      const getUrl = `${url}${url.includes('?') ? '&' : '?'}${qParams.toString()}`;
+      const respGet = await fetch(getUrl, { method: 'GET' });
+      const resGet = await respGet.json().catch(() => null);
+      if (resGet && (resGet.status === 'success' || resGet.status === 'ok')) {
+        return resGet;
+      }
+    } catch (getErr) {
+      console.warn(`[callGasApiSafe] GET '${action}' gagal:`, getErr.message);
+    }
+    return null;
+  }
+
   const bodyData = { action, ...payload };
 
   // Tier 1: Standar POST cross-origin
@@ -1238,7 +1267,7 @@ async function callGasApiSafe(action, payload = {}) {
         }
       }
     }
-    const getUrl = `${url}?${qParams.toString()}`;
+    const getUrl = `${url}${url.includes('?') ? '&' : '?'}${qParams.toString()}`;
     const respGet = await fetch(getUrl, { method: 'GET' });
     const resGet = await respGet.json().catch(() => null);
     if (resGet && (resGet.status === 'success' || resGet.status === 'ok')) {
