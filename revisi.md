@@ -1,42 +1,49 @@
 # LOG REVISI & STATUS PERBAIKAN SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SELESAI DITERAPKAN (VERSION 2.2.6)
+STATUS: SELESAI DITERAPKAN (VERSION 2.2.7)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 15 November 2026
 ================================================================================
 
-## 1. RINGKASAN IMPLEMENTASI V2.2.6
+## 1. RINGKASAN IMPLEMENTASI V2.2.7
 
-### A. Penggantian Upload File Bingkai Menjadi Input Link Target Bingkai:
-1. **Komponen UI di `index.html`:**
-   - Komponen `<input type="file" id="formEventCustomFrame">` telah sepenuhnya digantikan oleh:
-     `<input type="url" id="formEventCustomFrameUrl" placeholder="https://drive.google.com/file/d/... atau https://.../bingkai.png" ...>`
-   - Dilengkapi tombol cepat uji link `➔` (`#btnTestFrameUrl`) dan tombol `Hapus` (`#btnRemoveCustomFrame`).
-   - Kotak pratinjau `#customFramePreviewBox` langsung memverifikasi dan menampilkan gambar dari URL.
-2. **Normalisasi Cerdas URL Google Drive (`normalizeFrameTargetUrl`):**
-   - Mendukung input link Google Drive publik (`/file/d/ID`, `?id=ID`, `open?id=ID`, `uc?id=ID`).
-   - Otomatis mengubah link Google Drive menjadi direct image CDN URL berkecepatan tinggi:
-     `https://lh3.googleusercontent.com/d/{ID}`
-   - Mendukung link direct PNG/WebP dari server hosting eksternal.
-   - Kebal terhadap batas 50.000 karakter Google Sheets (ukuran link hanya ~100 karakter).
+### A. Fitur Akses & Autentikasi Admin:
+1. **Dukungan Tombol Enter Login Admin:**
+   - Input `#inputAdminUser` dan `#inputAdminPass` telah dibungkus dalam `<form id="formAdminLogin">`.
+   - Menambahkan event listener tombol `keydown` (Enter) dan form `submit` pada modal `#modalAdminPin`.
+   - Pengguna cukup menekan Enter untuk langsung masuk ke panel admin.
+2. **Akses Bebas Live Cam & Galeri Tamu bagi Admin:**
+   - Menambahkan tombol pintas di header admin: `[📷 Lihat Live Cam]` (`#btnAdminGoCamera`) dan `[🖼️ Buka Galeri]` (`#btnAdminGoGallery`).
+   - Sesi admin tetap aktif saat admin memeriksa kamera live atau galeri.
+   - Admin yang sedang login tidak lagi terhalang oleh pembatasan wajib isi nama tamu saat membuka kamera.
+   - Admin dapat kembali ke panel admin kapan saja dengan menekan tombol Admin di header tanpa perlu login ulang.
 
-### B. Sinkronisasi Online 100% Seluruh Perintah & Konfigurasi ke Google Sheets:
-1. **Bingkai Kustom Tersimpan Online:**
-   - Saat admin menyimpan acara (`formSaveEvent`), sistem menyimpan:
-     * `event_custom_frame_${idEvent}`: Link target URL bingkai acara.
-     * `global_custom_frames`: Seluruh koleksi bingkai kustom lintas acara via `adminUpdateGlobalConfig`.
-   - Di perangkat lain, `loadEventData()` membaca `global_custom_frames` dan `event_custom_frame_${idEvent}` langsung dari sheet `Pengaturan` (`res.globalConfig`).
-2. **Kategori Poling & Penghapusan Kategori Tersinkron Online:**
-   - Penghapusan kategori via tombol `✕` (`recordDeletedCategory`) langsung disinkronkan ke server cloud melalui `deleted_categories_${idEvent}` di `globalConfig`.
-   - Kategori yang sudah dihapus tidak akan muncul kembali saat halaman direfresh atau dibuka di HP lain.
-3. **Penyimpanan Tanggal Acara:**
-   - Proteksi anti-reset tanggal acara: jika tanggal acara sudah lewat atau input tidak diubah, tanggal resmi yang sudah ada tetap dipertahankan.
-   - Validasi format RFC 3339 (`YYYY-MM-DD`) memastikan input tanggal tidak pernah kosong (`mm/dd/yyyy`).
+### B. Proyektor Panggung (Ballroom Slideshow):
+- **Filter Foto Tersembunyi (100% Bersih):**
+  - Implementasi fungsi `getEligibleSlideshowPhotos()` yang menyaring foto menggunakan `getHiddenPhotosSet()` dan `getDeletedPhotosSet()`.
+  - Foto yang disembunyikan admin di galeri (`hidden_photos` / `isVisible === false`) tidak akan pernah muncul di layar proyektor panggung.
 
-### C. Jaminan Nol Regresi (Zero Regression):
-- Live camera stream, switch front/back camera, slider zoom 1x-3x tetap berjalan normal.
-- Fitur watermark Canvas saat foto diambil tetap menggunakan gambar dari link target bingkai.
-- Galeri, kuota foto tamu, kuota voting 2x per tamu, dan podium pemenang tetap aktif 100%.
+### C. Live Cam & Canvas Watermark (Zero-Crop):
+1. **Bingkai Live Camera Fit:**
+   - Mengubah kelas `#vfCustomFrameImg` menjadi `w-full h-full object-fill` agar proporsional dan membentang pas memenuhi kotak viewfinder kamera tanpa menyisakan ruang kosong (letterbox).
+2. **Hasil Foto Canvas Tanpa Pemotongan:**
+   - Mengeliminasi conditional cropping pada `processPhotoWithFrameAndFilter()`.
+   - Seluruh elemen bingkai kustom PNG (ornamen bunga atas, teks tengah, serta logo sudut bawah) digambar penuh 100% dari `(0, 0)` ke `(w, h)` tanpa ada bagian yang terpotong.
+
+### D. Pembersihan Antarmuka & Eliminasi Menu Dobel:
+- Menghapus tab duplikat `[+ Buat Event Baru]` dari header tab admin `#adminTabsContainer`.
+- Pembuatan acara baru difokuskan satu pintu melalui tombol `[➕ Buat Acara]` (`#btnAddNewEventTop`) pada tab Daftar Event.
+- Memastikan tidak ada menu/tombol yang dobel di seluruh halaman aplikasi.
+
+### E. Persistensi Refresh (F5 Anti-Lompat Halaman):
+- Status tampilan aktif (`snapevent_current_view`) dan sub-tab admin (`snapevent_current_admintab`) disimpan di `sessionStorage`.
+- Saat browser direfresh (F5), aplikasi tetap berada di halaman dan tab yang sama persis tanpa berpindah sepihak.
+
+### F. Tombol Aksi Lengkap pada Kartu QR Code Acara (viewWelcome):
+- Mengubah tata letak kartu QR Code menjadi 2 kolom berdampingan:
+  1. 📲 **Bagikan Link (Share):** Membuka Web Share API ponsel atau menyalin link jika di desktop.
+  2. ⬇️ **Unduh QR Code:** Mengunduh file gambar QR Code resolusi tinggi 1000px (`QR-Code-[NamaEvent].png`) untuk dicetak di banner/meja.
+  3. 📋 **Salin Link QR:** Menyalin URL acara langsung ke clipboard dengan toast notifikasi instan.
 
 ================================================================================

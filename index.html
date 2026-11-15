@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="style.css?v=2.0.7" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.2.6" defer></script>
+  <script src="app.js?v=2.2.7" defer></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
@@ -126,18 +126,41 @@
         </button>
       </div>
 
-      <!-- KARTU QR CODE DI SCREEN UNTUK DIFOTO / PINDAI OLEH TAMU -->
-      <div id="welcomeQrCard" class="w-full max-w-xs bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-3.5 mb-5 text-center shadow-lg">
-        <div class="flex items-center justify-between mb-2">
+      <!-- KARTU QR CODE DI SCREEN UNTUK DIFOTO / PINDAI OLEH TAMU (DILENGKAPI TOMBOL SHARE, DOWNLOAD, COPY LINK) -->
+      <div id="welcomeQrCard" class="w-full max-w-sm bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-3.5 mb-5 shadow-lg">
+        <div class="flex items-center justify-between mb-2.5">
           <span class="text-[10px] font-bold text-brand-gold uppercase tracking-wider flex items-center gap-1">
             <span>📲</span> Foto / Pindai QR Ini
           </span>
           <span class="text-[10px] text-zinc-400">Untuk Buka di HP Lain</span>
         </div>
-        <div class="w-32 h-32 bg-white rounded-xl p-2 mx-auto mb-2 shadow flex items-center justify-center cursor-pointer hover:scale-105 transition" id="welcomeQrClickBox" title="Klik untuk perbesar QR Code di layar penuh">
-          <img id="welcomeQrImg" src="" alt="QR Code Acara" class="w-full h-full object-contain" />
+        
+        <div class="flex items-center gap-3 mb-2.5">
+          <!-- QR Code Image Box (Sisi Kiri) -->
+          <div class="w-28 h-28 sm:w-32 sm:h-32 bg-white rounded-xl p-2 shrink-0 shadow flex items-center justify-center cursor-pointer hover:scale-105 transition" id="welcomeQrClickBox" title="Klik untuk perbesar QR Code di layar penuh">
+            <img id="welcomeQrImg" src="" alt="QR Code Acara" class="w-full h-full object-contain" />
+          </div>
+
+          <!-- Tombol Aksi di Samping Gambar QR (Sisi Kanan) -->
+          <div class="flex-1 flex flex-col justify-between gap-1.5 min-w-0">
+            <button id="btnWelcomeShareLink" type="button" class="w-full py-1.5 px-2.5 rounded-xl bg-brand-gold text-black text-xs font-bold hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-1.5 shadow-sm" title="Bagikan link acara">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              <span class="truncate">Bagikan Link</span>
+            </button>
+
+            <button id="btnWelcomeDownloadQr" type="button" class="w-full py-1.5 px-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-zinc-200 text-xs font-semibold border border-white/10 active:scale-95 transition flex items-center justify-center gap-1.5" title="Unduh gambar QR Code">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="truncate">Unduh QR</span>
+            </button>
+
+            <button id="btnWelcomeCopyQrLink" type="button" class="w-full py-1.5 px-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-amber-300 text-xs font-medium border border-brand-gold/30 active:scale-95 transition flex items-center justify-center gap-1.5" title="Salin link QR ke clipboard">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              <span class="truncate">Salin Link QR</span>
+            </button>
+          </div>
         </div>
-        <p class="text-[10px] text-zinc-400">Arahkan kamera HP ke kode QR di atas untuk membuka disposable camera pesta ini.</p>
+
+        <p class="text-[10px] text-zinc-400 text-center">Arahkan kamera HP ke kode QR di atas untuk membuka disposable camera pesta ini.</p>
       </div>
 
       <div class="w-full max-w-xs bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl p-5 mb-6 text-left">
@@ -208,7 +231,7 @@
         <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
 
         <!-- Custom Frame Image Overlay (PNG) -->
-        <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
+        <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-fill pointer-events-none z-10" />
 
         <!-- Live Frame Overlay Preview (Built-in) -->
         <div id="viewfinderFrameOverlay" class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3.5 z-10">
@@ -414,32 +437,37 @@
           </h2>
           <p class="text-xs text-zinc-400">Atur event, kuota kamera, dan kontrol galeri Drive.</p>
         </div>
-        <div class="flex items-center gap-2">
-          <button id="btnOpenChangePassword" class="text-xs text-brand-gold hover:underline py-1.5 px-2.5 rounded bg-white/5 hover:bg-white/10 border border-brand-gold/30 transition flex items-center gap-1" title="Ganti Password Akun">
-            <span>🔑</span>
-            <span class="hidden sm:inline">Ganti</span> Password
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <button id="btnAdminGoCamera" type="button" class="text-xs text-amber-300 hover:text-white py-1.5 px-2.5 rounded-lg bg-brand-gold/15 hover:bg-brand-gold/25 border border-brand-gold/30 transition flex items-center gap-1 font-semibold cursor-pointer" title="Lihat Live Kamera Acara">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+            <span class="hidden sm:inline">Lihat</span> Live Cam
           </button>
-          <button id="btnAdminLogout" class="text-xs text-zinc-400 hover:text-red-400 p-1.5 rounded bg-white/5 transition">
+          <button id="btnAdminGoGallery" type="button" class="text-xs text-zinc-300 hover:text-white py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition flex items-center gap-1 font-semibold cursor-pointer" title="Buka Galeri Tamu">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span class="hidden sm:inline">Buka</span> Galeri
+          </button>
+          <button id="btnOpenChangePassword" type="button" class="text-xs text-brand-gold hover:underline py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 border border-brand-gold/30 transition flex items-center gap-1 cursor-pointer" title="Ganti Password Akun">
+            <span>🔑</span>
+            <span class="hidden md:inline">Password</span>
+          </button>
+          <button id="btnAdminLogout" type="button" class="text-xs text-zinc-400 hover:text-red-400 py-1.5 px-2.5 rounded-lg bg-white/5 transition font-semibold cursor-pointer">
             Keluar
           </button>
         </div>
       </div>
 
-      <!-- Admin Tab Switcher -->
+      <!-- Admin Tab Switcher (Satu Pintu: Buat Acara difokuskan di tab Daftar Event) -->
       <div class="flex items-center gap-2 overflow-x-auto pb-2 mb-4 text-xs font-semibold" id="adminTabsContainer">
-        <button data-admintab="events" class="adm-tab px-3 py-1.5 rounded-lg bg-brand-gold text-black transition shrink-0">
+        <button data-admintab="events" class="adm-tab px-3 py-1.5 rounded-lg bg-brand-gold text-black transition shrink-0 cursor-pointer">
           Daftar Event
         </button>
-        <button data-admintab="create" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
-          + Buat Event Baru
-        </button>
-        <button data-admintab="gallery" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 flex items-center gap-1.5">
+        <button data-admintab="gallery" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 flex items-center gap-1.5 cursor-pointer">
           🖼️ Kelola Galeri
         </button>
-        <button data-admintab="leaderboard" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
+        <button data-admintab="leaderboard" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 cursor-pointer">
           Pemenang Voting
         </button>
-        <button data-admintab="settings" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0">
+        <button data-admintab="settings" class="adm-tab px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 border border-white/10 hover:border-brand-gold/50 transition shrink-0 cursor-pointer">
           Pengaturan Global
         </button>
       </div>
@@ -1015,21 +1043,21 @@
       <h3 class="font-serif text-base font-bold text-white mb-1">Akses Pengelola & Kru</h3>
       <p class="text-xs text-zinc-400 mb-4">Masukkan Username & Password Admin/Kru untuk mengelola event.</p>
       
-      <div class="space-y-2.5 mb-4 text-left">
+      <form id="formAdminLogin" class="space-y-3 mb-2 text-left">
         <div>
           <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Username</label>
-          <input type="text" id="inputAdminUser" placeholder="admin" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+          <input type="text" id="inputAdminUser" required placeholder="admin" autocomplete="username" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
         </div>
         <div>
           <label class="block text-[11px] font-semibold text-zinc-300 mb-1">Password</label>
-          <input type="password" id="inputAdminPass" placeholder="••••••••" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
+          <input type="password" id="inputAdminPass" required placeholder="••••••••" autocomplete="current-password" class="w-full bg-[#111116] border border-white/15 focus:border-brand-gold rounded-xl px-3 py-2 text-xs text-white outline-none" />
         </div>
-      </div>
-      
-      <div class="flex items-center gap-2">
-        <button id="btnCancelAdminPin" class="flex-1 py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold">Batal</button>
-        <button id="btnSubmitAdminPin" class="flex-1 py-2 rounded-xl gold-gradient-bg text-black text-xs font-bold">Masuk</button>
-      </div>
+        
+        <div class="flex items-center gap-2 pt-2">
+          <button type="button" id="btnCancelAdminPin" class="flex-1 py-2 rounded-xl bg-white/10 text-zinc-300 text-xs font-semibold hover:bg-white/15 transition cursor-pointer">Batal</button>
+          <button type="submit" id="btnSubmitAdminPin" class="flex-1 py-2 rounded-xl gold-gradient-bg text-black text-xs font-bold hover:brightness-110 active:scale-95 transition shadow-md cursor-pointer">Masuk</button>
+        </div>
+      </form>
     </div>
   </div>
 
