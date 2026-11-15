@@ -742,7 +742,7 @@ function getEventShareUrl(eventId) {
       return `${loc.origin}${loc.pathname}`.replace(/\/+$/, '');
     }
   } catch (e) {}
-  return 'https://camera-blush-theta.vercel.app';
+  return 'https://www.runway.my.id/cam';
 }
 
 function syncBrowserUrlWithActiveEvent(eventId) {

@@ -38,11 +38,22 @@
     }
   </script>
 
+  <!-- Universal Base Path Resolver (Supports Root & Subfolders like /cam) -->
+  <script>
+    (function() {
+      try {
+        var p = window.location.pathname || '';
+        var baseHref = (p.indexOf('/cam') !== -1) ? '/cam/' : '/';
+        document.write('<base href="' + baseHref + '">');
+      } catch (e) {}
+    })();
+  </script>
+
   <!-- Modular Stylesheet (Dark Gold Luxury, Flash & Ken Burns Animations) -->
-  <link rel="stylesheet" href="style.css?v=2.0.7" />
+  <link rel="stylesheet" href="style.css?v=2.3.2" onerror="if(!this.dataset.retried){this.dataset.retried='1';this.href=(window.location.pathname.indexOf('/cam')!==-1?'/cam/':'/')+'style.css?v=2.3.2';}" />
 
   <!-- Modular JavaScript Engine (Clean, Robust & GitHub Ready) -->
-  <script src="app.js?v=2.2.8" defer></script>
+  <script src="app.js?v=2.3.2" defer onerror="if(!this.dataset.retried){this.dataset.retried='1';var s=document.createElement('script');s.src=(window.location.pathname.indexOf('/cam')!==-1?'/cam/':'/')+'app.js?v=2.3.2';s.defer=true;document.head.appendChild(s);}"></script>
 </head>
 <body class="bg-[#0A0A0D] text-zinc-100 font-sans antialiased min-h-screen flex flex-col selection:bg-brand-gold selection:text-black">
 
