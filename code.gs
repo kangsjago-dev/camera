@@ -849,62 +849,35 @@ function handleGetGallery(eventId, guestId) {
       const rowEventId = fr[COL_FOTO.ID_EVENT];
       if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
         const fileId = String(fr[COL_FOTO.GDRIVE_FILE_ID] || "").trim();
-        let fileExists = false;
+        const viewUrl = String(fr[COL_FOTO.GDRIVE_VIEW_URL] || "").trim();
 
         if (fileId) {
-          if (liveDriveFilesMap.has(fileId)) {
-            fileExists = true;
-          } else {
-            // Verifikasi langsung ke Drive jika file berada di luar subfolder kandidat
-            try {
-              const checkF = DriveApp.getFileById(fileId);
-              if (checkF && !checkF.isTrashed()) {
-                fileExists = true;
-              }
-            } catch (dErr) {
-              fileExists = false;
-            }
-          }
-        }
-
-        if (fileExists) {
           existingFileIds.add(fileId);
-          let uniqueId = fr[COL_FOTO.ID];
-          if (seenPhotoIds.has(uniqueId)) {
-            uniqueId = uniqueId + "-" + (fileId ? fileId.slice(-4) : (j + 1));
-          }
-          seenPhotoIds.add(uniqueId);
-
-          const isPhotoVisible = String(fr[COL_FOTO.IS_FEATURED] || "").trim().toUpperCase() !== "SEMBUNYI";
-
-          photos.push({
-            idFoto: uniqueId,
-            guestNama: fr[COL_FOTO.GUEST_NAMA] || "Tamu",
-            caption: fr[COL_FOTO.CAPTION] || "Momen seru!",
-            cameraStyle: fr[COL_FOTO.CAMERA_STYLE] || "RAW",
-            frameStyle: fr[COL_FOTO.FRAME_STYLE] || "POLAROID",
-            gdriveViewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || (fileId ? ("https://lh3.googleusercontent.com/d/" + fileId) : ""),
-            totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
-            isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
-            isVisible: isPhotoVisible,
-            photoStatus: isPhotoVisible ? "TAMPIL" : "SEMBUNYI",
-            createdAt: fr[COL_FOTO.CREATED_AT] || nowStr
-          });
-        } else {
-          // File fisik tidak ditemukan di Google Drive -> Jangan tampilkan & bersihkan baris hantu dari DataFoto
-          rowsToDelete.push(j + 2);
         }
-      }
-    }
+        let uniqueId = fr[COL_FOTO.ID] || ("FTO-" + (j + 1));
+        if (seenPhotoIds.has(uniqueId)) {
+          uniqueId = uniqueId + "-" + (fileId ? fileId.slice(-4) : (j + 1));
+        }
+        seenPhotoIds.add(uniqueId);
 
-    // Bersihkan baris hantu di DataFoto dari bawah ke atas agar indeks baris tidak bergeser
-    if (rowsToDelete.length > 0) {
-      for (let d = rowsToDelete.length - 1; d >= 0; d--) {
-        try {
-          fotoSheet.deleteRow(rowsToDelete[d]);
-        } catch (delErr) {}
+        const isPhotoVisible = String(fr[COL_FOTO.IS_FEATURED] || "").trim().toUpperCase() !== "SEMBUNYI";
+
+        photos.push({
+          idFoto: uniqueId,
+          guestNama: fr[COL_FOTO.GUEST_NAMA] || "Tamu",
+          caption: fr[COL_FOTO.CAPTION] || "Momen seru!",
+          cameraStyle: fr[COL_FOTO.CAMERA_STYLE] || "RAW",
+          frameStyle: fr[COL_FOTO.FRAME_STYLE] || "POLAROID",
+          gdriveViewUrl: viewUrl || (fileId ? ("https://lh3.googleusercontent.com/d/" + fileId) : ""),
+          gdriveFileId: fileId,
+          driveFileId: fileId,
+          totalLikes: Number(fr[COL_FOTO.TOTAL_LIKES]) || 0,
+          isFeatured: fr[COL_FOTO.IS_FEATURED] === "TRUE" || fr[COL_FOTO.IS_FEATURED] === "true",
+          isVisible: isPhotoVisible,
+          photoStatus: isPhotoVisible ? "TAMPIL" : "SEMBUNYI",
+          createdAt: fr[COL_FOTO.CREATED_AT] || nowStr
+        });
       }
-      SpreadsheetApp.flush();
     }
   }
 

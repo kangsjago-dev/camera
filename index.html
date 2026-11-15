@@ -145,24 +145,19 @@
             </div>
           </div>
 
-          <!-- Tombol Aksi di Samping Gambar QR (Mewah & Menarik) -->
-          <div class="flex-1 w-full flex flex-col justify-between gap-2 min-w-0">
-            <button id="btnWelcomeShareLink" type="button" class="w-full py-2.5 px-3 rounded-xl gold-gradient-bg text-black text-xs font-bold hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-2 shadow-md shadow-brand-gold/20 cursor-pointer" title="Bagikan link acara">
-              <svg class="w-4 h-4 text-black shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              <span class="truncate font-bold">Bagikan Link Acara</span>
+          <!-- Tombol Aksi di Samping Gambar QR (Logo / Ikon Saja - Modern Luxury) -->
+          <div class="flex sm:flex-col items-center justify-center gap-3 shrink-0">
+            <button id="btnWelcomeShareLink" type="button" class="w-12 h-12 rounded-2xl gold-gradient-bg text-black hover:brightness-110 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-lg shadow-brand-gold/25 cursor-pointer group relative" title="Bagikan Link Acara" aria-label="Bagikan Link Acara">
+              <svg class="w-5 h-5 text-black shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             </button>
 
-            <button id="btnWelcomeDownloadQr" type="button" class="w-full py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold border border-white/15 active:scale-95 transition flex items-center justify-between shadow-sm cursor-pointer" title="Unduh gambar QR Code resolusi tinggi 1000px">
-              <span class="flex items-center gap-2 truncate">
-                <svg class="w-4 h-4 text-amber-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span class="truncate">Unduh QR Meja</span>
-              </span>
-              <span class="text-[9px] font-mono font-bold text-brand-gold bg-brand-gold/15 px-1.5 py-0.5 rounded border border-brand-gold/30 shrink-0">HD 1000px</span>
+            <button id="btnWelcomeDownloadQr" type="button" class="w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/15 text-amber-300 border border-white/20 hover:border-brand-gold/60 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-md cursor-pointer group relative" title="Unduh QR Meja HD 1000px" aria-label="Unduh QR Meja HD 1000px">
+              <svg class="w-5 h-5 text-amber-300 shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="absolute -top-1.5 -right-1.5 text-[8px] font-mono font-bold text-black bg-brand-gold px-1 rounded-full border border-black/40">HD</span>
             </button>
 
-            <button id="btnWelcomeCopyQrLink" type="button" class="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-amber-200 text-xs font-medium border border-brand-gold/30 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer" title="Salin tautan acara ke clipboard">
-              <svg class="w-3.5 h-3.5 text-brand-gold shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-              <span class="truncate">Salin Link QR Acara</span>
+            <button id="btnWelcomeCopyQrLink" type="button" class="w-12 h-12 rounded-2xl bg-white/5 hover:bg-white/10 text-amber-200 border border-brand-gold/30 hover:border-brand-gold/80 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-md cursor-pointer group relative" title="Salin Link Acara" aria-label="Salin Link Acara">
+              <svg class="w-5 h-5 text-brand-gold shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             </button>
           </div>
         </div>
@@ -235,14 +230,14 @@
       </div>
 
       <!-- CAMERA VIEWFINDER FRAME (RESPONSIVE FLEX-1 FIT DENGAN KUNCI ASPECT RATIO ASLI BINGKAI & ZERO-DISTORTION) -->
-      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-1 bg-black rounded-2xl overflow-hidden border-2 border-white/10 shadow-2xl flex items-center justify-center select-none">
+      <div id="viewfinderViewport" class="relative w-full flex-1 min-h-0 my-1 bg-black/95 rounded-2xl overflow-hidden border border-brand-gold/30 shadow-2xl flex items-center justify-center select-none p-0.5">
         <!-- Frame Container dengan Aspect Ratio Proporsional Sesuai Bingkai Asli -->
-        <div id="viewfinderFrameContainer" class="relative h-full max-h-full max-w-full aspect-[4/5] mx-auto overflow-hidden flex items-center justify-center bg-black">
+        <div id="viewfinderFrameContainer" class="relative w-full h-full max-h-full max-w-full aspect-[4/5] mx-auto overflow-hidden flex items-center justify-center rounded-xl bg-black">
           <!-- Live Video Element with Realtime CSS Filter Effect & Autoplay -->
           <video id="cameraVideo" autoplay playsinline muted class="w-full h-full object-cover filter-live-800t"></video>
 
           <!-- Custom Frame Image Overlay (PNG Asli Tanpa Distorsi Pixel) -->
-          <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
+          <img id="vfCustomFrameImg" src="" alt="Custom Frame Overlay" class="hidden absolute inset-0 w-full h-full object-fill pointer-events-none z-10" />
 
           <!-- Live Frame Overlay Preview (Built-in) -->
           <div id="viewfinderFrameOverlay" class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3.5 z-10">
@@ -1095,10 +1090,10 @@
     <div class="bg-brand-surfaceLight border border-brand-surfaceBorder rounded-2xl max-w-sm w-full p-4 flex flex-col items-center shadow-2xl">
       <h3 class="font-serif text-base font-bold text-white mb-2">Pratinjau Foto Acara</h3>
       
-      <!-- Rendered Image Display Container -->
-      <div class="relative w-full aspect-[4/5] bg-black rounded-xl overflow-hidden border border-white/10 mb-2.5 flex items-center justify-center">
+      <!-- Rendered Image Display Container (Adaptif & Bebas Black Void) -->
+      <div id="reviewPhotoContainer" class="relative w-full max-h-[50vh] sm:max-h-[55vh] rounded-2xl overflow-hidden border border-brand-gold/30 mb-2.5 flex items-center justify-center bg-black/50 shadow-inner">
         <canvas id="photoRenderCanvas" class="hidden"></canvas>
-        <img id="reviewPhotoImg" src="" alt="Pratinjau Foto" class="w-full h-full object-contain" />
+        <img id="reviewPhotoImg" src="" alt="Pratinjau Foto" class="max-h-[50vh] sm:max-h-[55vh] w-auto max-w-full h-auto object-contain rounded-xl shadow-2xl" />
       </div>
 
       <!-- Single Frame Lock Info Notice (Muncul jika Acara Mengunci 1 Bingkai Seragam) -->

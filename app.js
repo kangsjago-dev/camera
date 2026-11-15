@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ==============================================================================
  * SNAPEVENT: APP.JS
  * Universal Client Architecture for Event Disposable Camera & Live Gallery
@@ -25,6 +25,14 @@ if (paramGas && paramGas.trim().startsWith('http') && !hasCustomSavedGas) {
 const savedGasUrl = localStorage.getItem('snapevent_gas_url');
 if (savedGasUrl && (savedGasUrl.includes('AKfycbPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw') || savedGasUrl.includes('AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw'))) {
   localStorage.setItem('snapevent_gas_url', GLOBAL_CONFIG.DEFAULT_GAS_URL);
+}
+
+// Helper Parser Boolean Universal (Kebal format "TRUE" Google Sheets & boolean riil)
+function parseBoolSafe(val) {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val === 1;
+  const s = String(val || '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes';
 }
 
 const STATE = {
@@ -82,7 +90,7 @@ const STATE = {
   activeGalleryFilter: 'ALL',
 
   // Stage Photos Gallery (Online Cloud Synced)
-  stagePhotosEnabled: (localStorage.getItem('snapevent_stage_photos_enabled') === 'true'),
+  stagePhotosEnabled: parseBoolSafe(localStorage.getItem('snapevent_stage_photos_enabled')),
   stagePhotosTitle: localStorage.getItem('snapevent_stage_photos_title') || 'Foto Panggung',
   stagePhotosLink: localStorage.getItem('snapevent_stage_photos_link') || '',
 
@@ -1764,7 +1772,7 @@ async function loadEventData() {
             localStorage.setItem('snapevent_podium_mode', STATE.podiumDisplayMode);
           }
           if (res.globalConfig.stage_photos_enabled !== undefined) {
-            STATE.stagePhotosEnabled = (res.globalConfig.stage_photos_enabled === 'true' || res.globalConfig.stage_photos_enabled === true);
+            STATE.stagePhotosEnabled = parseBoolSafe(res.globalConfig.stage_photos_enabled);
             localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
           }
           if (res.globalConfig.stage_photos_title) {
@@ -2052,7 +2060,7 @@ async function syncEventsFromBackend(showToastNotice = false) {
           } catch (e) { }
         }
         if (res.globalConfig.stage_photos_enabled !== undefined) {
-          STATE.stagePhotosEnabled = (res.globalConfig.stage_photos_enabled === 'true' || res.globalConfig.stage_photos_enabled === true);
+          STATE.stagePhotosEnabled = parseBoolSafe(res.globalConfig.stage_photos_enabled);
           localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
         }
         if (res.globalConfig.stage_photos_title) {
@@ -2151,9 +2159,10 @@ async function loadGallery() {
         }
       });
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
+      const serverFileIds = new Set(serverPhotos.map(p => p.gdriveFileId || p.driveFileId).filter(Boolean));
 
-      // Pertahankan HANYA foto lokal yang sedang aktif dalam antrean upload saat ini
-      // Foto zombie/stuck dari sesi sebelumnya otomatis dibersihkan agar hanya foto online valid yang tampil
+      // Pertahankan foto lokal terkini yang sedang aktif atau baru diunggah (< 5 menit)
+      // Mencegah foto hilang saat transisi upload ke Google Drive
       const now = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => {
         if (!p) return false;
@@ -2161,13 +2170,26 @@ async function loadGallery() {
         if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
         if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
         if (serverIds.has(p.idFoto)) return false;
-        // Hanya pertahankan jika proses upload aktif sedang berjalan di memori
+        if (p.gdriveFileId && serverFileIds.has(p.gdriveFileId)) return false;
+        if (p.driveFileId && serverFileIds.has(p.driveFileId)) return false;
+
+        // 1. Pertahankan jika proses upload aktif sedang berjalan di memori
         if (IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
-        // Atau jika foto offline baru saja diambil kurang dari 25 detik lalu
+        // 2. Pertahankan jika foto diunggah dalam kurun 5 menit terakhir
+        if (p.uploadStartedAt && (now - p.uploadStartedAt) < 300000) return true;
+        // 3. Atau jika foto offline baru saja diambil
         if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) {
           const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
           if (tsMatch && tsMatch[1]) {
-            return (now - parseInt(tsMatch[1], 10)) < 25000;
+            return (now - parseInt(tsMatch[1], 10)) < 120000;
+          }
+          return true;
+        }
+        // 4. Atau jika foto memiliki URL cloud valid dan baru saja dibuat
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('https://')) {
+          const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
+          if (tsMatch && tsMatch[1]) {
+            return (now - parseInt(tsMatch[1], 10)) < 300000;
           }
         }
         return false;
@@ -3199,6 +3221,10 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const reviewImg = document.getElementById('reviewPhotoImg');
   if (reviewImg) {
     reviewImg.src = dataUrl;
+  }
+  const reviewContainer = document.getElementById('reviewPhotoContainer');
+  if (reviewContainer && canvas.width && canvas.height) {
+    reviewContainer.style.aspectRatio = `${canvas.width} / ${canvas.height}`;
   }
 
   // Render Pilihan Frame Pasca-Foto di Modal Review
