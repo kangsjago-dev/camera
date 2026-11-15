@@ -171,6 +171,9 @@ function unrecordDeletedCategory(eventId, categoryName) {
 
 function loadEventCategories(eventId) {
   const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  if (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0 && (STATE.activeEventId === id || !eventId)) {
+    return STATE.activeCategories;
+  }
   const deletedSet = getDeletedCategoriesSet(id);
   let result = [];
   try {
@@ -218,7 +221,7 @@ function loadEventCategories(eventId) {
       const lower = name.toLowerCase().trim();
       if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'paling populer') {
         finalName = 'Best Dressed Guest';
-      } else if (lower === 'senyum terhangat') {
+      } else if (lower === 'senyum terhangat' || lower === 'best picture') {
         finalName = 'Best Outfit';
       } else if (lower === 'gaya terunik') {
         finalName = 'Pose Terheboh';
@@ -1122,13 +1125,19 @@ async function initApp() {
 
   if (!STATE.activeEvent) {
     const savedActiveId = localStorage.getItem('snapevent_active_event_id');
+    const activeCandidate = (STATE.events || []).find(e => e.statusEvent === 'AKTIF') || (STATE.events || []).find(e => e.idEvent === 'EVT-202611-392');
     if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
-      STATE.activeEventId = savedActiveId;
+      const savedEv = STATE.events.find(e => e.idEvent === savedActiveId);
+      if (savedEv && savedEv.statusEvent === 'INAKTIF' && activeCandidate) {
+        STATE.activeEventId = activeCandidate.idEvent;
+      } else {
+        STATE.activeEventId = savedActiveId;
+      }
     } else {
-      STATE.activeEventId = (STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-001';
+      STATE.activeEventId = activeCandidate ? activeCandidate.idEvent : ((STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-392');
       localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
     }
-    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
+    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || activeCandidate || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
   }
 
   // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan status event tersebut INAKTIF atau TIDAK DITEMUKAN
@@ -1340,8 +1349,28 @@ async function loadEventData() {
       const urlEvt = new URLSearchParams(window.location.search).get('event');
       const targetId = urlEvt ? getResolvedEventId(urlEvt) : (getResolvedEventId(STATE.activeEventId) || 'ACTIVE');
       const resp = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${targetId}&guestId=${STATE.guestId}`);
-      const res = await resp.json();
-      if (res.status === 'success') {
+      let res = await resp.json();
+      if (!res || res.status !== 'success') {
+        try {
+          const respActive = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=ACTIVE&guestId=${STATE.guestId}`);
+          const resActive = await respActive.json();
+          if (resActive && resActive.status === 'success') {
+            res = resActive;
+          }
+        } catch(e){}
+      }
+      if (res && res.status === 'success') {
+        // Jika browser dibuka tanpa ?event=, pastikan selalu mengikuti event AKTIF global dari server
+        if (!urlEvt && res.globalConfig && res.globalConfig.active_event_id && res.globalConfig.active_event_id !== res.event.idEvent) {
+          try {
+            const respActive = await fetch(`${STATE.gasApiUrl}?action=getEventDetails&eventId=${res.globalConfig.active_event_id}&guestId=${STATE.guestId}`);
+            const resActive = await respActive.json();
+            if (resActive && resActive.status === 'success') {
+              res = resActive;
+            }
+          } catch(e){}
+        }
+
         const localActive = (STATE.events || []).find(e => e.idEvent === res.event.idEvent) || STATE.activeEvent;
         
         let inferredMode = res.event.frameLockMode || localActive?.frameLockMode || 'multi';
@@ -1402,7 +1431,8 @@ async function loadEventData() {
         };
         localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
         applyEventToUI();
-        applyActiveFrame();
+        applyActiveFrame(inferredLocked || STATE.activeFrame);
+
         // SINKRONISASI KATEGORI CUSTOM PER ACARA (Cloud Persistent via Global Config & Local)
         const catKey = `event_categories_${res.event.idEvent}`;
         let cfgCats = null;
@@ -1428,22 +1458,31 @@ async function loadEventData() {
         ];
 
         let finalCats = [];
-        // Prioritaskan simpanan lokal jika pengguna telah mengatur kategori acara ini
-        if (hasLocalSavedCats && Array.isArray(localSavedCats) && localSavedCats.length > 0) {
-          finalCats = localSavedCats;
-        } else if (Array.isArray(cfgCats) && cfgCats.length > 0) {
+        // Server cloud config adalah SUMBER KEBENARAN OTORITATIF LINTAS PERANGKAT!
+        if (Array.isArray(cfgCats) && cfgCats.length > 0) {
           finalCats = cfgCats;
         } else if (Array.isArray(res.categories) && res.categories.length > 0) {
           finalCats = res.categories;
+        } else if (hasLocalSavedCats && Array.isArray(localSavedCats) && localSavedCats.length > 0) {
+          finalCats = localSavedCats;
         } else {
-          finalCats = (Array.isArray(localSavedCats) && localSavedCats.length > 0) ? localSavedCats : standard3Categories;
+          finalCats = standard3Categories;
         }
 
-        // Filter kategori yang telah dihapus oleh pengguna
-        finalCats = finalCats.filter(c => {
-          const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
-          return name && !deletedSetCats.has(name.toLowerCase().trim());
-        });
+        // Jika server cloud mengirim kategori resmi, jangan biarkan tombstone lama di device lain memblokirnya
+        const hasCloudCats = (Array.isArray(cfgCats) && cfgCats.length > 0) || (Array.isArray(res.categories) && res.categories.length > 0);
+        if (hasCloudCats) {
+          finalCats.forEach(c => {
+            const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+            if (name) unrecordDeletedCategory(name, catEventId);
+          });
+        } else {
+          // Hanya filter jika murni dari lokal tanpa cloud
+          finalCats = finalCats.filter(c => {
+            const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+            return name && !deletedSetCats.has(name.toLowerCase().trim());
+          });
+        }
 
         // Normalisasi kategori: migrasi nama template lama jika ada
         finalCats = finalCats.map((c, idx) => {
@@ -1452,7 +1491,7 @@ async function loadEventData() {
           const lower = name.toLowerCase().trim();
           if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'paling populer') {
             finalName = 'Best Dressed Guest';
-          } else if (lower === 'senyum terhangat') {
+          } else if (lower === 'senyum terhangat' || lower === 'best picture') {
             finalName = 'Best Outfit';
           } else if (lower === 'gaya terunik') {
             finalName = 'Pose Terheboh';
@@ -1465,13 +1504,13 @@ async function loadEventData() {
           };
         });
 
-        // Hapus duplikat dan kategori yang telah dihapus
+        // Hapus duplikat
         const uniqueF = [];
         const seenF = new Set();
         finalCats.forEach(c => {
           if (!c || !c.namaKategori) return;
           const k = c.namaKategori.toLowerCase().trim();
-          if (!seenF.has(k) && !deletedSetCats.has(k)) {
+          if (!seenF.has(k)) {
             seenF.add(k);
             uniqueF.push(c);
           }
@@ -1479,11 +1518,12 @@ async function loadEventData() {
         finalCats = uniqueF;
 
         if (finalCats.length === 0) {
-          finalCats = standard3Categories.filter(s => !deletedSetCats.has(s.namaKategori.toLowerCase().trim()));
-          if (finalCats.length === 0) {
-            finalCats = [{ idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Pilihan Tamu", urutan: 1 }];
-          }
+          finalCats = standard3Categories;
         }
+
+        STATE.activeCategories = finalCats;
+        saveEventCategories(catEventId, finalCats);
+        localStorage.setItem('snapevent_active_categories', JSON.stringify(finalCats));
 
         STATE.activeCategories = finalCats;
         saveEventCategories(res.event.idEvent || STATE.activeEventId, finalCats);
@@ -3282,7 +3322,9 @@ function openVoteCategoryModal(idFoto) {
     descEl.textContent = `Pilih kategori penghargaan untuk foto ini (Maks. ${maxVotesAllowed}x vote per tamu • Tersisa: ${remaining} suara):`;
   }
 
-  const categories = loadEventCategories(STATE.activeEventId);
+  const categories = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+    ? STATE.activeCategories
+    : loadEventCategories(STATE.activeEventId);
 
   let hasChecked = false;
   container.innerHTML = categories.map((cat) => {
@@ -6300,6 +6342,11 @@ function bindEvents() {
             resetCreateEventForm();
           }
         }
+        const dateInput = document.getElementById('formEventTanggal');
+        if (dateInput && !dateInput.value) {
+          const now = new Date();
+          dateInput.value = (STATE.activeEvent && formatDateForInput(STATE.activeEvent.tanggalEvent)) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        }
       }
       switchAdminTab(tab);
     });
@@ -6594,15 +6641,15 @@ function showToast(message, type = 'info') {
 }
 
 // --- 9. REALTIME CLOUD HEARTBEAT (OMNI-DEVICE AUTO-SYNC) ---
-// Melakukan sinkronisasi halus di latar belakang setiap 45 detik agar layar proyektor
-// dan HP tamu selalu mendapatkan pengaturan & acara aktif terbaru dari Google Sheets.
+// Melakukan sinkronisasi halus di latar belakang setiap 15 detik agar layar proyektor
+// dan seluruh HP tamu/kolega langsung mendapatkan pengaturan acara, bingkai, & kategori terbaru dari Google Sheets.
 setInterval(() => {
   const gasInput = document.getElementById('cfgGasUrl');
   const isEditingSettings = gasInput && (document.activeElement === gasInput || !document.getElementById('adminTabSettings')?.classList.contains('hidden'));
   if (STATE.gasApiUrl && !document.hidden && !isEditingSettings) {
     loadEventData();
   }
-}, 45000);
+}, 15000);
 
 // Auto-Poll Galeri Realtime: Otomatis memuat foto terbaru tanpa reload halaman (setiap 6 detik)
 setInterval(() => {
@@ -6614,6 +6661,15 @@ setInterval(() => {
     }
   }
 }, 6000);
+
+window.addEventListener('focus', () => {
+  const gasInput = document.getElementById('cfgGasUrl');
+  const isEditingSettings = gasInput && (document.activeElement === gasInput || !document.getElementById('adminTabSettings')?.classList.contains('hidden'));
+  if (STATE.gasApiUrl && !isEditingSettings) {
+    loadEventData();
+    loadGallery();
+  }
+});
 
 document.addEventListener('visibilitychange', () => {
   const gasInput = document.getElementById('cfgGasUrl');

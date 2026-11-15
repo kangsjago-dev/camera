@@ -1,60 +1,41 @@
 # LOG REVISI & STATUS PERBAIKAN SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SUDAH DILAKSANAKAN & TERVERIFIKASI (v2.2.2)
+STATUS: SUDAH DILAKSANAKAN & TERVERIFIKASI (v2.2.4)
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 15 November 2026
 ================================================================================
 
-## 1. AKAR MASALAH YANG DITEMUKAN & PENYELESAIAN
-1. **Penyimpanan Acara Admin Tidak Berubah:**
-   - *Penyebab:* Form admin sebelumnya hanya mengaktifkan acara jika ID acara yang diedit sama persis dengan `STATE.activeEventId` atau jika total acara hanya 1. Jika pengguna mengedit acara lain, acara yang aktif tidak diperbarui dan data di cloud sempat tertimpa pembacaan config lama.
-   - *Solusi ZettBOT:* Pengeditan dan penyimpanan acara kini **secara tanpa syarat** langsung memperbarui `STATE.activeEvent`, `STATE.activeEventId`, dan `STATE.activeCategories`, disimpan permanen di `localStorage`, disinkronkan langsung via REST API ke Google Sheets & Google Apps Script (`adminSaveEvent` + `adminUpdateGlobalConfig`), dan seketika memperbarui antarmuka pengguna (`applyEventToUI`).
+## 1. AKAR MASALAH (ROOT CAUSE) PADA DEVICE LAIN BELUM BERUBAH
+1. **Prioritas Penyimpanan Lokal di Device Lain Mengabaikan Update Cloud:**
+   - *Penyebab:* Pada `loadEventData()`, sistem sebelumnya mendahulukan `localSavedCats` jika perangkat pernah menyimpan kategori di `localStorage` (`hasLocalSavedCats === true`). Ketika Admin mengubah kategori dan bingkai di Device A lalu menyimpannya ke cloud, Device B yang sudah pernah berkunjung tetap membaca cache lokal lamanya (yang berisi nama usang seperti `Best Picture` atau `Momen Terbaper`) dan menolak menimpa dengan data terbaru dari Google Sheets.
+   - *Solusi ZettBOT:* Konfigurasi cloud Google Sheets (`cfgCats` dari `globalConfig` dan `res.categories` dari sheet `Kategori`) kini ditetapkan sebagai **SUMBER KEBENARAN OTORITATIF TERTINGGI (Single Source of Truth)**. Seluruh device lain otomatis menarik data cloud, membersihkan tombstone lama, memperbarui `localStorage`, dan mengaktifkan kategori yang sama persis dengan yang disimpan Admin.
 
-2. **Kategori Poling / Voting Selalu Berubah / Turun Menjadi 1 Kategori:**
-   - *Penyebab:* Pada saat refresh, kategori sempat terisi 3 kategori lokal, namun jeda beberapa detik kemudian server cloud revalidation mengirim data usang (`cfgCats` dengan hanya 1 atau 2 kategori lama) yang menimpa kategori lokal.
-   - *Solusi ZettBOT:* 
-     * Proteksi penyimpanan lokal: jika kategori lokal memiliki minimal 3 kategori valid (`Best Dressed Guest`, `Best Outfit`, `Pose Terheboh`), data tersebut memiliki prioritas otoritatif dan terlindungi dari overwrite cache usang.
-     * Normalisasi otomatis: seluruh nama usang seperti `Best Picture`, `Momen Terbaper`, `The Best Groupie`, `Paling Populer`, dan `Senyum Terhangat` secara otomatis dimigrasikan ke 3 standar resmi:
-       1. 👑 **Best Dressed Guest**
-       2. 👑 **Best Outfit**
-       3. 👑 **Pose Terheboh**
-     * Eliminasi duplikasi nama kategori dan jaminan minimal 3 kategori pada galeri tab maupun modal pemungutan suara (`modalVoteCategory`).
+2. **Desinkronisasi Acara Aktif pada Device Lain Tanpa URL Parameter:**
+   - *Penyebab:* Ketika Device B membuka website tanpa parameter `?event=...`, `initApp()` sebelumnya memilih `STATE.events[0]` (yang berisi acara lama `EVT-202611-001` berstatus `INAKTIF`). Akibatnya, request `getEventDetails` gagal dan Device B tidak pernah tersinkron ke acara `EVT-202611-392`.
+   - *Solusi ZettBOT:* `initApp()` dan `loadEventData()` kini secara otomatis mendeteksi acara `AKTIF` dari cloud (`res.globalConfig.active_event_id`). Jika URL tidak membawa event ID, sistem secara proaktif langsung mengarahkan dan menyinkronkan seluruh device ke acara global yang sedang aktif (`EVT-202611-392`).
 
-3. **Input Tanggal Acara Kosong (`mm / dd / yyyy`):**
-   - *Penyebab:* Elemen `<input type="date">` pada form modal/edit sebelumnya tidak memiliki atribut value bawaan, dan parser tanggal sempat mengembalikan string kosong jika format string dari backend tidak terstandarisasi.
-   - *Solusi ZettBOT:* Menetapkan nilai default `value="2026-11-15"` pada HTML dan memastikan `formatDateForInput()` selalu mengonversi tanggal ke format ISO `YYYY-MM-DD` yang valid untuk browser Chromium/Mobile, sehingga input tanggal tidak pernah lagi kosong.
+3. **Sinkronisasi Real-Time Pengaturan Bingkai (Frame Policy):**
+   - *Penyebab:* Mode bingkai Multi-Frame (`GOLD_DECO`, `POLAROID`, `MINIMAL`) yang disimpan Admin di cloud belum langsung dieksekusi ulang ke viewfinder kamera jika device lain tidak berpindah halaman.
+   - *Solusi ZettBOT:* `applyActiveFrame(inferredLocked || STATE.activeFrame)` kini dieksekusi seketika saat data cloud tiba di `loadEventData()`, memperbarui container pilihan bingkai, badge kunci, dan overlay bingkai pada kamera live stream.
 
-4. **Koneksi Backend & Event Status Inaktif:**
-   - *Penyebab:* Status acara aktif di database server sempat berada pada status `INAKTIF` sehingga memicu penolakan `"Event tidak ditemukan atau sudah tidak aktif"`.
-   - *Solusi ZettBOT:* Acara utama telah disetel kembali menjadi `AKTIF` di Google Sheets, `callGasApiSafe` dioptimalkan agar aksi pembacaan data (`getEventDetails`, `getGallery`) langsung berjalan cepat via GET tanpa hambatan CORS atau delay POST.
+4. **Input Tanggal Acara Kosong (`mm / dd / yyyy`):**
+   - *Penyebab:* Pada form edit admin, jika field tanggal acara sempat belum terisi dari string backend atau dibuka via tab switch, input tidak memiliki fallback tanggal aktif.
+   - *Solusi ZettBOT:* Menambahkan pelindung multi-tier di `populateEditEventForm` dan listener tab switcher `create`: jika input tanggal kosong, sistem otomatis mengisinya dengan tanggal acara aktif atau tanggal hari ini dalam format standar ISO `YYYY-MM-DD`.
+
+5. **Modal "Beri Suara / Like" Menggunakan Kategori Usang:**
+   - *Penyebab:* `openVoteCategoryModal()` sebelumnya memanggil `loadEventCategories(STATE.activeEventId)` secara langsung yang sempat membaca storage lama (menghasilkan opsi `Momen Terbaper`).
+   - *Solusi ZettBOT:* Modal voting kini memprioritaskan `STATE.activeCategories` yang telah disinkronkan dari cloud, menampilkan 3 kategori resmi:
+     1. 👑 **Best Dressed Guest**
+     2. 👑 **Best Outfit**
+     3. 👑 **Pose Terheboh**
+
+6. **Interval Heartbeat & Window Focus Listener:**
+   - *Solusi ZettBOT:* Mempercepat background heartbeat menjadi 15 detik dan memasang listener `window.addEventListener('focus', ...)` sehingga begitu pengguna membuka atau membuka kembali tab browser di HP/laptop lain, seluruh pengaturan acara, bingkai, dan kategori langsung tersinkron seketika (0 delay).
 
 ================================================================================
 ## 2. FILE TERDAMPAK
-1. `app.js` (Optimasi API dispatcher, normalisasi 3 kategori, proteksi overwrite lokal, aktivasi otomatis event simpan)
-2. `index.html` (Perbaikan input tanggal acara, penambahan tombol ➕ Buat Acara, cache busting v2.2.2)
-3. `revisi.md` (Dokumentasi audit dan status penyelesaian)
-================================================================================
-
-
-================================================================================
-# PERBAIKAN ZETTBOT v4.1 - SESI 15 NOVEMBER 2026 (REVISI BUG PENGHAPUSAN KATEGORI)
-================================================================================
-## 1. AKAR MASALAH (ROOT CAUSE) KATEGORI DI-DELETE MASIH KEMBALI
-- **Penyebab Utama:**
-  Pada implementasi sebelumnya, terdapat pengecekan defensif `if (result.length < 3)` dan `if (finalCats.length < 3)` di beberapa fungsi inti (`loadEventCategories`, `loadEventData`, dan `applyEventToUI`). Ketika admin menghapus salah satu kategori melalui tombol silang `✕` (misal dari 3 menjadi 2 atau 1 kategori), sistem membaca jumlah kategori `< 3` dan secara otomatis "menghidupkan kembali" (resurrect) kategori yang baru saja dihapus dengan menariknya dari template bawaan atau config cloud lama.
-  
-## 2. SOLUSI & PERBAIKAN ARSITEKTUR ZETTBOT
-1. **Penerapan Tombstone Registry Kategori Terhapus (`getDeletedCategoriesSet` & `recordDeletedCategory`):**
-   - Saat admin menekan tombol silang `✕` pada baris kategori di form admin (`#categoryInputsContainer`), nama kategori yang dihapus langsung dicatat ke dalam registry persistent `snapevent_deleted_categories_{eventId}`.
-   - Kategori yang berada di dalam registry ini diblokir secara permanen dari proses rendering tab galeri, modal voting, dan form edit, sehingga **tidak akan pernah muncul kembali**.
-   - Perubahan langsung di-render secara reaktif ke UI (`applyEventToUI`, `renderGallery`) seketika tombol `✕` diklik.
-2. **Dukungan Jumlah Kategori Dinamis (Bebas Custom 1, 2, 3, dst.):**
-   - Menghapus paksaan `length < 3` di seluruh fungsi (`loadEventCategories`, `loadEventData`, `applyEventToUI`).
-   - Sistem kini sepenuhnya menghormati jumlah kategori yang ditentukan oleh pengguna, baik 1 kategori, 2 kategori, maupun lebih.
-3. **Penyelarasan Sinkronisasi Cloud (Google Apps Script):**
-   - Saat form disimpan, kategori yang masih bertahan dikirim ke backend Google Apps Script (`adminSaveEvent` + `adminUpdateGlobalConfig`).
-   - Pada Google Apps Script, baris kategori lama acara tersebut di sheet `Kategori` dihapus bersih dan digantikan hanya dengan kategori yang tersisa.
-4. **Cache Busting & Deployment Otomatis:**
-   - Script version diperbarui menjadi `app.js?v=2.2.3` pada `index.html` dan telah di-push serta live di Vercel Production (`https://camera-blush-theta.vercel.app`).
+1. `app.js` (Otoritas cloud config, multi-device auto active event, update modal vote, live sync bingkai, auto-fill tanggal acara, heartbeat 15s + focus listener)
+2. `index.html` (Cache busting `app.js?v=2.2.4`)
+3. `revisi.md` (Dokumentasi audit dan status penyelesaian v2.2.4)
 ================================================================================
