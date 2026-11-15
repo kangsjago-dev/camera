@@ -135,8 +135,43 @@ function getEventCategoriesKey(eventId) {
   return 'snapevent_categories_' + getResolvedEventId(eventId || STATE.activeEventId);
 }
 
+function getDeletedCategoriesSet(eventId) {
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  try {
+    const raw = localStorage.getItem(`snapevent_deleted_categories_${id}`);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return new Set(arr.map(s => String(s).toLowerCase().trim()));
+      }
+    }
+  } catch (e) {}
+  return new Set();
+}
+
+function recordDeletedCategory(eventId, categoryName) {
+  if (!categoryName) return;
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  const delSet = getDeletedCategoriesSet(id);
+  delSet.add(String(categoryName).toLowerCase().trim());
+  try {
+    localStorage.setItem(`snapevent_deleted_categories_${id}`, JSON.stringify(Array.from(delSet)));
+  } catch (e) {}
+}
+
+function unrecordDeletedCategory(eventId, categoryName) {
+  if (!categoryName) return;
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  const delSet = getDeletedCategoriesSet(id);
+  delSet.delete(String(categoryName).toLowerCase().trim());
+  try {
+    localStorage.setItem(`snapevent_deleted_categories_${id}`, JSON.stringify(Array.from(delSet)));
+  } catch (e) {}
+}
+
 function loadEventCategories(eventId) {
   const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  const deletedSet = getDeletedCategoriesSet(id);
   let result = [];
   try {
     const saved = localStorage.getItem(getEventCategoriesKey(id));
@@ -146,12 +181,20 @@ function loadEventCategories(eventId) {
     }
   } catch (e) {}
 
-  if (result.length < 3) {
+  if (!result || result.length === 0) {
     const allEvents = [...(STATE.events || []), ...(typeof MOCK_DATA !== 'undefined' && MOCK_DATA.events ? MOCK_DATA.events : [])];
     const ev = allEvents.find(e => e && e.idEvent === id);
     if (ev && Array.isArray(ev.categories) && ev.categories.length > 0) {
       result = ev.categories;
     }
+  }
+
+  // Filter kategori yang telah dihapus oleh pengguna
+  if (Array.isArray(result) && result.length > 0) {
+    result = result.filter(c => {
+      const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+      return name && !deletedSet.has(name.toLowerCase().trim());
+    });
   }
 
   const defaultStandard3 = [
@@ -160,13 +203,20 @@ function loadEventCategories(eventId) {
     { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
   ];
 
+  if (!Array.isArray(result) || result.length === 0) {
+    result = defaultStandard3.filter(std => !deletedSet.has(std.namaKategori.toLowerCase().trim()));
+    if (result.length === 0) {
+      result = [{ idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Pilihan Tamu", urutan: 1 }];
+    }
+  }
+
   // Migrasi otomatis kategori template usang ke standar acara
   if (Array.isArray(result) && result.length > 0) {
     result = result.map((c, idx) => {
       const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
       let finalName = name;
       const lower = name.toLowerCase().trim();
-      if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'best picture' || lower === 'paling populer') {
+      if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'paling populer') {
         finalName = 'Best Dressed Guest';
       } else if (lower === 'senyum terhangat') {
         finalName = 'Best Outfit';
@@ -182,36 +232,25 @@ function loadEventCategories(eventId) {
     });
   }
 
-  // Hapus duplikat nama kategori
+  // Hapus duplikat nama kategori & buang kategori yang ada di daftar deletedSet
   const uniqueList = [];
   const seenNames = new Set();
-  (result || []).forEach(cat => {
+  (result || []).forEach((cat, idx) => {
     if (!cat || !cat.namaKategori) return;
     const k = cat.namaKategori.toLowerCase().trim();
+    if (deletedSet.has(k)) return;
     if (!seenNames.has(k)) {
       seenNames.add(k);
-      uniqueList.push(cat);
+      uniqueList.push({
+        idKategori: cat.idKategori || `KAT-${idx + 1}`,
+        namaKategori: cat.namaKategori,
+        deskripsi: cat.deskripsi || 'Kategori Pilihan Tamu',
+        urutan: idx + 1
+      });
     }
   });
-  result = uniqueList;
 
-  if (!Array.isArray(result) || result.length === 0) {
-    result = defaultStandard3;
-  } else if (result.length < 3) {
-    defaultStandard3.forEach(std => {
-      if (result.length < 3 && !seenNames.has(std.namaKategori.toLowerCase().trim())) {
-        seenNames.add(std.namaKategori.toLowerCase().trim());
-        result.push({
-          idKategori: `KAT-${result.length + 1}`,
-          namaKategori: std.namaKategori,
-          deskripsi: std.deskripsi,
-          urutan: result.length + 1
-        });
-      }
-    });
-  }
-
-  return result;
+  return uniqueList.length > 0 ? uniqueList : [{ idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Pilihan Tamu", urutan: 1 }];
 }
 
 function saveEventCategories(eventId, categories) {
@@ -219,6 +258,7 @@ function saveEventCategories(eventId, categories) {
   const id = getResolvedEventId(eventId || STATE.activeEventId);
   try {
     localStorage.setItem(getEventCategoriesKey(id), JSON.stringify(categories));
+    localStorage.setItem(`snapevent_categories_updated_at_${id}`, String(Date.now()));
   } catch (e) {}
 }
 
@@ -1377,7 +1417,10 @@ async function loadEventData() {
           } catch(e){}
         }
 
-        const localSavedCats = loadEventCategories(res.event.idEvent || STATE.activeEventId);
+        const catEventId = res.event.idEvent || STATE.activeEventId;
+        const deletedSetCats = getDeletedCategoriesSet(catEventId);
+        const hasLocalSavedCats = !!localStorage.getItem(getEventCategoriesKey(catEventId));
+        const localSavedCats = loadEventCategories(catEventId);
         const standard3Categories = [
           { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
           { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
@@ -1385,25 +1428,29 @@ async function loadEventData() {
         ];
 
         let finalCats = [];
-        // Prioritaskan simpanan lokal jika pengguna telah mengatur minimal 3 kategori valid
-        if (Array.isArray(localSavedCats) && localSavedCats.length >= 3 && !localSavedCats.some(c => c && c.namaKategori && c.namaKategori.toLowerCase().trim() === 'best picture')) {
+        // Prioritaskan simpanan lokal jika pengguna telah mengatur kategori acara ini
+        if (hasLocalSavedCats && Array.isArray(localSavedCats) && localSavedCats.length > 0) {
           finalCats = localSavedCats;
-        } else if (Array.isArray(cfgCats) && cfgCats.length >= 3) {
-          finalCats = cfgCats;
-        } else if (Array.isArray(res.categories) && res.categories.length >= 3) {
-          finalCats = res.categories;
         } else if (Array.isArray(cfgCats) && cfgCats.length > 0) {
           finalCats = cfgCats;
+        } else if (Array.isArray(res.categories) && res.categories.length > 0) {
+          finalCats = res.categories;
         } else {
-          finalCats = localSavedCats;
+          finalCats = (Array.isArray(localSavedCats) && localSavedCats.length > 0) ? localSavedCats : standard3Categories;
         }
 
-        // Normalisasi kategori: migrasi nama template lama & pastikan minimal 3 kategori tersinkron
+        // Filter kategori yang telah dihapus oleh pengguna
+        finalCats = finalCats.filter(c => {
+          const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+          return name && !deletedSetCats.has(name.toLowerCase().trim());
+        });
+
+        // Normalisasi kategori: migrasi nama template lama jika ada
         finalCats = finalCats.map((c, idx) => {
           const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
           let finalName = name;
           const lower = name.toLowerCase().trim();
-          if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'best picture' || lower === 'paling populer') {
+          if (lower === 'momen terbaper' || lower === 'the best groupie' || lower === 'paling populer') {
             finalName = 'Best Dressed Guest';
           } else if (lower === 'senyum terhangat') {
             finalName = 'Best Outfit';
@@ -1418,31 +1465,24 @@ async function loadEventData() {
           };
         });
 
-        // Hapus duplikat
+        // Hapus duplikat dan kategori yang telah dihapus
         const uniqueF = [];
         const seenF = new Set();
         finalCats.forEach(c => {
           if (!c || !c.namaKategori) return;
           const k = c.namaKategori.toLowerCase().trim();
-          if (!seenF.has(k)) {
+          if (!seenF.has(k) && !deletedSetCats.has(k)) {
             seenF.add(k);
             uniqueF.push(c);
           }
         });
         finalCats = uniqueF;
 
-        if (finalCats.length < 3) {
-          standard3Categories.forEach(std => {
-            if (finalCats.length < 3 && !seenF.has(std.namaKategori.toLowerCase().trim())) {
-              seenF.add(std.namaKategori.toLowerCase().trim());
-              finalCats.push({
-                idKategori: `KAT-${finalCats.length + 1}`,
-                namaKategori: std.namaKategori,
-                deskripsi: std.deskripsi,
-                urutan: finalCats.length + 1
-              });
-            }
-          });
+        if (finalCats.length === 0) {
+          finalCats = standard3Categories.filter(s => !deletedSetCats.has(s.namaKategori.toLowerCase().trim()));
+          if (finalCats.length === 0) {
+            finalCats = [{ idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Pilihan Tamu", urutan: 1 }];
+          }
         }
 
         STATE.activeCategories = finalCats;
@@ -2184,7 +2224,7 @@ function applyEventToUI() {
     const isWinners = STATE.activeGalleryFilter === 'WINNERS';
     const isAll = (!isWinners && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
 
-    const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length >= 3 && !STATE.activeCategories.some(c => c && c.namaKategori && c.namaKategori.toLowerCase().trim() === 'best picture'))
+    const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0 && !STATE.activeCategories.some(c => c && c.namaKategori && c.namaKategori.toLowerCase().trim() === 'best picture'))
       ? STATE.activeCategories
       : loadEventCategories(STATE.activeEventId);
     STATE.activeCategories = catsToRender;
@@ -5051,21 +5091,54 @@ function populateEditEventForm(ev) {
 
 function renderCategoryInputRows(cats) {
   const container = document.getElementById('categoryInputsContainer');
+  if (!container) return;
   container.innerHTML = '';
-  const list = cats && cats.length > 0 ? cats : [
+  const formEvId = document.getElementById('formEventId')?.value || STATE.activeEventId;
+  const deletedSet = getDeletedCategoriesSet(formEvId);
+
+  let list = (cats && cats.length > 0) ? cats.filter(c => {
+    const n = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+    return n && !deletedSet.has(n.toLowerCase().trim());
+  }) : [
     { namaKategori: "Best Dressed Guest" },
     { namaKategori: "Best Outfit" },
     { namaKategori: "Pose Terheboh" }
   ];
 
+  if (!list || list.length === 0) {
+    list = [
+      { namaKategori: "Best Dressed Guest" },
+      { namaKategori: "Best Outfit" },
+      { namaKategori: "Pose Terheboh" }
+    ].filter(s => !deletedSet.has(s.namaKategori.toLowerCase().trim()));
+  }
+
   list.forEach((c) => {
+    const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+    if (!name) return;
     const row = document.createElement('div');
-    row.className = "flex items-center gap-2";
+    row.className = "flex items-center gap-2 category-row";
     row.innerHTML = `
-      <input type="text" value="${c.namaKategori}" class="cat-input flex-1 bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" placeholder="Nama Kategori (misal: Best Outfit)" />
-      <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs">✕</button>
+      <input type="text" value="${name}" class="cat-input flex-1 bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" placeholder="Nama Kategori (misal: Best Outfit)" />
+      <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs transition cursor-pointer" title="Hapus Kategori">✕</button>
     `;
-    row.querySelector('.btn-remove-cat').onclick = () => row.remove();
+    row.querySelector('.btn-remove-cat').onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const val = row.querySelector('.cat-input')?.value.trim();
+      const evId = document.getElementById('formEventId')?.value || STATE.activeEventId;
+      if (val) {
+        recordDeletedCategory(evId, val);
+        if (STATE.activeEventId === evId || !STATE.activeEventId) {
+          STATE.activeCategories = (STATE.activeCategories || []).filter(item => item && item.namaKategori && item.namaKategori.toLowerCase().trim() !== val.toLowerCase().trim());
+          saveEventCategories(evId, STATE.activeCategories);
+          applyEventToUI();
+          renderGallery();
+        }
+      }
+      row.remove();
+      showToast(`Kategori "${val || 'terpilih'}" dihapus. Klik Simpan untuk memperbarui di server.`, "info", 3000);
+    };
     container.appendChild(row);
   });
 }
@@ -5413,15 +5486,19 @@ async function saveAdminEventForm() {
   const cats = [];
   catInputs.forEach((inp, idx) => {
     const val = inp.value.trim();
-    if (val) cats.push({ idKategori: `KAT-${idx + 1}`, namaKategori: val, urutan: idx + 1 });
+    if (val) {
+      unrecordDeletedCategory(targetEventId, val);
+      cats.push({
+        idKategori: `KAT-${idx + 1}`,
+        namaKategori: val,
+        deskripsi: 'Kategori Pilihan Tamu',
+        urutan: idx + 1
+      });
+    }
   });
 
   if (cats.length === 0) {
-    cats.push(
-      { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-      { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
-      { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
-    );
+    cats.push({ idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Pilihan Tamu", urutan: 1 });
   }
 
   let frameLockMode = 'multi';
@@ -6294,16 +6371,33 @@ function bindEvents() {
     saveAdminEventForm();
   });
 
-  document.getElementById('btnAddCategoryRow').addEventListener('click', () => {
+  document.getElementById('btnAddCategoryRow')?.addEventListener('click', () => {
     const container = document.getElementById('categoryInputsContainer');
+    if (!container) return;
     const row = document.createElement('div');
-    row.className = "flex items-center gap-2";
+    row.className = "flex items-center gap-2 category-row";
     row.innerHTML = `
       <input type="text" class="cat-input flex-1 bg-[#111116] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-brand-gold outline-none" placeholder="Nama Kategori Baru" />
-      <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs">✕</button>
+      <button type="button" class="btn-remove-cat p-2 text-zinc-400 hover:text-red-400 text-xs transition cursor-pointer" title="Hapus Kategori">✕</button>
     `;
-    row.querySelector('.btn-remove-cat').onclick = () => row.remove();
+    row.querySelector('.btn-remove-cat').onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const val = row.querySelector('.cat-input')?.value.trim();
+      const evId = document.getElementById('formEventId')?.value || STATE.activeEventId;
+      if (val) {
+        recordDeletedCategory(evId, val);
+        if (STATE.activeEventId === evId || !STATE.activeEventId) {
+          STATE.activeCategories = (STATE.activeCategories || []).filter(item => item && item.namaKategori && item.namaKategori.toLowerCase().trim() !== val.toLowerCase().trim());
+          saveEventCategories(evId, STATE.activeCategories);
+          applyEventToUI();
+          renderGallery();
+        }
+      }
+      row.remove();
+    };
     container.appendChild(row);
+    row.querySelector('.cat-input')?.focus();
   });
 
   document.getElementById('btnCancelEditEvent').addEventListener('click', () => {
