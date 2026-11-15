@@ -3189,11 +3189,6 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
   // 3. Render Selected Custom Frame & Hashtag
-  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
-  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
-    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
-  }
-  STATE.activeFrame = frameToUse;
   await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
   // Tampilkan ke elemen <img> pratinjau dengan kualitas FHD (JPEG 0.98 + target 1 MB - 3 MB)
