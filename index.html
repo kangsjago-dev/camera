@@ -136,27 +136,27 @@
           <span class="text-[10px] text-zinc-400 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">Buka di HP Lain</span>
         </div>
         
-        <div class="flex flex-col sm:flex-row items-center gap-4 mb-3">
-          <!-- QR Code Image Box (Besar, Mewah & Tajam) -->
-          <div class="w-40 h-40 sm:w-44 sm:h-44 bg-white rounded-2xl p-2.5 shrink-0 shadow-xl flex items-center justify-center cursor-pointer hover:scale-105 transition-transform duration-300 ring-2 ring-brand-gold/40 relative group" id="welcomeQrClickBox" title="Klik untuk perbesar QR Code di layar penuh">
+        <div class="flex items-center justify-center gap-3.5 sm:gap-5 mb-3.5">
+          <!-- QR Code Image Box (Besar, Mewah, Bersih Bebas Obstruksi) -->
+          <div class="w-40 h-40 sm:w-44 sm:h-44 bg-white rounded-2xl p-2 shrink-0 shadow-xl shadow-brand-gold/15 flex items-center justify-center cursor-pointer hover:scale-[1.02] transition-transform duration-300 ring-2 ring-brand-gold/50 border border-brand-gold/40 relative" id="welcomeQrClickBox" title="Klik untuk perbesar QR Code di layar penuh">
             <img id="welcomeQrImg" src="" alt="QR Code Acara" class="w-full h-full object-contain" />
-            <div class="absolute bottom-1 right-1 bg-black/80 text-brand-gold text-[9px] px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition">
-              <span>🔍</span> Zoom
-            </div>
           </div>
 
-          <!-- Tombol Aksi di Samping Gambar QR (Logo / Ikon Saja - Modern Luxury) -->
-          <div class="flex sm:flex-col items-center justify-center gap-3 shrink-0">
-            <button id="btnWelcomeShareLink" type="button" class="w-12 h-12 rounded-2xl gold-gradient-bg text-black hover:brightness-110 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-lg shadow-brand-gold/25 cursor-pointer group relative" title="Bagikan Link Acara" aria-label="Bagikan Link Acara">
-              <svg class="w-5 h-5 text-black shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <!-- VIP Action Dock: 3 Tombol Aksi Logo Saja yang Presisi & Mewah (Tinggi 1:1 Sejajar QR) -->
+          <div class="flex flex-col items-center justify-between h-40 sm:h-44 p-1.5 rounded-2xl bg-black/40 border border-brand-gold/30 shadow-inner shrink-0">
+            <!-- 1. Bagikan Link Acara -->
+            <button id="btnWelcomeShareLink" type="button" class="w-11 h-11 sm:w-12 sm:h-12 rounded-xl gold-gradient-bg text-black hover:brightness-110 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-md shadow-brand-gold/30 cursor-pointer group" title="Bagikan Link Acara" aria-label="Bagikan Link Acara">
+              <svg class="w-5 h-5 text-black shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             </button>
 
-            <button id="btnWelcomeDownloadQr" type="button" class="w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/15 text-amber-300 border border-white/20 hover:border-brand-gold/60 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-md cursor-pointer group relative" title="Unduh QR Meja HD 1000px" aria-label="Unduh QR Meja HD 1000px">
-              <svg class="w-5 h-5 text-amber-300 shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span class="absolute -top-1.5 -right-1.5 text-[8px] font-mono font-bold text-black bg-brand-gold px-1 rounded-full border border-black/40">HD</span>
+            <!-- 2. Unduh QR Meja HD -->
+            <button id="btnWelcomeDownloadQr" type="button" class="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-[#14141C]/90 hover:bg-[#1C1C26] text-brand-gold border border-brand-gold/40 hover:border-brand-gold/80 active:scale-95 transition-all duration-200 flex flex-col items-center justify-center shadow-sm cursor-pointer group" title="Unduh QR Meja HD 1000px" aria-label="Unduh QR Meja HD 1000px">
+              <svg class="w-4 h-4 text-brand-gold shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="text-[7.5px] font-mono font-black text-amber-300 tracking-tight leading-none mt-0.5">HD</span>
             </button>
 
-            <button id="btnWelcomeCopyQrLink" type="button" class="w-12 h-12 rounded-2xl bg-white/5 hover:bg-white/10 text-amber-200 border border-brand-gold/30 hover:border-brand-gold/80 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-md cursor-pointer group relative" title="Salin Link Acara" aria-label="Salin Link Acara">
+            <!-- 3. Salin Link QR Acara -->
+            <button id="btnWelcomeCopyQrLink" type="button" class="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-[#14141C]/90 hover:bg-[#1C1C26] text-brand-gold border border-brand-gold/40 hover:border-brand-gold/80 active:scale-95 transition-all duration-200 flex items-center justify-center shadow-sm cursor-pointer group" title="Salin Link Acara" aria-label="Salin Link Acara">
               <svg class="w-5 h-5 text-brand-gold shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             </button>
           </div>

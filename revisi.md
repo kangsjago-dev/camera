@@ -1,128 +1,113 @@
 # RENCANA REVISI & PENYEMPURNAAN SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI TARGET: v2.2.9
-STATUS: SELESAI DITERAPKAN (VERSION 2.2.9)
+VERSI TARGET: v2.3.0
+STATUS: SELESAI DITERAPKAN (VERSION 2.3.0)
 AUTHOR: ZettBOT by Zettbos (Universal Product Architect & Lead Engineering Mentor)
 TANGGAL: 15 November 2026
 ================================================================================
 
-## 1. LATAR BELAKANG & TUJUAN REVISI v2.2.9
-Berdasarkan keluhan, instruksi, dan 8 tangkapan layar (screenshot) terbaru dari pengguna:
-1. **Tombol QR Sambutan Tamu Logo/Ikon Saja (viewWelcome):** Pada kartu `#welcomeQrCard`, ubah tombol Bagikan Link, Unduh QR Meja, dan Salin Link QR menjadi tombol berbentuk logo/ikon elegan saja tanpa tulisan teks (sesuai screenshot close-up tombol).
-2. **Perbaikan Sinkronisasi Foto Galeri (Foto Berhasil Upload Google Drive Tapi Tidak Tampil di Galeri):** Memperbaiki bug di mana foto yang telah terunggah ke Google Drive tidak muncul di galeri tamu dan admin.
-3. **Perbaikan Pengaturan Menu Foto Panggung (Toggle & Tautan Tidak Bisa Diubah):** Memperbaiki bug pada panel admin di mana switch aktif/nonaktif dan tautan menu Foto Panggung selalu kembali tidak tercentang saat halaman dimuat atau disimpan.
-4. **Perbaikan Tampilan Live Cam & Pratinjau Foto (Bebas Terpotong & Bebas Void Hitam):** Memperbaiki tampilan viewfinder kamera live dan modal pratinjau foto agar tampil proporsional, menyatu dengan bingkai, bebas dari bar hitam mati (*black void letterboxing*), dan tampak mewah serta estetis.
-5. **100% Online Cloud Sync:** Seluruh perintah dan pengaturan tersimpan secara online di Google Sheets `DataPengaturanGlobal` (`globalConfig`) dan Google Drive.
-6. **Pertahankan Fitur Eksisting:** Dilarang mengubah fitur yang tidak diperintahkan (live streaming kamera, switch depan/belakang, zoom slider 1x-3x, filter analog 800T, kuota foto, dan sistem voting).
+## 1. LATAR BELAKANG & TUJUAN REVISI v2.3.0
+Berdasarkan tangkapan layar terbaru (`media_1794755102755_c24cf01b.png`) dan instruksi pengguna:
+> *"buat menjadi lebih elegan dan presisi*  
+> *- semua perintah yang masih disimpan di local, buat menjadi online*  
+> *- jangan ubah yang tidak diperintahkan, pertahankan yang sudah ada"*
+
+Sistem akan disempurnakan pada estetika visual, presisi geometris kartu QR sambutan tamu, serta penegasan arsitektur 100% online cloud sync.
 
 ---
 
-## 2. ANALISIS AKAR MASALAH & RANCANGAN TEKNIS PER POIN
+## 2. ANALISIS AKAR MASALAH VISUAL & RANCANGAN TEKNIS PRESISI
 
-### A. Tombol Aksi QR Sambutan Tamu: Format Logo Saja Tanpa Tulisan (#welcomeQrCard)
-* **Kondisi Saat Ini:**
-  Tiga tombol di samping QR Code (`#btnWelcomeShareLink`, `#btnWelcomeDownloadQr`, `#btnWelcomeCopyQrLink`) saat ini memuat label teks panjang seperti "Bagikan Link Acara", "Unduh QR Meja HD 1000px", dan "Salin Link QR Acara". Pada layar ponsel, teks panjang ini membuat tata letak terasa padat dan kurang ringkas.
-* **Solusi Rekayasa:**
-  1. Hapus seluruh elemen teks `<span>` di dalam ketiga tombol tersebut.
-  2. Tampilkan ketiga tombol sebagai **Luxury Icon Buttons** berbentuk lingkaran / rounded squircle modern:
-     - 🔗 **Tombol 1 (Share Link):** Ikon SVG Bagikan modern berlatar gradasi emas berkilau (`gold-gradient-bg`), efek bayangan emas halus.
-     - ⬇️ **Tombol 2 (Unduh QR HD):** Ikon SVG Download / QR Code berlatar dark glass VIP (`bg-white/10 border-white/15`).
-     - 📋 **Tombol 3 (Salin Tautan):** Ikon SVG Copy Link berlatar dark glass border emas (`border-brand-gold/30`).
-  3. Berikan atribut `title` dan `aria-label` yang ramah aksesibilitas ("Bagikan Link Acara", "Unduh QR Meja HD 1000px", "Salin Link Acara") sehingga tooltip tetap muncul saat disentuh/dihari mouse.
-  4. Susun tombol secara sejajar vertikal atau horizontal kompak di samping kotak QR Code besar.
-
----
-
-### B. Sinkronisasi Foto Galeri (Foto Berhasil Upload ke Google Drive Tapi Tidak Muncul di Galeri)
-* **Akar Masalah:**
-  1. **Penghapusan Baris Destruktif di Backend (`code.gs` baris 893-908):**
-     Pada fungsi `handleGetGallery`, terdapat logika yang memeriksa keberadaan file di Google Drive via `DriveApp.getFileById(fileId)`. Google Drive API seringkali memerlukan jeda waktu 1–3 detik untuk mengindeks file baru yang baru saja diunggah, atau mengalami rate limit sesaat. Ketika verifikasi sementara gagal, script langsung memasukkan baris tersebut ke `rowsToDelete` dan menjalankan `fotoSheet.deleteRow()`. Akibatnya, baris foto yang baru saja berhasil diunggah langsung TERHAPUS dari sheet `DataFoto` oleh request pembacaan galeri!
-  2. **Pembersihan Prematur di Frontend (`app.js` baris 2157-2174):**
-     Di fungsi `loadGallery()`, filter `pendingLocalPhotos` hanya mempertahankan foto lokal jika `p.gdriveViewUrl.startsWith('data:')`. Begitu upload selesai di latar belakang, `gdriveViewUrl` berubah menjadi URL Google Drive (`https://lh3.googleusercontent.com/...`). Jika server Google Sheets belum mengembalikan foto tersebut saat request `getGallery` pertama tiba, foto langsung dibuang dari memori `STATE.photos` sehingga foto lenyap dari galeri.
-  3. **Tombstone Deleted Photos Server:**
-     ID foto yang pernah dihapus saat pengujian sebelumnya tersimpan di `deleted_photos` Google Sheets dan memfilter foto yang diunggah dengan nomor urut yang sama.
-* **Solusi Rekayasa:**
-  1. **Hapus Total Operasi `deleteRow` dari `handleGetGallery` (`code.gs`):**
-     Operasi pembacaan galeri (GET) DILARANG KERAS menghapus data fisik database. Hapus blok `rowsToDelete` dan `fotoSheet.deleteRow()`. Seluruh foto yang tercatat di `DataFoto` yang statusnya bukan `SEMBUNYI` akan dikembalikan ke galeri dengan andal.
-  2. **Retensi Pintar Foto Baru di Frontend (`app.js`):**
-     Pada fungsi `loadGallery()`, pertahankan foto di `pendingLocalPhotos` jika foto tersebut diunggah kurang dari 5 menit yang lalu (`Date.now() - p.uploadStartedAt < 300000`), baik status URL-nya masih `data:` maupun sudah `https:`, sampai server resmi mengembalikan foto tersebut di dalam `serverPhotos`.
-  3. **Pencocokan Multi-Kunci Anti-Duplikasi:**
-     Gunakan Set pencocokan komprehensif berdasarkan `idFoto`, `gdriveFileId`, dan `driveFileId` sehingga foto yang baru diunggah langsung tampil mulus tanpa pernah hilang.
+### A. Evaluasi Geometri & Estetika Kartu QR Saat Ini (Berdasarkan Screenshot)
+1. **Inkonsistensi Bahasa Visual 3 Tombol Aksi:**
+   - Tombol 1 (Share) menggunakan latar solid emas cerah (`gold-gradient-bg text-black`).
+   - Tombol 2 (Download) menggunakan latar gelap semi-transparan (`bg-white/10`) tanpa border emas yang tegas.
+   - Tombol 3 (Copy Link) menggunakan latar sangat gelap (`bg-white/5 border border-brand-gold/30`).
+   - Ketiganya memiliki 3 perlakuan visual yang berbeda sehingga tampak tidak serasi (*unbalanced/disconnected*).
+2. **Posisi Badge "HD" Menabrak Border:**
+   - Pada tombol Unduh QR, badge `HD` berposisi absolute di pojok kanan atas (`-top-1.5 -right-1.5`) yang menabrak dan memotong lekukan sudut tombol (*squircle*), memberi kesan kurang presisi (*awkward clipping*).
+3. **Pill "Zoom" Menutupi Pola QR Code:**
+   - Tag abu-abu `🔍 Zoom` di sudut kanan bawah kotak QR code menindih sebagian sudut modul pola piksel QR Code. Hal ini tidak hanya mengurangi keindahan estetika, tetapi juga berisiko mengganggu kamera HP tamu yang sedang memindai QR Code.
+4. **Keseimbangan Tinggi & Spasi Vertikal:**
+   - Kotak QR Code dan tumpukan 3 tombol aksi di sampingnya belum terikat dalam satu kesatuan proporsional (*dock container*), sehingga tampak seperti 3 kotak yang melayang longgar di samping kotak putih besar.
 
 ---
 
-### C. Pengaturan Menu Foto Panggung Tidak Bisa Diubah (Admin Settings Fix)
-* **Akar Masalah:**
-  1. Di Google Sheets tab `DataPengaturanGlobal`, nilai boolean disimpan otomatis oleh Google Sheets sebagai huruf kapital `"TRUE"`.
-  2. Di `app.js` (baris 1767 dan 2055), kode menggunakan perbandingan ketat:
-     `STATE.stagePhotosEnabled = (res.globalConfig.stage_photos_enabled === 'true' || res.globalConfig.stage_photos_enabled === true);`
-     Karena string `"TRUE" !== 'true'`, ekspresi tersebut menghasilkan nilai `false`!
-  3. Akibatnya, setiap kali halaman di-refresh atau sinkronisasi background berjalan, status `stagePhotosEnabled` dipaksa kembali menjadi `false`, dan checkbox di panel admin otomatis menjadi tidak tercentang (unchecked).
-* **Solusi Rekayasa:**
-  1. Buat fungsi pembantu `parseBoolSafe(val)`:
-     ```javascript
-     function parseBoolSafe(val) {
-       if (typeof val === 'boolean') return val;
-       if (typeof val === 'number') return val === 1;
-       const s = String(val || '').trim().toLowerCase();
-       return s === 'true' || s === '1' || s === 'yes';
-     }
-     ```
-  2. Terapkan `parseBoolSafe` pada pembacaan `stage_photos_enabled` di `loadEventData()`, `syncEventsFromBackend()`, `applyGlobalConfigToUI()`, dan saat inisialisasi state.
-  3. Pastikan tombol "⚡ Uji Tautan Drive" dan formulir "Simpan Konfigurasi" (`btnSaveGlobalSettings`) mengirimkan pembaruan ke Google Apps Script dengan benar dan langsung memperbarui status tampilan di seluruh perangkat.
+### B. Solusi Rekayasa: Ultra-Luxury VIP Action Dock & Pixel-Perfect Alignment
+
+1. **Wadah Terpadu "VIP Action Dock" (Unified Luxury Container):**
+   - Satukan ketiga tombol aksi di dalam kontainer dock vertikal kaca obsidian beraksen emas (`bg-[#121218]/90 border border-brand-gold/25 rounded-3xl p-2 shadow-inner`).
+   - Ketinggian dock diselaraskan secara presisi 1:1 agar seimbang sempurna dengan tinggi kotak QR Code.
+
+2. **Penyelarasan Desain 3 Tombol Aksi (Cohesive Gold VIP Palette):**
+   - **Tombol 1 (Bagikan Acara):** Tombol utama dengan gradasi emas mewah (*Royal Metallic Gold Gradient*), ikon SVG bagikan presisi, efek hover glowing emas lembut.
+   - **Tombol 2 (Unduh QR Meja HD):** Obsidian glass berpadu border aksen emas (`border-brand-gold/40 hover:border-brand-gold`). Ikon unduh dengan label **`HD` terintegrasi rapi secara simetris di dalam tata letak tombol** (bukan badge tempelan yang menabrak border), menghasilkan tampilan yang bersih dan proporsional.
+   - **Tombol 3 (Salin Tautan Acara):** Obsidian glass selaras berpadu border aksen emas (`border-brand-gold/40 hover:border-brand-gold`) dengan ikon salin tautan kembar.
+   - Ketiga tombol berukuran presisi seragam (52px × 52px) dengan lekukan sudut halus (`rounded-2xl`) dan feedback sentuhan lembut (*micro-interaction*).
+
+3. **Penyempurnaan Kotak QR Code (Bebas Halangan Piksel):**
+   - Hilangkan pill gelap yang menutupi sudut QR Code.
+   - Ganti dengan indikator zoom non-obstruktif: sebuah ikon kaca pembesar mini elegan di luar area aktif QR atau frame aksen emas yang bersih dan siap scan 100%.
+   - Kotak putih QR Code dilapisi ring emas halus (`ring-2 ring-brand-gold/40 shadow-xl shadow-brand-gold/15 rounded-2xl`).
+
+4. **Keseimbangan Tata Letak Kartu `#welcomeQrCard`:**
+   - Penataan grid/flex yang simetris sempurna antara QR Box dan Action Dock (`flex-row items-center justify-center gap-5 sm:gap-6`).
+   - Kartu berlatar belakang gradasi gelap mewah (`bg-gradient-to-b from-[#181822] via-[#121217] to-[#0A0A0F] border border-brand-gold/30 rounded-3xl p-5 sm:p-6 shadow-2xl shadow-brand-gold/15`).
 
 ---
 
-### D. Presisi Tampilan Live Cam & Preview Live Cam (Bebas Terpotong & Bebas Void Hitam)
-* **Akar Masalah:**
-  1. Kontainer `#viewfinderViewport` memiliki background hitam pekat (`bg-black`), dan di dalamnya `#viewfinderFrameContainer` dipatok kaku dengan class `aspect-[4/5] mx-auto`. Pada smartphone modern (rasio 9:19 atau 9:20), ini memicu ruang kosong hitam raksasa di atas dan bawah viewfinder kamera, membuat tampilan tampak seperti terpotong atau terkotak sempit di tengah.
-  2. Tag `#vfCustomFrameImg` menggunakan `object-contain` sementara video menggunakan `object-cover`. Jika gambar bingkai kustom memiliki aspek yang sedikit berbeda dari 4:5, bingkai mengecil di dalam kontainer dan menyisakan celah transparan antara bingkai dan pinggiran video.
-  3. Pada modal pratinjau foto (`#modalReviewPhoto`), kontainer foto juga dikunci kaku dengan `aspect-[4/5]` dan `object-contain`, menghasilkan bar hitam void yang mengelilingi foto hasil tangkapan.
-* **Solusi Rekayasa:**
-  1. **Harmonisasi Viewfinder Kamera Live (`#viewfinderViewport` & `#viewfinderFrameContainer`):**
-     - Hilangkan ruang kosong hitam mati. Buat kontainer kamera live mengisi viewport secara alami dan proporsional.
-     - Pasang bingkai kustom `#vfCustomFrameImg` agar melekat pas pada area video secara presisi tanpa celah kosong.
-     - Berikan frame styling studio modern: sudut melengkung mewah (`rounded-2xl`), border aksen tipis emas, dan penempatan kontrol zoom serta filter yang ergonomis.
-  2. **Desain Ulang Pratinjau Foto Acara (`#modalReviewPhoto`):**
-     - Ganti kontainer kaku `aspect-[4/5]` dengan kontainer pratinjau adaptif (`max-h-[55vh] w-auto mx-auto`) yang menyesuaikan dengan proporsi asli foto hasil jepretan.
-     - Hilangkan black void letterboxing. Foto hasil jepretan tampil utuh, tajam, dengan sudut melengkung elegan dan bayangan mewah.
-     - Tata ulang tombol "Foto Ulang" dan "Simpan ke Rol" agar kompak dan mudah dijangkau satu tangan.
+### C. Jaminan 100% Online Cloud Sync (Semua Perintah Terhubung ke Cloud)
+- Memastikan seluruh mutasi data tersinkronisasi ke Google Sheets `DataPengaturanGlobal` (`globalConfig`) dan Google Drive:
+  1. Pengaturan Foto Panggung (Status aktif/nonaktif, judul kustom, tautan Drive) -> tersimpan di Google Sheets tab `DataPengaturanGlobal`.
+  2. Pengaturan Bingkai Kustom (Single Lock vs Multi-Frame) -> tersimpan di Google Sheets `event_frame_settings_${id}`.
+  3. Kategori Voting Kustom -> tersimpan di Google Sheets `event_categories_${id}`.
+  4. Status Sembunyi/Tampil & Penghapusan Foto -> tersimpan di Google Sheets `DataFoto` dan `hidden_photos` / `deleted_photos`.
+  5. Pengunggahan Foto Jepretan Tamu -> tersimpan langsung ke Google Drive dan tercatat di sheet `DataFoto`.
+
+---
+
+### D. Komitmen Pemeliharaan Fitur Eksisting (Strict Zero-Regressions)
+> [!IMPORTANT]
+> Seluruh fitur yang berjalan baik **tetap dipertahankan 100% utuh**:
+> - Live streaming kamera & switch kamera depan/belakang
+> - Floating camera zoom controls (1x, 2x, 3x)
+> - Realtime analog filter grading (RAW, 800T Cine, Warm Sun)
+> - Kuota foto dan penomoran otomatis
+> - Sistem voting 2x per tamu dan live leaderboard podium
 
 ---
 
 ## 3. BERKAS YANG AKAN DIMODIFIKASI
 1. `index.html`:
-   - Redesain tombol aksi di `#welcomeQrCard` menjadi **Icon-Only Luxury Buttons** (tanpa tulisan teks).
-   - Penataan ulang kontainer `#viewfinderViewport` dan `#viewfinderFrameContainer` di `#viewCamera` agar imersif dan tidak tampak terpotong.
-   - Penataan ulang kontainer pratinjau di `#modalReviewPhoto` agar adaptif mengikuti foto dan bebas dari bar hitam void.
+   - Penataan ulang komponen kartu `#welcomeQrCard`: integrasi VIP Action Dock vertikal untuk 3 tombol aksi, pemindahan/penghilangan tag zoom yang menutupi QR code, dan penyelarasan margin simetris.
 2. `app.js`:
-   - Implementasi `parseBoolSafe()` untuk memastikan konfigurasi `stage_photos_enabled` ("TRUE" / "true") terbaca benar 100%.
-   - Penyempurnaan `loadGallery()` untuk mempertahankan foto lokal yang baru diunggah (< 5 menit) agar tidak hilang saat transisi upload ke cloud.
-   - Penyesuaian `processPhotoWithFrameAndFilter()` dan render pratinjau agar foto dan bingkai pas 1:1 tanpa celah.
-3. `code.gs`:
-   - Hapus total operasi `deleteRow` dari `handleGetGallery()` agar pembacaan galeri tidak pernah menghapus data foto.
-4. `prd.md`:
-   - Sinkronisasi master context dan log pembaruan resmi v2.2.9 pada zona bawah living context.
+   - Penyesuaian event listener dan styling interaksi mikro pada suite tombol aksi.
+   - Pengecekan menyeluruh untuk memastikan 100% mutasi data tersinkronisasi online ke backend Google Apps Script.
+3. `prd.md`:
+   - Dokumentasi pembaruan living context v2.3.0.
 
 ---
 
 ## 4. PERBANDINGAN SEBELUM VS SESUDAH
 
-| Fitur / Komponen | Sebelum Revisi (v2.2.8) | Sesudah Revisi (v2.2.9) |
+| Elemen UI | Kondisi Saat Ini (Screenshot User) | Rencana Penyempurnaan (v2.3.0) |
 | :--- | :--- | :--- |
-| **Tombol Aksi QR Sambutan** | Tombol lebar berisi teks panjang ("Bagikan Link Acara", "Unduh QR Meja HD 1000px", "Salin Link QR Acara") | **Icon-Only Luxury Buttons** (Ikon SVG tajam, tanpa teks, layout ringkas & mewah) |
-| **Foto Baru di Galeri** | Foto berhasil upload ke Google Drive tapi hilang dari galeri karena dihapus oleh `deleteRow` di GAS atau dibuang oleh filter lokal | **Foto 100% Tampil Stabil & Permanen** (Tidak ada `deleteRow` pada GET galeri, retensi lokal pintar 5 menit) |
-| **Pengaturan Foto Panggung** | Checkbox kembali tidak tercentang saat refresh karena `"TRUE" !== 'true'` | **Status Tersimpan Mantap 100% Online** (Mendukung `"TRUE"`, `"true"`, boolean riil di Google Sheets) |
-| **Tampilan Live Cam & Preview** | Viewfinder terkotak sempit dengan void hitam besar di atas/bawah, preview modal tampak terpotong | **Imersif, Rapi & Proporsional** (Menyatu presisi dengan bingkai, bebas letterbox hitam janggal) |
+| **Gaya 3 Tombol Aksi** | 3 gaya berbeda (1 solid gold, 1 semi-transparan, 1 gelap bergaris) | **Unified Luxury VIP Suite** (Palet emas & kaca obsidian serasi dan harmonis) |
+| **Badge "HD" Tombol Unduh** | Menempel di luar dan memotong lekukan border secara canggung | **Integrated Micro-Badge** (Menyatu rapi dan presisi di dalam tombol tanpa memotong border) |
+| **Kotak QR Code** | Tertutup modul pill abu-abu "Zoom" di sudut kanan bawah | **100% Bebas Obstruksi** (Pola QR bersih utuh, mudah dipindai kamera HP tamu) |
+| **Penyusunan Elemen** | 3 tombol mengambang terpisah di samping QR Code | **VIP Action Dock** (Tersusun rapi dalam wadah dock mewah yang seimbang dengan QR Code) |
+| **Sinkronisasi Data** | Campuran lokal & cloud | **100% Online Cloud Sync** ke Google Sheets `DataPengaturanGlobal` & Google Drive |
 
 ---
 
 ## 5. RENCANA PENGUJIAN & VALIDASI
-1. **Uji Tombol QR Sambutan:** Buka halaman selamat datang tamu — pastikan 3 tombol aksi di samping QR Code tampil berbentuk logo/ikon mewah tanpa teks tulisan, dengan fungsi Bagikan, Unduh HD, dan Salin Link berjalan sempurna.
-2. **Uji Upload & Galeri:** Ambil foto menggunakan live camera atau upload galeri, tunggu proses simpan selesai — pastikan foto langsung tampil di galeri tamu dan galeri admin tanpa pernah hilang.
-3. **Uji Pengaturan Foto Panggung:** Buka panel Admin tab Pengaturan Global, centang "Aktif (Tampil untuk Tamu)", isi tautan folder Drive, klik "Simpan Konfigurasi", lalu refresh halaman — pastikan pengaturan tetap aktif tercentang dan menu muncul di tamu.
-4. **Uji Tampilan Viewfinder & Pratinjau:** Buka live camera dan ambil foto — pastikan tampilan viewfinder terasa pas dan tidak ada area hitam mati yang memotong layar, serta modal pratinjau menampilkan foto secara utuh dan memukau.
+1. **Pengujian Visual Kartu QR:** Buka halaman utama — pastikan QR Code tampil bersih dan tajam tanpa ada elemen yang menutupi pola piksel QR, serta 3 tombol aksi tersusun rapi di dalam dock mewah berbalut aksen emas yang seimbang sempurna.
+2. **Pengujian Fungsionalitas Tombol:**
+   - Klik tombol **Bagikan**: pastikan dialog share native atau link terbagikan dengan lancar.
+   - Klik tombol **Unduh QR**: pastikan gambar QR resolusi tinggi 1000px terunduh otomatis.
+   - Klik tombol **Salin Link**: pastikan tautan tersalin ke clipboard dengan notifikasi toast emas.
+3. **Pengujian Cloud Sync:** Lakukan perubahan pengaturan atau foto — pastikan data tersimpan online ke Google Sheets dan terdistribusi ke seluruh perangkat.
 
 ================================================================================
 Rencana siap dieksekusi setelah pengguna memberikan persetujuan dengan mengetik:
