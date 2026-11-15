@@ -1598,8 +1598,28 @@ function handleAdminSaveEvent(payload) {
 
   try {
     const idEvent = String(payload.idEvent || payload.eventId || "").trim();
-    const namaEvent = String(payload.namaEvent || "Event Baru").trim();
-    const slugEvent = String(payload.slugEvent || createSlug(namaEvent)).trim();
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+    const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
+    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
+
+    let existingNama = "";
+    let existingSlug = "";
+    if (idEvent && eventSheet && eventSheet.getLastRow() > 1) {
+      const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 3).getDisplayValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i][COL_EVENT.ID] === idEvent) {
+          existingNama = rows[i][COL_EVENT.NAMA] || "";
+          existingSlug = rows[i][COL_EVENT.SLUG] || "";
+          break;
+        }
+      }
+    }
+
+    const rawNama = payload.namaEvent || payload.nama || "";
+    const namaEvent = String(rawNama || existingNama || (idEvent ? "Acara" : "Acara Spesial")).trim();
+    const slugEvent = String(payload.slugEvent || existingSlug || createSlug(namaEvent)).trim();
     const tanggalEvent = String(payload.tanggalEvent || "").trim();
     const hashtagEvent = String(payload.hashtagEvent || "").trim();
     const maxFoto = Number(payload.maxFotoPerGuest) || 10;
@@ -1619,11 +1639,6 @@ function handleAdminSaveEvent(payload) {
     const frames = JSON.stringify(framesObj);
     let folderId = payload.gdriveFolderId ? extractDriveFolderId(payload.gdriveFolderId) : "";
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
-
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
-    const katSheet = ss.getSheetByName(SHEET_NAMES.KATEGORI);
-    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
 
     // Pastikan folder acara ada di Drive
     let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";

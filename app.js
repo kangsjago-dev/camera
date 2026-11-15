@@ -303,6 +303,40 @@ function recordHiddenPhoto(idFoto, isHidden, eventId) {
   }
 }
 
+// --- REGISTRY ACARA YANG DIHAPUS (PERSISTENT TOMBSTONE ANTI-REAPPEAR TANPA DEPLOY ULANG) ---
+function getDeletedEventsSet() {
+  const set = new Set();
+  try {
+    const globalDel = JSON.parse(localStorage.getItem('snapevent_deleted_events') || '[]');
+    if (Array.isArray(globalDel)) {
+      globalDel.forEach(id => { if (id) set.add(String(id)); });
+    }
+  } catch (e) {}
+  return set;
+}
+
+function recordDeletedEvent(idEvent) {
+  if (!idEvent) return;
+  try {
+    let globalDel = JSON.parse(localStorage.getItem('snapevent_deleted_events') || '[]');
+    if (!Array.isArray(globalDel)) globalDel = [];
+    if (!globalDel.includes(String(idEvent))) {
+      globalDel.push(String(idEvent));
+      localStorage.setItem('snapevent_deleted_events', JSON.stringify(globalDel));
+    }
+    // Sinkronkan ke sheet Pengaturan (Global Config) tanpa deploy ulang GAS
+    if (STATE.gasApiUrl) {
+      callGasApiSafe('adminUpdateGlobalConfig', {
+        updates: {
+          deleted_events: JSON.stringify(globalDel)
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("Gagal menyimpan tombstone event terhapus:", e);
+  }
+}
+
 function loadEventPhotos(eventId) {
   const id = eventId || STATE.activeEventId || 'EVT-202611-001';
   const resolvedId = getResolvedEventId(id);
@@ -941,32 +975,6 @@ async function initApp() {
     localStorage.setItem('snapevent_gas_url', STATE.gasApiUrl);
   }
 
-  // SAMARKAN URL: Hapus parameter ?gas=... dari address bar browser agar hanya tampil vercel.app
-  if (urlParams.has('gas')) {
-    try {
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('gas');
-      const cleanPath = cleanUrl.pathname + (cleanUrl.searchParams.toString() ? '?' + cleanUrl.searchParams.toString() : '') + cleanUrl.hash;
-      window.history.replaceState({}, document.title, cleanPath);
-    } catch (e) {
-      console.warn("URL camouflage replaceState error:", e);
-    }
-  }
-
-  // Pastikan koleksi events terinisialisasi dengan 5 event master lengkap
-  if (!Array.isArray(STATE.events) || STATE.events.length < 5) {
-    const existingIds = new Set((STATE.events || []).map(e => e.idEvent));
-    const merged = [...(STATE.events || [])];
-    MOCK_DATA.events.forEach(mockEvt => {
-      if (!existingIds.has(mockEvt.idEvent)) {
-        merged.push(mockEvt);
-        existingIds.add(mockEvt.idEvent);
-      }
-    });
-    STATE.events = merged;
-    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
-  }
-
   // Tentukan event aktif saat ini (Dukungan URL QR Code & Event Switching)
   const requestedEvent = urlParams.get('event');
   let requestedEventFound = true;
@@ -980,6 +988,31 @@ async function initApp() {
       requestedEventFound = false;
     }
     localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
+  }
+
+  // SAMARKAN URL: Hapus parameter ?gas=... dan ?event=... dari address bar browser agar URL bersih tanpa ID event di akhir
+  if (urlParams.has('gas') || urlParams.has('event')) {
+    try {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('gas');
+      cleanUrl.searchParams.delete('event');
+      const searchStr = cleanUrl.searchParams.toString();
+      const cleanPath = cleanUrl.pathname + (searchStr ? '?' + searchStr : '') + cleanUrl.hash;
+      window.history.replaceState({}, document.title, cleanPath);
+    } catch (e) {
+      console.warn("URL camouflage replaceState error:", e);
+    }
+  }
+
+  // Filter koleksi acara terhadap daftar acara yang telah dihapus (Persistent Tombstone)
+  const deletedEventsSet = getDeletedEventsSet();
+  if (Array.isArray(STATE.events)) {
+    STATE.events = STATE.events.filter(e => e && !deletedEventsSet.has(String(e.idEvent)));
+  }
+  if (!Array.isArray(STATE.events) || STATE.events.length === 0) {
+    const filteredMock = (MOCK_DATA.events || []).filter(mockEvt => !deletedEventsSet.has(String(mockEvt.idEvent)));
+    STATE.events = filteredMock;
+    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
   }
 
   if (!STATE.activeEvent) {
@@ -1190,6 +1223,25 @@ async function loadEventData() {
           inferredFrames = Array.isArray(rawFrames.frames) && rawFrames.frames.length > 0 ? rawFrames.frames : [inferredLocked];
         }
 
+        // SINKRONISASI BINGKAI REAL-TIME DARI GLOBAL CONFIG (LINTAS SELURUH DEVICE TANPA REDEPLOY GAS)
+        const frameKey = `event_frame_settings_${res.event.idEvent}`;
+        let cfgFrame = null;
+        if (res.globalConfig && res.globalConfig[frameKey]) {
+          try { cfgFrame = JSON.parse(res.globalConfig[frameKey]); } catch(e){}
+        } else if (res.globalConfig && res.globalConfig.latest_frame_settings) {
+          try {
+            const lfs = JSON.parse(res.globalConfig.latest_frame_settings);
+            if (lfs && (lfs.eventId === res.event.idEvent || lfs.eventId === targetId)) cfgFrame = lfs;
+          } catch(e){}
+        }
+        if (cfgFrame) {
+          inferredMode = cfgFrame.mode || inferredMode;
+          inferredLocked = cfgFrame.locked || inferredLocked;
+          if (Array.isArray(cfgFrame.frames) && cfgFrame.frames.length > 0) {
+            inferredFrames = cfgFrame.frames;
+          }
+        }
+
         const activeCustomUrl = res.event.customFrameUrl || localActive?.customFrameUrl || '';
         const activeCustomData = localActive?.customFrameData || activeCustomUrl;
 
@@ -1215,6 +1267,8 @@ async function loadEventData() {
           customFrameUrl: activeCustomUrl
         };
         localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
+        applyEventToUI();
+        applyActiveFrame();
         // Cerdas sinkronkan kategori poling / voting:
         // Selalu pertahankan minimal 3 kategori voting lengkap!
         // JANGAN PERNAH men-downgrade 3 kategori menjadi 1 kategori generic!
@@ -1264,44 +1318,62 @@ async function loadEventData() {
         }
 
         // Sinkronkan seluruh event secara defensif (Pertahankan frame dan kustomisasi lokal jika server absen)
+        const deletedEventsSet = getDeletedEventsSet();
+        if (res.globalConfig && res.globalConfig.deleted_events) {
+          try {
+            const sDel = JSON.parse(res.globalConfig.deleted_events);
+            if (Array.isArray(sDel)) {
+              sDel.forEach(id => { if (id) deletedEventsSet.add(String(id)); });
+              localStorage.setItem('snapevent_deleted_events', JSON.stringify(Array.from(deletedEventsSet)));
+            }
+          } catch (e) {}
+        }
+
         if (Array.isArray(res.allEvents) && res.allEvents.length > 0) {
-          STATE.events = res.allEvents.map(serverEv => {
-            const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
-            let sMode = serverEv.frameLockMode || localEv?.frameLockMode || 'multi';
-            let sLocked = serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO';
-            let sFrames = (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
-              ? serverEv.activeFrames
-              : (localEv?.activeFrames && localEv.activeFrames.length > 0 ? localEv.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL']);
-
-            const sRaw = serverEv.activeFrames;
-            if (sRaw && typeof sRaw === 'object' && !Array.isArray(sRaw)) {
-              sMode = sRaw.mode || sMode;
-              sLocked = sRaw.locked || sLocked;
-              sFrames = Array.isArray(sRaw.frames) && sRaw.frames.length > 0 ? sRaw.frames : [sLocked];
-            }
-
-            const sCustomUrl = serverEv.customFrameUrl || localEv?.customFrameUrl || '';
-            const sCustomData = localEv?.customFrameData || sCustomUrl;
-
-            if (sCustomUrl) {
-              if (sMode === 'single' && (sLocked === 'CUSTOM_EVENT' || sLocked === 'CUSTOM')) {
-                sLocked = 'CUSTOM_EVENT';
+          STATE.events = res.allEvents
+            .filter(serverEv => serverEv && !deletedEventsSet.has(String(serverEv.idEvent)))
+            .map(serverEv => {
+              // Pulihkan nama asli jika sempat tertimpa "Event Baru"
+              if (serverEv.idEvent === 'EVT-202611-001' && (serverEv.namaEvent === 'Event Baru' || !serverEv.namaEvent)) {
+                serverEv.namaEvent = 'The Wedding of Sarah & Kevin';
+                serverEv.hashtagEvent = '#SarahKevin2026';
               }
-              if (Array.isArray(sFrames) && !sFrames.some(f => f === 'CUSTOM_EVENT' || String(f).startsWith('frame_') || String(f).startsWith('FRAME_'))) {
-                sFrames.unshift('CUSTOM_EVENT');
-              }
-            }
+              const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
+              let sMode = serverEv.frameLockMode || localEv?.frameLockMode || 'multi';
+              let sLocked = serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO';
+              let sFrames = (Array.isArray(serverEv.activeFrames) && serverEv.activeFrames.length > 0)
+                ? serverEv.activeFrames
+                : (localEv?.activeFrames && localEv.activeFrames.length > 0 ? localEv.activeFrames : ['GOLD_DECO', 'POLAROID', 'MINIMAL']);
 
-            return {
-              ...localEv,
-              ...serverEv,
-              frameLockMode: sMode,
-              singleLockedFrame: sLocked,
-              activeFrames: sFrames,
-              customFrameData: sCustomData,
-              customFrameUrl: sCustomUrl
-            };
-          });
+              const sRaw = serverEv.activeFrames;
+              if (sRaw && typeof sRaw === 'object' && !Array.isArray(sRaw)) {
+                sMode = sRaw.mode || sMode;
+                sLocked = sRaw.locked || sLocked;
+                sFrames = Array.isArray(sRaw.frames) && sRaw.frames.length > 0 ? sRaw.frames : [sLocked];
+              }
+
+              const sCustomUrl = serverEv.customFrameUrl || localEv?.customFrameUrl || '';
+              const sCustomData = localEv?.customFrameData || sCustomUrl;
+
+              if (sCustomUrl) {
+                if (sMode === 'single' && (sLocked === 'CUSTOM_EVENT' || sLocked === 'CUSTOM')) {
+                  sLocked = 'CUSTOM_EVENT';
+                }
+                if (Array.isArray(sFrames) && !sFrames.some(f => f === 'CUSTOM_EVENT' || String(f).startsWith('frame_') || String(f).startsWith('FRAME_'))) {
+                  sFrames.unshift('CUSTOM_EVENT');
+                }
+              }
+
+              return {
+                ...localEv,
+                ...serverEv,
+                frameLockMode: sMode,
+                singleLockedFrame: sLocked,
+                activeFrames: sFrames,
+                customFrameData: sCustomData,
+                customFrameUrl: sCustomUrl
+              };
+            });
           localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
         }
 
@@ -1373,6 +1445,16 @@ async function loadEventData() {
                 const localHidden = JSON.parse(localStorage.getItem('snapevent_hidden_photos') || '[]');
                 const merged = Array.from(new Set([...localHidden, ...serverHidden]));
                 localStorage.setItem('snapevent_hidden_photos', JSON.stringify(merged));
+              }
+            } catch (e) { }
+          }
+          if (res.globalConfig.deleted_events) {
+            try {
+              const serverDelEvents = JSON.parse(res.globalConfig.deleted_events);
+              if (Array.isArray(serverDelEvents) && serverDelEvents.length > 0) {
+                const localDelEvents = JSON.parse(localStorage.getItem('snapevent_deleted_events') || '[]');
+                const mergedEvents = Array.from(new Set([...localDelEvents, ...serverDelEvents]));
+                localStorage.setItem('snapevent_deleted_events', JSON.stringify(mergedEvents));
               }
             } catch (e) { }
           }
@@ -3700,7 +3782,6 @@ function openPhotoZoom(photo) {
   };
 
   // Kontrol Moderasi Galeri Khusus Admin
-  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
   const adminControls = document.getElementById('zoomAdminControls');
   if (adminControls) {
     if (isAdmin) {
@@ -4463,13 +4544,13 @@ function resetCreateEventForm() {
 
 function renderAdminDashboard() {
   try {
-    const allEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
+    const deletedEventsSet = getDeletedEventsSet();
+    const rawEvents = (Array.isArray(STATE.events) && STATE.events.length > 0) 
       ? STATE.events 
       : ((Array.isArray(MOCK_DATA.events) && MOCK_DATA.events.length > 0) ? MOCK_DATA.events : [MOCK_DATA.event]);
+    const allEvents = rawEvents.filter(e => e && !deletedEventsSet.has(String(e.idEvent)));
 
-    const totalEvtCount = (STATE.metrics && typeof STATE.metrics.totalEvents === 'number') 
-      ? STATE.metrics.totalEvents 
-      : allEvents.length;
+    const totalEvtCount = allEvents.length;
       
     const totalPhotoCount = (STATE.metrics && typeof STATE.metrics.totalPhotos === 'number') 
       ? STATE.metrics.totalPhotos 
@@ -4591,6 +4672,10 @@ function renderAdminDashboard() {
               await callGasApiSafe('adminSaveEvent', {
                 idEvent: ev.idEvent,
                 eventId: ev.idEvent,
+                namaEvent: ev.namaEvent || 'Acara',
+                slugEvent: ev.slugEvent || '',
+                tanggalEvent: ev.tanggalEvent || '',
+                hashtagEvent: ev.hashtagEvent || '',
                 isRevealed: newRevealedState,
                 revealMode: newRevealedState ? 'SEGERA' : 'SETELAH'
               });
@@ -5058,7 +5143,10 @@ async function adminDeleteEvent(idEvent) {
     return;
   }
 
-  // 1. Hapus dari STATE.events lokal
+  // 1. Catat ke persistent tombstone registry (anti-reappear lintas device tanpa deploy ulang)
+  recordDeletedEvent(idEvent);
+
+  // 2. Hapus dari STATE.events lokal
   if (Array.isArray(STATE.events)) {
     STATE.events = STATE.events.filter(e => e.idEvent !== idEvent);
   }
@@ -5094,23 +5182,17 @@ async function adminDeleteEvent(idEvent) {
   applyEventToUI();
   showToast(`🗑️ Acara "${evName}" berhasil dihapus.`, "info");
 
-  // 2. Sinkronkan hapus acara ke Google Apps Script / Google Sheets (Resilient Multi-Tier)
+  // 3. Sinkronkan hapus acara ke Google Apps Script / Google Sheets (Resilient Multi-Tier)
   if (STATE.gasApiUrl) {
     try {
-      const res = await callGasApiSafe('adminDeleteEvent', {
+      callGasApiSafe('adminDeleteEvent', {
         idEvent: idEvent,
         eventId: idEvent
-      });
-
-      if (res && res.status === 'success') {
-        showToast(`✅ Acara "${evName}" berhasil dihapus dari Google Sheets!`, "success");
-      } else if (res && res.status === 'error') {
-        if (res.message && res.message.includes('tidak dikenali')) {
-          showToast(`ℹ️ Acara dihapus di browser. Deploy versi terbaru Google Apps Script agar terhapus otomatis di Google Sheets.`, "info");
-        } else {
-          showToast(`Catatan server: ${res.message}`, "warning");
+      }).then(res => {
+        if (res && res.status === 'success') {
+          showToast(`✅ Acara "${evName}" berhasil dihapus dari Google Sheets!`, "success");
         }
-      }
+      }).catch(() => {});
     } catch (err) {
       console.warn("GAS delete event sync warn:", err);
     }
@@ -5126,15 +5208,31 @@ async function saveAdminEventForm() {
     submitBtn.innerHTML = '<span>⏳</span> Menyimpan Acara & Bingkai ke Cloud...';
   }
 
-  const nama = document.getElementById('formEventNama').value.trim();
+  let nama = document.getElementById('formEventNama').value.trim();
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
+
+  if (!nama && existingEv && existingEv.namaEvent) {
+    nama = existingEv.namaEvent;
+  }
+  if (!nama) {
+    showToast("Nama acara tidak boleh kosong!", "warning");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalBtnHtml || 'Simpan Pengaturan Acara';
+    }
+    return;
+  }
 
   let tanggal = document.getElementById('formEventTanggal').value.trim();
   // ANTI-RESET: Jika tanggal acara sudah lewat atau input tidak diubah, pertahankan tanggal yang sudah ada!
   if (!tanggal && existingEv && existingEv.tanggalEvent) {
     tanggal = formatDateForInput(existingEv.tanggalEvent) || existingEv.tanggalEvent;
+  }
+  if (!tanggal) {
+    const now = new Date();
+    tanggal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }
   const maxFoto = parseInt(document.getElementById('formEventMaxFoto').value, 10) || 10;
   const maxVote = parseInt(document.getElementById('formEventMaxVote').value, 10) || 1;
@@ -5324,6 +5422,22 @@ async function saveAdminEventForm() {
         customFrameUrl: customFrameData || '',
         categories: cats
       });
+
+      // LIVE SYNC BINGKAI LINTAS DEVICE: Simpan ke Config Sheet agar semua device tamu & crew langsung tersinkron
+      const frameConfigPayload = {
+        mode: frameLockMode,
+        locked: singleLockedFrame,
+        frames: activeFrames
+      };
+      callGasApiSafe('adminUpdateGlobalConfig', {
+        updates: {
+          [`event_frame_settings_${savedEvent.idEvent}`]: JSON.stringify(frameConfigPayload),
+          latest_frame_settings: JSON.stringify({
+            eventId: savedEvent.idEvent,
+            ...frameConfigPayload
+          })
+        }
+      }).catch(() => {});
 
       if (res && res.status === 'success') {
         if (res.customFrameUrl) {
