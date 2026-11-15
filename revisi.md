@@ -1,41 +1,74 @@
 # LOG REVISI & STATUS PERBAIKAN SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-STATUS: SUDAH DILAKSANAKAN & TERVERIFIKASI (v2.2.4)
+STATUS: RENCANA IMPLEMENTASI (v2.2.5) - 100% ONLINE CLOUD SYNC & ISOLASI KATEGORI
 AUTHOR: ZettBOT by Zettbos (System Architect & Mentor)
 TANGGAL: 15 November 2026
 ================================================================================
 
-## 1. AKAR MASALAH (ROOT CAUSE) PADA DEVICE LAIN BELUM BERUBAH
-1. **Prioritas Penyimpanan Lokal di Device Lain Mengabaikan Update Cloud:**
-   - *Penyebab:* Pada `loadEventData()`, sistem sebelumnya mendahulukan `localSavedCats` jika perangkat pernah menyimpan kategori di `localStorage` (`hasLocalSavedCats === true`). Ketika Admin mengubah kategori dan bingkai di Device A lalu menyimpannya ke cloud, Device B yang sudah pernah berkunjung tetap membaca cache lokal lamanya (yang berisi nama usang seperti `Best Picture` atau `Momen Terbaper`) dan menolak menimpa dengan data terbaru dari Google Sheets.
-   - *Solusi ZettBOT:* Konfigurasi cloud Google Sheets (`cfgCats` dari `globalConfig` dan `res.categories` dari sheet `Kategori`) kini ditetapkan sebagai **SUMBER KEBENARAN OTORITATIF TERTINGGI (Single Source of Truth)**. Seluruh device lain otomatis menarik data cloud, membersihkan tombstone lama, memperbarui `localStorage`, dan mengaktifkan kategori yang sama persis dengan yang disimpan Admin.
+## 1. AKAR MASALAH (ROOT CAUSE) PADA KELUHAN TERBARU
 
-2. **Desinkronisasi Acara Aktif pada Device Lain Tanpa URL Parameter:**
-   - *Penyebab:* Ketika Device B membuka website tanpa parameter `?event=...`, `initApp()` sebelumnya memilih `STATE.events[0]` (yang berisi acara lama `EVT-202611-001` berstatus `INAKTIF`). Akibatnya, request `getEventDetails` gagal dan Device B tidak pernah tersinkron ke acara `EVT-202611-392`.
-   - *Solusi ZettBOT:* `initApp()` dan `loadEventData()` kini secara otomatis mendeteksi acara `AKTIF` dari cloud (`res.globalConfig.active_event_id`). Jika URL tidak membawa event ID, sistem secara proaktif langsung mengarahkan dan menyinkronkan seluruh device ke acara global yang sedang aktif (`EVT-202611-392`).
+### A. Foto yang Disembunyikan & Ditampilkan Kembali Tidak Berubah di Device Lain:
+- **Penyebab Utama 1:** Di `app.js` fungsi `loadEventData()` (baris 1664–1668):
+  ```javascript
+  const serverHidden = JSON.parse(res.globalConfig.hidden_photos);
+  if (Array.isArray(serverHidden) && serverHidden.length > 0) {
+    const localHidden = JSON.parse(localStorage.getItem('snapevent_hidden_photos') || '[]');
+    const merged = Array.from(new Set([...localHidden, ...serverHidden]));
+    localStorage.setItem('snapevent_hidden_photos', JSON.stringify(merged));
+  }
+  ```
+  Ketika Admin di Device 1 **menampilkan kembali (unhide)** sebuah foto, server Google Sheets mengosongkan/menghapus ID foto tersebut dari `hidden_photos` (menjadi `[]` atau daftar tanpa ID foto tersebut). Namun saat Device 2 menyinkronkan data:
+  1. Jika `serverHidden` menjadi kosong (`[]`), kondisi `serverHidden.length > 0` menjadi `false`, sehingga pembaruan dilewati sama sekali.
+  2. Sekalipun dieksekusi, `merged = Array.from(new Set([...localHidden, ...serverHidden]))` tetap mempertahankan ID foto lama yang ada di `localHidden` Device 2, sehingga foto tersebut **tidak pernah bisa muncul kembali di Device 2**.
+- **Penyebab Utama 2:** Panggilan backend `callGasApiSafe('adminTogglePhotoVisibility', ...)` mengembalikan pesan error: `"Action POST 'adminTogglePhotoVisibility' tidak dikenali"` karena action tersebut tidak ada di build GAS backend yang telah dideploy.
 
-3. **Sinkronisasi Real-Time Pengaturan Bingkai (Frame Policy):**
-   - *Penyebab:* Mode bingkai Multi-Frame (`GOLD_DECO`, `POLAROID`, `MINIMAL`) yang disimpan Admin di cloud belum langsung dieksekusi ulang ke viewfinder kamera jika device lain tidak berpindah halaman.
-   - *Solusi ZettBOT:* `applyActiveFrame(inferredLocked || STATE.activeFrame)` kini dieksekusi seketika saat data cloud tiba di `loadEventData()`, memperbarui container pilihan bingkai, badge kunci, dan overlay bingkai pada kamera live stream.
+### B. Kategori Foto Masih Belum Berubah di Device Lain:
+- **Penyebab Utama 1:** Di `renderGallery()` (baris 3564–3570):
+  Ketika pengguna mengklik salah satu tombol kategori (misal `👑 Best Dressed Guest`), jika belum ada foto yang terpetakan ke kategori tersebut, kode memiliki fallback:
+  `filtered = [...allEligiblePhotos];`
+  Akibatnya, saat pengguna mengklik tombol kategori manapun, seluruh foto galeri tetap tampil utuh (sehingga di mata pengguna, filter kategori "tidak mau berubah").
+- **Penyebab Utama 2:** Deployed Google Apps Script `getGallery` hanya mengembalikan `idFoto`, `guestNama`, dan `totalLikes`, tanpa menyertakan `idKategori` atau `categoryLikes` rincian per kategori. Akibatnya, pemetaan kategori sebelumnya hanya dibuat acak secara lokal per perangkat lewat fungsi hash pseudo-random (baris 2049 & 3515), yang menghasilkan kategori acak yang saling bertentangan antar perangkat.
+- **Penyebab Utama 3:** Pilihan suara per kategori saat tamu melakukan voting (`handleVotePhoto`) belum disimpan secara online ke cloud config, sehingga Device 2 tidak mengetahui foto mana yang mendapatkan suara di kategori apa.
 
-4. **Input Tanggal Acara Kosong (`mm / dd / yyyy`):**
-   - *Penyebab:* Pada form edit admin, jika field tanggal acara sempat belum terisi dari string backend atau dibuka via tab switch, input tidak memiliki fallback tanggal aktif.
-   - *Solusi ZettBOT:* Menambahkan pelindung multi-tier di `populateEditEventForm` dan listener tab switcher `create`: jika input tanggal kosong, sistem otomatis mengisinya dengan tanggal acara aktif atau tanggal hari ini dalam format standar ISO `YYYY-MM-DD`.
+### C. Semua Perintah Masih Disimpan di Local:
+- **Penyebab:** Tindakan seperti hide/unhide foto, pemetaan kategori foto, dan filter kategori sebelumnya mengandalkan `localStorage` lokal tanpa sinkronisasi cloud terpusat.
+- **Solusi:** Seluruh status visibilitas (`hidden_photos`), penghapusan foto (`deleted_photos`), kategori per event (`event_categories_${idEvent}`), pemetaan suara foto per kategori (`event_photo_category_votes_${idEvent}`), dan pengaturan bingkai (`event_frame_settings_${idEvent}`) dialihkan 100% menggunakan `adminUpdateGlobalConfig` di sheet `Pengaturan` Google Sheets sebagai **Single Source of Truth** mutlak.
 
-5. **Modal "Beri Suara / Like" Menggunakan Kategori Usang:**
-   - *Penyebab:* `openVoteCategoryModal()` sebelumnya memanggil `loadEventCategories(STATE.activeEventId)` secara langsung yang sempat membaca storage lama (menghasilkan opsi `Momen Terbaper`).
-   - *Solusi ZettBOT:* Modal voting kini memprioritaskan `STATE.activeCategories` yang telah disinkronkan dari cloud, menampilkan 3 kategori resmi:
-     1. 👑 **Best Dressed Guest**
-     2. 👑 **Best Outfit**
-     3. 👑 **Pose Terheboh**
+---
 
-6. **Interval Heartbeat & Window Focus Listener:**
-   - *Solusi ZettBOT:* Mempercepat background heartbeat menjadi 15 detik dan memasang listener `window.addEventListener('focus', ...)` sehingga begitu pengguna membuka atau membuka kembali tab browser di HP/laptop lain, seluruh pengaturan acara, bingkai, dan kategori langsung tersinkron seketika (0 delay).
+## 2. RENCANA PERBAIKAN TEKNIS (SURGICAL IMPLEMENTATION PLAN)
 
-================================================================================
-## 2. FILE TERDAMPAK
-1. `app.js` (Otoritas cloud config, multi-device auto active event, update modal vote, live sync bingkai, auto-fill tanggal acara, heartbeat 15s + focus listener)
-2. `index.html` (Cache busting `app.js?v=2.2.4`)
-3. `revisi.md` (Dokumentasi audit dan status penyelesaian v2.2.4)
+### 1. Sinkronisasi Online Penuh Visibilitas Foto (Hide & Unhide):
+- **Otoritas Cloud Mutlak (Overwrite):** Di `loadEventData()` dan `loadGallery()`, saat `res.globalConfig.hidden_photos` diterima:
+  Langsung timpa `localStorage.setItem('snapevent_hidden_photos', JSON.stringify(serverHidden))` (dan cache event terkait) tanpa penggabungan (`merge`) dengan cache lokal lama.
+- **Registry Single-Source:** `getHiddenPhotosSet()` hanya membaca `snapevent_hidden_photos` yang telah tersinkronkan dari server cloud.
+- **Toggle Online Tanpa Error GAS:** Pada `adminTogglePhotoVisibility(idFoto)`:
+  Hapus pemanggilan POST action `adminTogglePhotoVisibility` yang tidak dikenali GAS.
+  Gunakan `callGasApiSafe('adminUpdateGlobalConfig', { updates: { hidden_photos: JSON.stringify(globalHidden) } })` yang terbukti 100% didukung backend dan langsung tersimpan di sheet `Pengaturan`.
+
+### 2. Sinkronisasi Online Pemetaan Suara Foto per Kategori & Filter Presisi Galeri:
+- **Cloud Vote Mapping:** Pada saat tamu memberikan voting (`handleVotePhoto`):
+  Simpan peta suara foto-kategori ke `event_photo_category_votes_${targetId}` di Google Sheets via `adminUpdateGlobalConfig`.
+- **Konsumsi Cloud Mapping:** Pada `loadGallery()` dan `loadEventData()`, baca `res.globalConfig[`event_photo_category_votes_${targetId}`]` dan sematkan `p.categoryLikes`, `p.idKategori`, dan `p.namaKategori` ke masing-masing objek foto.
+- **Isolasi Filter Galeri (Tanpa Fallback Semua Foto):**
+  Di `renderGallery()`:
+  Jika pengguna memilih filter kategori (misal: `👑 Best Dressed Guest`), hanya tampilkan foto yang memiliki suara di kategori tersebut.
+  Jika belum ada foto di kategori tersebut, tampilkan pemberitahuan elegan:
+  `Belum ada foto yang mendapatkan suara di kategori "${namaKategori}". Jadilah yang pertama memberikan suara!`
+  disertai tombol `[Lihat Semua Foto]` yang mengembalikan filter ke "Semua Foto".
+- **Badge Kategori pada Kartu Galeri:**
+  Sematkan badge elegan pada setiap kartu foto yang telah mendapatkan suara kategori (`👑 Nama Kategori`) agar pengguna dapat melihat dengan jelas kategori dari setiap foto.
+
+### 3. Perlindungan Fitur Berjalan (Zero Regression):
+- Pertahankan fungsi kamera live stream HP dengan switch depan/belakang dan zoom 1x-3x.
+- Pertahankan aturan kuota voting tamu (2x per tamu), pencegahan voting ganda pada foto yang sama, dan kuota 1 vote per kategori.
+- Pertahankan custom frame, modal slideshow ballroom, dan generator QR Code.
+
+---
+
+## 3. BERKAS TERDAMPAK
+1. `app.js` (Otoritas cloud `hidden_photos` tanpa stale merge, sinkronisasi cloud `event_photo_category_votes`, isolasi filter kategori galeri + empty state ramah, badge kategori pada kartu foto).
+2. `index.html` (Cache-busting script tag `app.js?v=2.2.5`).
+3. `revisi.md` (Dokumentasi log perubahan dan instruksi pengujian).
 ================================================================================

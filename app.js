@@ -149,9 +149,14 @@ function getDeletedCategoriesSet(eventId) {
   return new Set();
 }
 
-function recordDeletedCategory(eventId, categoryName) {
+function recordDeletedCategory(arg1, arg2) {
+  let eventId = STATE.activeEventId;
+  let categoryName = '';
+  if (String(arg1).startsWith('EVT-')) { eventId = arg1; categoryName = arg2; }
+  else if (String(arg2).startsWith('EVT-')) { eventId = arg2; categoryName = arg1; }
+  else { categoryName = arg1 || arg2; }
   if (!categoryName) return;
-  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  const id = getResolvedEventId(eventId || 'EVT-202611-392');
   const delSet = getDeletedCategoriesSet(id);
   delSet.add(String(categoryName).toLowerCase().trim());
   try {
@@ -159,9 +164,14 @@ function recordDeletedCategory(eventId, categoryName) {
   } catch (e) {}
 }
 
-function unrecordDeletedCategory(eventId, categoryName) {
+function unrecordDeletedCategory(arg1, arg2) {
+  let eventId = STATE.activeEventId;
+  let categoryName = '';
+  if (String(arg1).startsWith('EVT-')) { eventId = arg1; categoryName = arg2; }
+  else if (String(arg2).startsWith('EVT-')) { eventId = arg2; categoryName = arg1; }
+  else { categoryName = arg1 || arg2; }
   if (!categoryName) return;
-  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  const id = getResolvedEventId(eventId || 'EVT-202611-392');
   const delSet = getDeletedCategoriesSet(id);
   delSet.delete(String(categoryName).toLowerCase().trim());
   try {
@@ -333,13 +343,6 @@ function getHiddenPhotosSet(eventId) {
     if (Array.isArray(globalHidden)) {
       globalHidden.forEach(id => { if (id) set.add(String(id)); });
     }
-    const targetId = getResolvedEventId(eventId || STATE.activeEventId);
-    if (targetId) {
-      const evHidden = JSON.parse(localStorage.getItem(`snapevent_hidden_photos_${targetId}`) || '[]');
-      if (Array.isArray(evHidden)) {
-        evHidden.forEach(id => { if (id) set.add(String(id)); });
-      }
-    }
   } catch (e) {}
   return set;
 }
@@ -350,23 +353,16 @@ function recordHiddenPhoto(idFoto, isHidden, eventId) {
   try {
     let globalHidden = JSON.parse(localStorage.getItem('snapevent_hidden_photos') || '[]');
     if (!Array.isArray(globalHidden)) globalHidden = [];
+    const sId = String(idFoto);
     if (isHidden) {
-      if (!globalHidden.includes(String(idFoto))) globalHidden.push(String(idFoto));
+      if (!globalHidden.includes(sId)) globalHidden.push(sId);
     } else {
-      globalHidden = globalHidden.filter(id => id !== String(idFoto));
+      globalHidden = globalHidden.filter(id => id !== sId);
     }
     localStorage.setItem('snapevent_hidden_photos', JSON.stringify(globalHidden));
 
     if (targetId) {
-      const evKey = `snapevent_hidden_photos_${targetId}`;
-      let evHidden = JSON.parse(localStorage.getItem(evKey) || '[]');
-      if (!Array.isArray(evHidden)) evHidden = [];
-      if (isHidden) {
-        if (!evHidden.includes(String(idFoto))) evHidden.push(String(idFoto));
-      } else {
-        evHidden = evHidden.filter(id => id !== String(idFoto));
-      }
-      localStorage.setItem(evKey, JSON.stringify(evHidden));
+      localStorage.setItem(`snapevent_hidden_photos_${targetId}`, JSON.stringify(globalHidden));
     }
 
     // Sinkronkan ke sheet Pengaturan (Global Config) online tanpa deploy ulang GAS
@@ -379,6 +375,48 @@ function recordHiddenPhoto(idFoto, isHidden, eventId) {
     }
   } catch (e) {
     console.warn("Gagal menyimpan registry hidden_photos:", e);
+  }
+}
+
+// --- REGISTRY SUARA FOTO PER KATEGORI (ONLINE VOTE MAPPING LINTAS PERANGKAT) ---
+function getEventPhotoCategoryVotes(eventId) {
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  try {
+    const raw = localStorage.getItem(`snapevent_photo_cat_votes_${id}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch(e) {}
+  return {};
+}
+
+function recordPhotoCategoryVote(idFoto, idKategori, catName, eventId) {
+  if (!idFoto || !idKategori) return;
+  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-392');
+  try {
+    const currentMap = getEventPhotoCategoryVotes(id);
+    if (!currentMap[idFoto]) {
+      currentMap[idFoto] = { idKategori, namaKategori: catName || idKategori, votes: {} };
+    }
+    const pRecord = currentMap[idFoto];
+    pRecord.idKategori = idKategori;
+    if (catName) pRecord.namaKategori = catName;
+    if (!pRecord.votes) pRecord.votes = {};
+    pRecord.votes[idKategori] = (pRecord.votes[idKategori] || 0) + 1;
+    if (catName) pRecord.votes[catName] = (pRecord.votes[catName] || 0) + 1;
+
+    localStorage.setItem(`snapevent_photo_cat_votes_${id}`, JSON.stringify(currentMap));
+
+    if (STATE.gasApiUrl) {
+      callGasApiSafe('adminUpdateGlobalConfig', {
+        updates: {
+          [`event_photo_category_votes_${id}`]: JSON.stringify(currentMap)
+        }
+      }).catch(() => {});
+    }
+  } catch(e) {
+    console.warn("Gagal merekam suara kategori foto online:", e);
   }
 }
 
@@ -1469,13 +1507,13 @@ async function loadEventData() {
           finalCats = standard3Categories;
         }
 
-        // Jika server cloud mengirim kategori resmi, jangan biarkan tombstone lama di device lain memblokirnya
+        // Jika server cloud mengirim kategori resmi, hapus tombstone lokal agar device lain langsung mengikuti cloud
         const hasCloudCats = (Array.isArray(cfgCats) && cfgCats.length > 0) || (Array.isArray(res.categories) && res.categories.length > 0);
         if (hasCloudCats) {
-          finalCats.forEach(c => {
-            const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
-            if (name) unrecordDeletedCategory(name, catEventId);
-          });
+          try {
+            localStorage.removeItem(`snapevent_deleted_categories_${catEventId}`);
+            if (res.event?.idEvent) localStorage.removeItem(`snapevent_deleted_categories_${res.event.idEvent}`);
+          } catch(e){}
         } else {
           // Hanya filter jika murni dari lokal tanpa cloud
           finalCats = finalCats.filter(c => {
@@ -1659,15 +1697,27 @@ async function loadEventData() {
               }
             } catch (e) { }
           }
-          if (res.globalConfig.hidden_photos) {
+          if (res.globalConfig.hidden_photos !== undefined) {
             try {
               const serverHidden = JSON.parse(res.globalConfig.hidden_photos);
-              if (Array.isArray(serverHidden) && serverHidden.length > 0) {
-                const localHidden = JSON.parse(localStorage.getItem('snapevent_hidden_photos') || '[]');
-                const merged = Array.from(new Set([...localHidden, ...serverHidden]));
-                localStorage.setItem('snapevent_hidden_photos', JSON.stringify(merged));
+              if (Array.isArray(serverHidden)) {
+                // OVERWRITE: Server config adalah Single Source of Truth mutlak!
+                // Jangan pernah merge dengan localHidden lama agar saat foto di-unhide, serverHidden langsung menimpa dan memunculkannya kembali di semua device!
+                localStorage.setItem('snapevent_hidden_photos', JSON.stringify(serverHidden));
+                const curTarget = res.event?.idEvent || targetId;
+                if (curTarget) localStorage.setItem(`snapevent_hidden_photos_${curTarget}`, JSON.stringify(serverHidden));
               }
             } catch (e) { }
+          }
+          const curEvId = res.event?.idEvent || targetId;
+          const voteKey = `event_photo_category_votes_${curEvId}`;
+          if (res.globalConfig && res.globalConfig[voteKey]) {
+            try {
+              const serverVotes = JSON.parse(res.globalConfig[voteKey]);
+              if (serverVotes && typeof serverVotes === 'object') {
+                localStorage.setItem(`snapevent_photo_cat_votes_${curEvId}`, JSON.stringify(serverVotes));
+              }
+            } catch(e) {}
           }
           if (res.globalConfig.deleted_events) {
             try {
@@ -1986,6 +2036,9 @@ async function loadGallery() {
         if (hiddenSet.has(String(p.idFoto))) {
           p.isVisible = false;
           p.photoStatus = 'SEMBUNYI';
+        } else {
+          p.isVisible = true;
+          p.photoStatus = 'TAMPIL';
         }
       });
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
@@ -2032,6 +2085,7 @@ async function loadGallery() {
 
       const existingPhotoMap = new Map();
       (STATE.photos || []).forEach(p => { if (p && p.idFoto) existingPhotoMap.set(p.idFoto, p); });
+      const onlineCatVotes = getEventPhotoCategoryVotes(targetId);
       finalPhotos.forEach(p => {
         const oldP = existingPhotoMap.get(p.idFoto);
         if (oldP) {
@@ -2041,21 +2095,21 @@ async function loadGallery() {
           if (oldP.namaKategori && !p.namaKategori) p.namaKategori = oldP.namaKategori;
         }
 
-        // Auto-synthesize categoryLikes jika ada likes namun belum terinci dari server
-        if ((p.totalLikes || 0) > 0) {
-          if (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0) {
-            p.categoryLikes = {};
-            if (availableCats.length > 0) {
-              const hash = (String(p.idFoto).split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % availableCats.length;
-              const assignedCat = availableCats[hash] || availableCats[0];
-              p.categoryLikes[assignedCat.idKategori] = p.totalLikes;
-              p.categoryLikes[assignedCat.namaKategori] = p.totalLikes;
-              if (!p.idKategori) p.idKategori = assignedCat.idKategori;
-              if (!p.namaKategori) p.namaKategori = assignedCat.namaKategori;
-            } else {
-              p.categoryLikes['DEFAULT'] = p.totalLikes;
-            }
-          }
+        // Terapkan mapping kategori resmi dari cloud online
+        if (onlineCatVotes && onlineCatVotes[p.idFoto]) {
+          const cv = onlineCatVotes[p.idFoto];
+          if (cv.idKategori) p.idKategori = cv.idKategori;
+          if (cv.namaKategori) p.namaKategori = cv.namaKategori;
+          p.categoryLikes = { ...(p.categoryLikes || {}), ...(cv.votes || {}) };
+        }
+
+        // Pastikan status visibilitas tersinkron sempurna
+        if (hiddenSet.has(String(p.idFoto))) {
+          p.isVisible = false;
+          p.photoStatus = 'SEMBUNYI';
+        } else {
+          p.isVisible = true;
+          p.photoStatus = 'TAMPIL';
         }
       });
 
@@ -3413,6 +3467,8 @@ async function handleVotePhoto(idFoto, idKategori = '') {
       targetPhoto.categoryLikes[catObj.namaKategori] = (targetPhoto.categoryLikes[catObj.namaKategori] || 0) + 1;
       targetPhoto.namaKategori = catObj.namaKategori;
     }
+    // Sinkronkan pemetaan kategori foto secara online ke seluruh perangkat
+    recordPhotoCategoryVote(idFoto, idKategori, targetPhoto.namaKategori || catName, STATE.activeEventId);
     saveEventPhotos(STATE.activeEventId);
     renderGallery();
   }
@@ -3508,26 +3564,21 @@ function renderGallery() {
     ? STATE.activeCategories
     : (Array.isArray(MOCK_DATA.categories) ? MOCK_DATA.categories : []);
 
+  const onlineCatVotes = getEventPhotoCategoryVotes(STATE.activeEventId);
   filtered.forEach(p => {
-    if (p && (p.totalLikes || 0) > 0 && (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0)) {
-      p.categoryLikes = {};
-      if (availableCats.length > 0) {
-        const hash = (String(p.idFoto).split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % availableCats.length;
-        const assignedCat = availableCats[hash] || availableCats[0];
-        p.categoryLikes[assignedCat.idKategori] = p.totalLikes;
-        p.categoryLikes[assignedCat.namaKategori] = p.totalLikes;
-        if (!p.idKategori) p.idKategori = assignedCat.idKategori;
-        if (!p.namaKategori) p.namaKategori = assignedCat.namaKategori;
-      } else {
-        p.categoryLikes['DEFAULT'] = p.totalLikes;
-      }
+    if (!p) return;
+    if (onlineCatVotes && onlineCatVotes[p.idFoto]) {
+      const cv = onlineCatVotes[p.idFoto];
+      if (cv.idKategori) p.idKategori = cv.idKategori;
+      if (cv.namaKategori) p.namaKategori = cv.namaKategori;
+      p.categoryLikes = { ...(p.categoryLikes || {}), ...(cv.votes || {}) };
     }
   });
 
   if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   } else if (STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'WINNERS') {
-    // Filter foto yang mendapatkan suara di kategori ini (Pencarian fleksibel ID dan Nama Kategori)
+    // Filter foto yang mendapatkan suara di kategori ini (Pencarian presisi ID dan Nama Kategori)
     const catId = STATE.activeGalleryFilter;
     const activeCatObj = availableCats.find(c => c.idKategori === catId || c.namaKategori === catId);
     const targetCatId = activeCatObj ? activeCatObj.idKategori : catId;
@@ -3552,22 +3603,16 @@ function renderGallery() {
         }
       }
 
-      // 3. Fallback cerdas: Jika acara hanya memiliki 1 kategori poling (seperti "Best Picture")
-      // atau belum ada pembagian categoryLikes dari server, foto dengan totalLikes > 0 adalah suara di kategori ini!
-      if ((isSingleCat || !p.categoryLikes || Object.keys(p.categoryLikes).length === 0) && (p.totalLikes || 0) > 0) {
+      // 3. Fallback cerdas HANYA jika acara benar-benar hanya memiliki 1 kategori poling tunggal
+      if (isSingleCat && (p.totalLikes || 0) > 0) {
         return true;
       }
 
       return false;
     });
 
-    if (catSpecific.length > 0) {
-      filtered = catSpecific;
-    } else {
-      // Jika belum ada foto yang divote khusus di kategori ini, tetap tampilkan foto acara yang ada
-      // agar tamu undangan dapat melihat foto dan memberikan voting, galeri tidak pernah kosong!
-      filtered = [...allEligiblePhotos];
-    }
+    // Terapkan isolasi murni kategori tanpa mencampuradukkan seluruh foto
+    filtered = catSpecific;
 
     // Urutkan berdasarkan suara terbanyak
     filtered.sort((a, b) => {
@@ -3634,7 +3679,32 @@ function renderGallery() {
   }
 
   if (filtered.length === 0) {
-    if (grid) grid.innerHTML = '';
+    if (grid) {
+      if (STATE.activeGalleryFilter && STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'WINNERS') {
+        const activeCatObj = availableCats.find(c => c.idKategori === STATE.activeGalleryFilter || c.namaKategori === STATE.activeGalleryFilter);
+        const catDisplayName = activeCatObj?.namaKategori || 'Kategori Ini';
+        grid.innerHTML = `
+          <div class="col-span-2 sm:col-span-3 md:col-span-4 py-12 px-4 text-center">
+            <div class="w-14 h-14 rounded-2xl bg-brand-gold/10 border border-brand-gold/30 flex items-center justify-center mx-auto mb-3 shadow-lg">
+              <span class="text-2xl">👑</span>
+            </div>
+            <h3 class="font-serif text-lg font-bold text-white mb-1">Belum Ada Foto di Kategori "${catDisplayName}"</h3>
+            <p class="text-xs text-zinc-400 max-w-sm mx-auto mb-4">Belum ada foto yang mendapatkan suara untuk kategori ini. Buka foto di galeri dan berikan voting Anda!</p>
+            <button type="button" id="btnResetGalleryCategory" class="px-4 py-2 rounded-xl bg-brand-gold text-black text-xs font-bold shadow hover:brightness-110 active:scale-95 transition cursor-pointer">
+              ← Kembali ke Semua Foto
+            </button>
+          </div>
+        `;
+        document.getElementById('btnResetGalleryCategory')?.addEventListener('click', () => {
+          STATE.activeGalleryFilter = 'ALL';
+          applyEventToUI();
+          renderGallery();
+        });
+        if (empty) empty.classList.add('hidden');
+        return;
+      }
+      grid.innerHTML = '';
+    }
     if (empty) empty.classList.remove('hidden');
     return;
   }
@@ -3660,6 +3730,11 @@ function renderGallery() {
         if (likeBtn) {
           likeBtn.className = `btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90`;
           likeBtn.innerHTML = `<span>${isVoted ? '❤️' : '🤍'}</span><span>${photo.totalLikes || 0}</span>`;
+        }
+
+        const infoEl = card.querySelector('.text-\\[9px\\].text-zinc-400');
+        if (infoEl) {
+          infoEl.innerHTML = `<span>${photo.cameraStyle || '800T'}</span>${photo.namaKategori ? `<span class="text-[9px] text-amber-300 font-semibold truncate max-w-[120px]">👑 ${photo.namaKategori}</span>` : ''}`;
         }
 
         const uploadingOverlay = card.querySelector('.uploading-overlay');
@@ -3719,7 +3794,10 @@ function renderGallery() {
           <div class="p-2.5 flex items-center justify-between bg-brand-surfaceLight border-t border-white/5">
             <div class="truncate pr-1">
               <div class="text-[11px] font-bold text-white truncate">${photo.guestNama || 'Tamu'}</div>
-              <div class="text-[9px] text-zinc-400 uppercase">${photo.cameraStyle || '800T'}</div>
+              <div class="text-[9px] text-zinc-400 uppercase flex items-center gap-1.5 flex-wrap">
+                <span>${photo.cameraStyle || '800T'}</span>
+                ${photo.namaKategori ? `<span class="text-[9px] text-amber-300 font-semibold truncate max-w-[120px]">👑 ${photo.namaKategori}</span>` : ''}
+              </div>
             </div>
             <button class="btn-like-photo flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${isVoted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-zinc-300 hover:text-white border border-white/10'} transition active:scale-90" data-id="${photo.idFoto}">
               <span>${isVoted ? '❤️' : '🤍'}</span>
@@ -5389,23 +5467,16 @@ async function adminTogglePhotoVisibility(idFoto) {
   renderAdminGallery();
   showToast(newVisibility ? "👁️ Foto sekarang DITAMPILKAN di galeri publik." : "🔒 Foto sekarang DISEMBUNYIKAN dari publik.", "info");
 
-  // Kirim ke Server GAS (Resilient Multi-Tier)
+  // Sinkronkan ke sheet Pengaturan online seketika
   if (STATE.gasApiUrl) {
-    try {
-      callGasApiSafe('adminTogglePhotoVisibility', {
-        idFoto: idFoto,
-        photoId: idFoto,
-        isVisible: newVisibility,
-        photoStatus: photo.photoStatus,
-        eventId: targetId
-      }).then(res => {
-        if (res && res.status === 'success') {
-          showToast("✅ Status visibilitas foto tersimpan di Google Sheets!", "success");
-        }
-      }).catch(() => {});
-    } catch (err) {
-      console.warn("GAS toggle visibility warn:", err);
-    }
+    const hiddenArr = Array.from(getHiddenPhotosSet(targetId));
+    callGasApiSafe('adminUpdateGlobalConfig', {
+      updates: {
+        hidden_photos: JSON.stringify(hiddenArr)
+      }
+    }).then(() => {
+      showToast("✅ Status visibilitas foto tersimpan online di Google Sheets!", "success");
+    }).catch(() => {});
   }
 }
 
