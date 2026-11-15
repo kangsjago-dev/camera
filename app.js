@@ -155,10 +155,31 @@ function loadEventCategories(eventId) {
   }
 
   const defaultStandard3 = [
-    { idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-    { idKategori: "KAT-2", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
-    { idKategori: "KAT-3", namaKategori: "Momen Terbaper", deskripsi: "Momen paling romantis dan menyentuh", urutan: 3 }
+    { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+    { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
+    { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
   ];
+
+  // Migrasi otomatis kategori template usang ke standar acara
+  if (Array.isArray(result) && result.length > 0) {
+    result = result.map((c, idx) => {
+      const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+      let finalName = name;
+      if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') {
+        finalName = 'Best Dressed Guest';
+      } else if (name.toLowerCase().trim() === 'senyum terhangat') {
+        finalName = 'Best Outfit';
+      } else if (name.toLowerCase().trim() === 'gaya terunik') {
+        finalName = 'Pose Terheboh';
+      }
+      return {
+        idKategori: (typeof c === 'object' && c.idKategori) ? c.idKategori : `KAT-${idx + 1}`,
+        namaKategori: finalName,
+        deskripsi: (typeof c === 'object' && c.deskripsi) ? c.deskripsi : 'Kategori Pilihan Tamu',
+        urutan: idx + 1
+      };
+    });
+  }
 
   if (!Array.isArray(result) || result.length === 0) {
     result = defaultStandard3;
@@ -387,11 +408,12 @@ function loadEventPhotos(eventId) {
       if (p && (p.totalLikes || 0) > 0 && (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0)) {
         p.categoryLikes = {};
         if (availableCats.length > 0) {
-          const firstCat = availableCats[0];
-          p.categoryLikes[firstCat.idKategori] = p.totalLikes;
-          p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
-          if (!p.idKategori) p.idKategori = firstCat.idKategori;
-          if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+          const hash = (String(p.idFoto).split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % availableCats.length;
+          const assignedCat = availableCats[hash] || availableCats[0];
+          p.categoryLikes[assignedCat.idKategori] = p.totalLikes;
+          p.categoryLikes[assignedCat.namaKategori] = p.totalLikes;
+          if (!p.idKategori) p.idKategori = assignedCat.idKategori;
+          if (!p.namaKategori) p.namaKategori = assignedCat.namaKategori;
         } else {
           p.categoryLikes['DEFAULT'] = p.totalLikes;
         }
@@ -558,18 +580,33 @@ function formatDateForInput(dateVal) {
     if (!dateVal) return '';
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) return dateVal;
     if (/^\d{4}-\d{2}-\d{2}T/.test(dateVal)) return dateVal.split('T')[0];
-    const dmy = dateVal.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
-    if (dmy) {
-      const day = dmy[1].padStart(2, '0');
-      const month = dmy[2].padStart(2, '0');
-      const year = dmy[3];
+    const parts = dateVal.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (parts) {
+      const n1 = parseInt(parts[1], 10);
+      const n2 = parseInt(parts[2], 10);
+      const year = parts[3];
+      let month, day;
+      if (n1 > 12) {
+        day = String(n1).padStart(2, '0');
+        month = String(n2).padStart(2, '0');
+      } else if (n2 > 12) {
+        month = String(n1).padStart(2, '0');
+        day = String(n2).padStart(2, '0');
+      } else {
+        // Format standar Google Sheet (MM/DD/YYYY)
+        month = String(n1).padStart(2, '0');
+        day = String(n2).padStart(2, '0');
+      }
       return `${year}-${month}-${day}`;
     }
   }
   try {
     const d = new Date(dateVal);
     if (!isNaN(d.getTime())) {
-      return d.toISOString().split('T')[0];
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
     }
   } catch (e) {}
   return '';
@@ -583,6 +620,21 @@ function getEventShareUrl(eventId) {
     }
   } catch (e) {}
   return 'https://camera-blush-theta.vercel.app';
+}
+
+function syncBrowserUrlWithActiveEvent(eventId) {
+  try {
+    const targetId = getResolvedEventId(eventId || STATE.activeEventId);
+    if (!targetId || typeof window === 'undefined' || !window.location) return;
+    const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.delete('gas');
+    currentUrl.searchParams.set('event', targetId);
+    const searchStr = currentUrl.searchParams.toString();
+    const newPath = currentUrl.pathname + (searchStr ? '?' + searchStr : '') + currentUrl.hash;
+    window.history.replaceState({}, document.title, newPath);
+  } catch (e) {
+    console.warn("syncBrowserUrlWithActiveEvent error:", e);
+  }
 }
 
 function getQrImageUrl(text, size = 300) {
@@ -804,8 +856,8 @@ const MOCK_DATA = {
       customFrameUrl: "",
       categories: [
         { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-        { idKategori: "KAT-2", namaKategori: "The Best Groupie", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
-        { idKategori: "KAT-3", namaKategori: "Senyum Terhangat", deskripsi: "Senyum paling ceria dan memikat", urutan: 3 }
+        { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
+        { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
       ]
     },
     {
@@ -913,8 +965,8 @@ const MOCK_DATA = {
   },
   categories: [
     { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-    { idKategori: "KAT-2", namaKategori: "The Best Groupie", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
-    { idKategori: "KAT-3", namaKategori: "Senyum Terhangat", deskripsi: "Senyum paling ceria dan memikat", urutan: 3 }
+    { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
+    { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
   ],
   samplePhotos: [
     {
@@ -925,6 +977,9 @@ const MOCK_DATA = {
       frameStyle: "GOLD_DECO",
       gdriveViewUrl: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80",
       totalLikes: 14,
+      categoryLikes: { "KAT-1": 14, "Best Dressed Guest": 14 },
+      idKategori: "KAT-1",
+      namaKategori: "Best Dressed Guest",
       isFeatured: true,
       createdAt: "2026-11-08 19:15:00"
     },
@@ -936,6 +991,9 @@ const MOCK_DATA = {
       frameStyle: "POLAROID",
       gdriveViewUrl: "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=800&q=80",
       totalLikes: 9,
+      categoryLikes: { "KAT-2": 9, "Best Outfit": 9 },
+      idKategori: "KAT-2",
+      namaKategori: "Best Outfit",
       isFeatured: false,
       createdAt: "2026-11-08 19:30:00"
     },
@@ -947,6 +1005,9 @@ const MOCK_DATA = {
       frameStyle: "MINIMAL",
       gdriveViewUrl: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=800&q=80",
       totalLikes: 7,
+      categoryLikes: { "KAT-3": 7, "Pose Terheboh": 7 },
+      idKategori: "KAT-3",
+      namaKategori: "Pose Terheboh",
       isFeatured: false,
       createdAt: "2026-11-08 19:45:00"
     }
@@ -990,19 +1051,8 @@ async function initApp() {
     localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
   }
 
-  // SAMARKAN URL: Hapus parameter ?gas=... dan ?event=... dari address bar browser agar URL bersih tanpa ID event di akhir
-  if (urlParams.has('gas') || urlParams.has('event')) {
-    try {
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('gas');
-      cleanUrl.searchParams.delete('event');
-      const searchStr = cleanUrl.searchParams.toString();
-      const cleanPath = cleanUrl.pathname + (searchStr ? '?' + searchStr : '') + cleanUrl.hash;
-      window.history.replaceState({}, document.title, cleanPath);
-    } catch (e) {
-      console.warn("URL camouflage replaceState error:", e);
-    }
-  }
+  // SINKRONISASI URL ADDRESS BAR: Pertahankan ?event=ID_EVENT di akhir URL browser agar live sync & share stabil
+  syncBrowserUrlWithActiveEvent();
 
   // Filter koleksi acara terhadap daftar acara yang telah dihapus (Persistent Tombstone)
   const deletedEventsSet = getDeletedEventsSet();
@@ -1269,29 +1319,58 @@ async function loadEventData() {
         localStorage.setItem('snapevent_active_event', JSON.stringify(STATE.activeEvent));
         applyEventToUI();
         applyActiveFrame();
-        // Cerdas sinkronkan kategori poling / voting:
-        // Selalu pertahankan minimal 3 kategori voting lengkap!
-        // JANGAN PERNAH men-downgrade 3 kategori menjadi 1 kategori generic!
-        const standard3Categories = [
-          { idKategori: "KAT-1", namaKategori: "Best Outfit", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-          { idKategori: "KAT-2", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 2 },
-          { idKategori: "KAT-3", namaKategori: "Momen Terbaper", deskripsi: "Momen paling romantis dan menyentuh", urutan: 3 }
-        ];
-        const localSavedCats = loadEventCategories(res.event.idEvent || STATE.activeEventId);
-        let finalCats = [];
-
-        if (Array.isArray(res.categories) && res.categories.length >= 3) {
-          finalCats = res.categories;
-        } else if (localSavedCats.length >= 3) {
-          finalCats = localSavedCats;
-          if (Array.isArray(res.categories) && res.categories.length > 0) {
-            const serverCat = res.categories[0];
-            if (serverCat && serverCat.namaKategori && !finalCats.some(fc => fc.namaKategori.toLowerCase().trim() === serverCat.namaKategori.toLowerCase().trim())) {
-              finalCats[0] = serverCat;
+        // SINKRONISASI KATEGORI CUSTOM PER ACARA (Cloud Persistent via Global Config & Local)
+        const catKey = `event_categories_${res.event.idEvent}`;
+        let cfgCats = null;
+        if (res.globalConfig && res.globalConfig[catKey]) {
+          try { cfgCats = JSON.parse(res.globalConfig[catKey]); } catch(e){}
+        } else if (res.globalConfig && res.globalConfig.latest_event_categories) {
+          try {
+            const lcs = JSON.parse(res.globalConfig.latest_event_categories);
+            if (lcs && (lcs.eventId === res.event.idEvent || lcs.eventId === targetId) && Array.isArray(lcs.categories) && lcs.categories.length > 0) {
+              cfgCats = lcs.categories;
             }
-          }
+          } catch(e){}
+        }
+
+        const localSavedCats = loadEventCategories(res.event.idEvent || STATE.activeEventId);
+        const standard3Categories = [
+          { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+          { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
+          { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
+        ];
+
+        let finalCats = [];
+        if (Array.isArray(cfgCats) && cfgCats.length > 0) {
+          finalCats = cfgCats;
+        } else if (Array.isArray(localSavedCats) && localSavedCats.length > 0) {
+          finalCats = localSavedCats;
         } else if (Array.isArray(res.categories) && res.categories.length > 0) {
-          finalCats = [...res.categories];
+          finalCats = res.categories;
+        } else {
+          finalCats = standard3Categories;
+        }
+
+        // Normalisasi kategori: migrasi nama template lama & pastikan minimal 3 kategori tersinkron
+        finalCats = finalCats.map((c, idx) => {
+          const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+          let finalName = name;
+          if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') {
+            finalName = 'Best Dressed Guest';
+          } else if (name.toLowerCase().trim() === 'senyum terhangat') {
+            finalName = 'Best Outfit';
+          } else if (name.toLowerCase().trim() === 'gaya terunik') {
+            finalName = 'Pose Terheboh';
+          }
+          return {
+            idKategori: (typeof c === 'object' && c.idKategori) ? c.idKategori : `KAT-${idx + 1}`,
+            namaKategori: finalName,
+            deskripsi: (typeof c === 'object' && c.deskripsi) ? c.deskripsi : 'Kategori Pilihan Tamu',
+            urutan: idx + 1
+          };
+        });
+
+        if (finalCats.length < 3) {
           standard3Categories.forEach(std => {
             if (finalCats.length < 3 && !finalCats.some(fc => fc.namaKategori.toLowerCase().trim() === std.namaKategori.toLowerCase().trim())) {
               finalCats.push({
@@ -1302,8 +1381,6 @@ async function loadEventData() {
               });
             }
           });
-        } else {
-          finalCats = standard3Categories;
         }
 
         STATE.activeCategories = finalCats;
@@ -1311,6 +1388,8 @@ async function loadEventData() {
         if (STATE.activeEvent) {
           STATE.activeEvent.categories = STATE.activeCategories;
         }
+        applyEventToUI();
+        syncBrowserUrlWithActiveEvent(res.event.idEvent || STATE.activeEventId);
 
         if (res.metrics) {
           STATE.metrics = res.metrics;
@@ -1825,11 +1904,12 @@ async function loadGallery() {
           if (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0) {
             p.categoryLikes = {};
             if (availableCats.length > 0) {
-              const firstCat = availableCats[0];
-              p.categoryLikes[firstCat.idKategori] = p.totalLikes;
-              p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
-              if (!p.idKategori) p.idKategori = firstCat.idKategori;
-              if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+              const hash = (String(p.idFoto).split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % availableCats.length;
+              const assignedCat = availableCats[hash] || availableCats[0];
+              p.categoryLikes[assignedCat.idKategori] = p.totalLikes;
+              p.categoryLikes[assignedCat.namaKategori] = p.totalLikes;
+              if (!p.idKategori) p.idKategori = assignedCat.idKategori;
+              if (!p.namaKategori) p.namaKategori = assignedCat.namaKategori;
             } else {
               p.categoryLikes['DEFAULT'] = p.totalLikes;
             }
@@ -2040,8 +2120,7 @@ function applyEventToUI() {
   const catContainer = document.getElementById('galleryCategoryTabs');
   if (catContainer) {
     const isWinners = STATE.activeGalleryFilter === 'WINNERS';
-    const isPopular = STATE.activeGalleryFilter === 'POPULAR';
-    const isAll = (!isWinners && !isPopular && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
+    const isAll = (!isWinners && (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'ALL'));
 
     const catsToRender = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
       ? STATE.activeCategories
@@ -2050,7 +2129,6 @@ function applyEventToUI() {
     catContainer.innerHTML = `
       <button data-cat="ALL" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isAll ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer">Semua Foto</button>
       <button data-cat="WINNERS" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isWinners ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer flex items-center gap-1.5">🏆 Pemenang Voting</button>
-      <button data-cat="POPULAR" class="cat-tab shrink-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold ${isPopular ? 'bg-brand-gold text-black border-brand-gold shadow-sm' : 'bg-white/5 text-zinc-300 border-white/10 hover:border-brand-gold/50'} border transition cursor-pointer flex items-center gap-1">🔥 Paling Populer</button>
     `;
 
     catsToRender.forEach(cat => {
@@ -2131,6 +2209,7 @@ function showView(viewId) {
     document.body.classList.add('camera-lock-scroll');
     document.getElementById('navBtnCamera')?.classList.add('text-brand-gold');
     document.getElementById('navBtnCamera')?.classList.remove('text-zinc-400');
+    applyEventToUI(); // Live refresh pilihan bingkai & mode kunci seragam
     const avail = getAvailableFrames();
     if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
       STATE.activeFrame = avail[0] ? avail[0].id : 'GOLD_DECO';
@@ -3100,16 +3179,30 @@ function openVoteCategoryModal(idFoto) {
     descEl.textContent = `Pilih kategori penghargaan untuk foto ini (Maks. ${maxVotesAllowed}x vote per tamu • Tersisa: ${remaining} suara):`;
   }
 
-  const categories = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
+  const rawCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
     ? STATE.activeCategories
     : loadEventCategories(STATE.activeEventId);
+  const categories = rawCats.map((c, idx) => {
+    const name = typeof c === 'string' ? c : (c.namaKategori || c.name || '');
+    let finalName = name;
+    if (name.toLowerCase().trim() === 'momen terbaper' || name.toLowerCase().trim() === 'the best groupie') finalName = 'Best Dressed Guest';
+    else if (name.toLowerCase().trim() === 'senyum terhangat') finalName = 'Best Outfit';
+    else if (name.toLowerCase().trim() === 'gaya terunik') finalName = 'Pose Terheboh';
+    return {
+      idKategori: (typeof c === 'object' && c.idKategori) ? c.idKategori : `KAT-${idx + 1}`,
+      namaKategori: finalName
+    };
+  });
 
-  container.innerHTML = categories.map((cat, idx) => {
-    const alreadyVoted = Array.isArray(STATE.votedCategoryIds) && STATE.votedCategoryIds.includes(cat.idKategori);
+  let hasChecked = false;
+  container.innerHTML = categories.map((cat) => {
+    const alreadyVoted = Array.isArray(STATE.votedCategoryIds) && (STATE.votedCategoryIds.includes(cat.idKategori) || STATE.votedCategoryIds.includes(cat.namaKategori));
+    const shouldCheck = !alreadyVoted && !hasChecked;
+    if (shouldCheck) hasChecked = true;
     return `
       <label class="flex items-center justify-between p-3 rounded-xl border ${alreadyVoted ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-[#111116] border-white/10 hover:border-brand-gold/60 cursor-pointer'} transition">
         <div class="flex items-center gap-2.5">
-          <input type="radio" name="voteCategoryOption" value="${cat.idKategori}" ${alreadyVoted ? 'disabled' : ''} ${!alreadyVoted && idx === 0 ? 'checked' : ''} class="accent-brand-gold" />
+          <input type="radio" name="voteCategoryOption" value="${cat.idKategori}" ${alreadyVoted ? 'disabled' : ''} ${shouldCheck ? 'checked' : ''} class="accent-brand-gold" />
           <span class="text-xs font-semibold text-white">👑 ${cat.namaKategori}</span>
         </div>
         <span class="text-[10px] ${alreadyVoted ? 'text-amber-400 font-bold' : 'text-zinc-400'}">
@@ -3154,7 +3247,9 @@ async function handleVotePhoto(idFoto, idKategori = '') {
   }
 
   // Enforce 1 vote per category (Aturan Ketat)
-  if (STATE.votedCategoryIds.includes(idKategori)) {
+  const catObj = (STATE.activeCategories || []).find(c => c.idKategori === idKategori || c.namaKategori === idKategori);
+  const catName = catObj?.namaKategori || idKategori;
+  if (STATE.votedCategoryIds.includes(idKategori) || (catName && STATE.votedCategoryIds.includes(catName))) {
     showToast("Anda sudah memberikan voting pada kategori ini (Maksimal 1 kali voting per kategori)!", "warning");
     return;
   }
@@ -3162,6 +3257,9 @@ async function handleVotePhoto(idFoto, idKategori = '') {
   // Tandai voting secara lokal seketika (Respon Cepat)
   if (!STATE.votedCategoryIds.includes(idKategori)) {
     STATE.votedCategoryIds.push(idKategori);
+  }
+  if (catName && !STATE.votedCategoryIds.includes(catName)) {
+    STATE.votedCategoryIds.push(catName);
   }
   if (!STATE.votedPhotoIds.includes(idFoto)) {
     STATE.votedPhotoIds.push(idFoto);
@@ -3282,11 +3380,12 @@ function renderGallery() {
     if (p && (p.totalLikes || 0) > 0 && (!p.categoryLikes || Object.keys(p.categoryLikes).length === 0)) {
       p.categoryLikes = {};
       if (availableCats.length > 0) {
-        const firstCat = availableCats[0];
-        p.categoryLikes[firstCat.idKategori] = p.totalLikes;
-        p.categoryLikes[firstCat.namaKategori] = p.totalLikes;
-        if (!p.idKategori) p.idKategori = firstCat.idKategori;
-        if (!p.namaKategori) p.namaKategori = firstCat.namaKategori;
+        const hash = (String(p.idFoto).split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % availableCats.length;
+        const assignedCat = availableCats[hash] || availableCats[0];
+        p.categoryLikes[assignedCat.idKategori] = p.totalLikes;
+        p.categoryLikes[assignedCat.namaKategori] = p.totalLikes;
+        if (!p.idKategori) p.idKategori = assignedCat.idKategori;
+        if (!p.namaKategori) p.namaKategori = assignedCat.namaKategori;
       } else {
         p.categoryLikes['DEFAULT'] = p.totalLikes;
       }
@@ -3363,7 +3462,7 @@ function renderGallery() {
 
   // Highlight Banner Hasil Voting Terkini di atas Grid Foto
   if (spotlightContainer) {
-    const topVoted = [...(STATE.photos || [])].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0))[0];
+    const topVoted = [...allEligiblePhotos].sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0))[0];
     if (topVoted && (topVoted.totalLikes || 0) > 0) {
       spotlightContainer.classList.remove('hidden');
       spotlightContainer.innerHTML = `
@@ -4504,7 +4603,7 @@ function resetCreateEventForm() {
   document.getElementById('formEventId').value = newId;
   document.getElementById('formEventNama').value = "";
   document.getElementById('formEventHashtag').value = "";
-  document.getElementById('formEventTanggal').value = d.toISOString().split('T')[0];
+  document.getElementById('formEventTanggal').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   document.getElementById('formEventMaxFoto').value = "10";
   document.getElementById('formEventMaxVote').value = "1";
   document.getElementById('formEventDriveFolder').value = "";
@@ -4523,9 +4622,9 @@ function resetCreateEventForm() {
   renderAdminFrameSettings(null);
 
   renderCategoryInputRows([
-    { namaKategori: "Busana Terbaik" },
-    { namaKategori: "Momen Romantis" },
-    { namaKategori: "Pose Terlucu" }
+    { namaKategori: "Best Dressed Guest" },
+    { namaKategori: "Best Outfit" },
+    { namaKategori: "Pose Terheboh" }
   ]);
 
   STATE.tempCustomFrameData = null;
@@ -4829,7 +4928,16 @@ function populateEditEventForm(ev) {
   document.getElementById('formEventId').value = ev.idEvent;
   document.getElementById('formEventNama').value = ev.namaEvent;
   document.getElementById('formEventHashtag').value = ev.hashtagEvent;
-  document.getElementById('formEventTanggal').value = formatDateForInput(ev.tanggalEvent) || (ev.tanggalEvent || '');
+  let evDateFormatted = formatDateForInput(ev.tanggalEvent);
+  if (!evDateFormatted) {
+    const localEv = (STATE.events || []).find(e => e.idEvent === ev.idEvent);
+    if (localEv && localEv.tanggalEvent) evDateFormatted = formatDateForInput(localEv.tanggalEvent);
+  }
+  if (!evDateFormatted) {
+    const now = new Date();
+    evDateFormatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+  document.getElementById('formEventTanggal').value = evDateFormatted;
   document.getElementById('formEventMaxFoto').value = ev.maxFotoPerGuest;
   document.getElementById('formEventMaxVote').value = ev.maxVotePerGuest;
   document.getElementById('formEventDriveFolder').value = ev.gdriveFolderId || '';
@@ -4891,6 +4999,7 @@ function renderCategoryInputRows(cats) {
   const container = document.getElementById('categoryInputsContainer');
   container.innerHTML = '';
   const list = cats && cats.length > 0 ? cats : [
+    { namaKategori: "Best Dressed Guest" },
     { namaKategori: "Best Outfit" },
     { namaKategori: "Pose Terheboh" }
   ];
@@ -5253,16 +5362,13 @@ async function saveAdminEventForm() {
     if (val) cats.push({ idKategori: `KAT-${idx + 1}`, namaKategori: val, urutan: idx + 1 });
   });
 
-  const defaultStandard3 = [
-    { namaKategori: "Best Outfit", deskripsi: "Busana paling menawan malam ini" },
-    { namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng" },
-    { namaKategori: "Momen Terbaper", deskripsi: "Momen paling romantis dan menyentuh" }
-  ];
-  defaultStandard3.forEach(std => {
-    if (cats.length < 3 && !cats.some(c => c.namaKategori.toLowerCase().trim() === std.namaKategori.toLowerCase().trim())) {
-      cats.push({ idKategori: `KAT-${cats.length + 1}`, namaKategori: std.namaKategori, urutan: cats.length + 1 });
-    }
-  });
+  if (cats.length === 0) {
+    cats.push(
+      { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
+      { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
+      { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
+    );
+  }
 
   let frameLockMode = 'multi';
   document.getElementsByName('frameLockModeRadio').forEach(r => {
@@ -5423,7 +5529,7 @@ async function saveAdminEventForm() {
         categories: cats
       });
 
-      // LIVE SYNC BINGKAI LINTAS DEVICE: Simpan ke Config Sheet agar semua device tamu & crew langsung tersinkron
+      // LIVE SYNC BINGKAI & KATEGORI LINTAS DEVICE: Simpan ke Config Sheet agar semua device tamu & crew langsung tersinkron
       const frameConfigPayload = {
         mode: frameLockMode,
         locked: singleLockedFrame,
@@ -5435,9 +5541,16 @@ async function saveAdminEventForm() {
           latest_frame_settings: JSON.stringify({
             eventId: savedEvent.idEvent,
             ...frameConfigPayload
-          })
+          }),
+          [`event_categories_${savedEvent.idEvent}`]: JSON.stringify(cats),
+          latest_event_categories: JSON.stringify({
+            eventId: savedEvent.idEvent,
+            categories: cats
+          }),
+          active_event_id: savedEvent.idEvent
         }
       }).catch(() => {});
+      syncBrowserUrlWithActiveEvent(savedEvent.idEvent);
 
       if (res && res.status === 'success') {
         if (res.customFrameUrl) {

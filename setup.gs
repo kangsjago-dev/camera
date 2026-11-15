@@ -103,9 +103,9 @@ const DUMMY_EVENTS_MASTER = [
       ""
     ],
     categories: [
-      ["KAT-001", "EVT-202611-001", "Best Outfit", "Tamu dengan busana paling menawan & memukau malam ini", 1],
-      ["KAT-002", "EVT-202611-001", "Pose Terheboh", "Gaya jepretan paling kocak, seru, dan energik", 2],
-      ["KAT-003", "EVT-202611-001", "Momen Terbaper", "Foto paling romantis, syahdu, atau menyentuh hati", 3]
+      ["KAT-001", "EVT-202611-001", "Best Dressed Guest", "Busana paling menawan malam ini", 1],
+      ["KAT-002", "EVT-202611-001", "Best Outfit", "Gaya busana paling memukau dan serasi", 2],
+      ["KAT-003", "EVT-202611-001", "Pose Terheboh", "Gaya paling kocak dan seru bersama geng", 3]
     ],
     photos: [
       ["FTO-SK-001", "EVT-202611-001", "GUEST-001", "Sarah & Kevin", "Momen terbaik malam ini bersama sahabat tercinta!", "800T", "GOLD_DECO", "", "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80", 18, true, "2026-11-08 19:15:00"],

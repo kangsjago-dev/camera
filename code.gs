@@ -1428,6 +1428,7 @@ function handleSubmitVote(payload) {
     }
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
     const voteSheet = ss.getSheetByName(SHEET_NAMES.VOTING);
     const fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
 
@@ -1778,10 +1779,22 @@ function handleAdminSaveEvent(payload) {
           }
         }
       }
+      let maxNum = 0;
+      if (katSheet && katSheet.getLastRow() > 1) {
+        const vals = katSheet.getRange(2, COL_KAT.ID + 1, katSheet.getLastRow() - 1, 1).getDisplayValues();
+        vals.forEach(function(r) {
+          const val = r[0];
+          if (val && val.indexOf("KAT-") === 0) {
+            const numPart = parseInt(val.replace("KAT-", ""), 10);
+            if (!isNaN(numPart) && numPart > maxNum) maxNum = numPart;
+          }
+        });
+      }
       categories.forEach(function(cat, idx) {
         const catName = typeof cat === "string" ? cat : (cat.namaKategori || cat.name);
         if (catName && catName.trim() !== "") {
-          const newIdKat = generateIncrementalId(katSheet, "KAT-", COL_KAT.ID);
+          const nextNum = maxNum + idx + 1;
+          const newIdKat = "KAT-" + ("000" + nextNum).slice(-3);
           katSheet.appendRow([
             sanitizeCellValue(newIdKat),
             sanitizeCellValue(savedIdEvent),
