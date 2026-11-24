@@ -8,7 +8,7 @@
 // --- 1. GLOBAL DEFAULTS & LOCAL STATE ---
 const GLOBAL_CONFIG = {
   // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
-  DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
+  DEFAULT_DRIVE_MASTER_ID: '',
   DEFAULT_APP_TITLE: 'SnapEvent Enterprise Studio',
   DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };

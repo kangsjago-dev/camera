@@ -761,7 +761,7 @@ function handleGetGallery(eventId, guestId) {
 
   // Periksa subfolder di bawah Master Folder
   const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-  let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+  let masterFolderId = "";
   if (configSheet && configSheet.getLastRow() > 1) {
     const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
     cRows.forEach(function(cr) {
@@ -1324,7 +1324,7 @@ function handleUploadCustomFrame(payload) {
     const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
     const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
 
-    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    let masterFolderId = "";
     if (configSheet && configSheet.getLastRow() > 1) {
       const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
       cRows.forEach(function(cr) {
@@ -1639,7 +1639,7 @@ function handleAdminSaveEvent(payload) {
     let customFrameUrl = String(payload.customFrameUrl || "").trim();
 
     // Pastikan folder acara ada di Drive
-    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    let masterFolderId = "";
     if (configSheet && configSheet.getLastRow() > 1) {
       const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
       cRows.forEach(function(cr) {
