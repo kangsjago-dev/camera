@@ -8,7 +8,7 @@
 // --- 1. GLOBAL DEFAULTS & LOCAL STATE ---
 const GLOBAL_CONFIG = {
   // Folder Induk Google Drive Resmi (Fallback permanen untuk seluruh perangkat)
-  DEFAULT_DRIVE_MASTER_ID: '12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw',
+  DEFAULT_DRIVE_MASTER_ID: '',
   DEFAULT_APP_TITLE: 'SnapEvent Enterprise Studio',
   DEFAULT_GAS_URL: 'https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec'
 };
@@ -25,6 +25,14 @@ if (paramGas && paramGas.trim().startsWith('http') && !hasCustomSavedGas) {
 const savedGasUrl = localStorage.getItem('snapevent_gas_url');
 if (savedGasUrl && (savedGasUrl.includes('AKfycbPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw') || savedGasUrl.includes('AKfycbwPGeqw4wQAZrqSEUGnrQ24xTA8jaQ7HnxnEw7dr9Wm92NXWvzD7XQNme34haCj1b9vuw'))) {
   localStorage.setItem('snapevent_gas_url', GLOBAL_CONFIG.DEFAULT_GAS_URL);
+}
+
+// Helper Parser Boolean Universal (Kebal format "TRUE" Google Sheets & boolean riil)
+function parseBoolSafe(val) {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val === 1;
+  const s = String(val || '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes';
 }
 
 const STATE = {
@@ -62,7 +70,7 @@ const STATE = {
   guestNama: localStorage.getItem('snapevent_guest_nama') || '',
 
   // Active Event Context
-  activeEventId: localStorage.getItem('snapevent_active_event_id') || 'EVT-202611-001',
+  activeEventId: localStorage.getItem('snapevent_active_event_id') || '',
   activeEvent: null,
   activeCategories: [],
 
@@ -81,6 +89,11 @@ const STATE = {
   votedCategoryIds: [],
   activeGalleryFilter: 'ALL',
 
+  // Stage Photos Gallery (Online Cloud Synced)
+  stagePhotosEnabled: parseBoolSafe(localStorage.getItem('snapevent_stage_photos_enabled')),
+  stagePhotosTitle: localStorage.getItem('snapevent_stage_photos_title') || 'Foto Panggung',
+  stagePhotosLink: localStorage.getItem('snapevent_stage_photos_link') || '',
+
   // Slideshow State
   slideshowIndex: 0,
   slideshowTimer: null
@@ -88,35 +101,24 @@ const STATE = {
 
 // --- DATA ISOLATION HELPERS PER EVENT ---
 function getResolvedEventId(idOrSlug) {
-  // Jika STATE.activeEvent sudah aktif tersinkron dari server, utamakan ID aktif tersebut jika target adalah default
-  if ((!idOrSlug || idOrSlug === 'EVT-202611-001' || idOrSlug === 'DEFAULT') && STATE.activeEvent && STATE.activeEvent.idEvent) {
-    return STATE.activeEvent.idEvent;
+  if (!idOrSlug) {
+    return (STATE.activeEvent && STATE.activeEvent.idEvent) || STATE.activeEventId || (STATE.events && STATE.events[0]?.idEvent) || '';
   }
-  const target = String(idOrSlug || (STATE.activeEvent && STATE.activeEvent.idEvent) || STATE.activeEventId || '').trim();
-  if (!target) return (STATE.activeEvent && STATE.activeEvent.idEvent) || (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+  const target = String(idOrSlug).trim();
   if (/^EVT-\d+/i.test(target)) return target;
 
   const lower = target.toLowerCase();
-  // Alias langsung untuk event default Sarah & Kevin agar kebal terhadap variasi slug/parameter
-  if (
-    lower === 'the-wedding-of-sarah-and-kevin' ||
-    lower === 'the-wedding-of-sarah-&-kevin' ||
-    lower === 'sarah-kevin' ||
-    lower === 'sarahkevineverafter' ||
-    (lower.includes('sarah') && lower.includes('kevin'))
-  ) {
-    return 'EVT-202611-001';
-  }
-
-  const allKnown = [...(STATE.events || []), ...(MOCK_DATA.events || [])];
+  const cleanTargetSlug = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const allKnown = STATE.events || [];
   const ev = allKnown.find(e => 
-    e.idEvent === target || 
-    (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
-    (e.namaEvent && e.namaEvent.toLowerCase() === lower)
+    e && (
+      e.idEvent === target || 
+      (e.slugEvent && (e.slugEvent.toLowerCase() === lower || e.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (e.namaEvent && (e.namaEvent.toLowerCase() === lower || e.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
+    )
   );
   if (ev && ev.idEvent) return ev.idEvent;
-  if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
-  return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+  return target;
 }
 
 function getEventPhotosKey(eventId) {
@@ -469,7 +471,7 @@ function recordDeletedEvent(idEvent) {
 }
 
 function loadEventPhotos(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   const resolvedId = getResolvedEventId(id);
   const key = getEventPhotosKey(resolvedId);
   const deletedSet = getDeletedPhotosSet(resolvedId);
@@ -491,22 +493,10 @@ function loadEventPhotos(eventId) {
         return p;
       }) : [];
     } else {
-      // Migrasi atau fallback ke mock data sample jika event default demo
-      const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
-      if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
-        if (legacy.length > 0) {
-          STATE.photos = legacy.filter(p => p && !deletedSet.has(String(p.idFoto)));
-        } else {
-          STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
-        }
-        localStorage.setItem(key, JSON.stringify(STATE.photos));
-      } else {
-        STATE.photos = [];
-      }
+      STATE.photos = [];
     }
   } catch (e) {
-    STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
+    STATE.photos = [];
   }
 
   // Auto-synthesize categoryLikes jika ada likes namun belum terpetakan ke kategori acara
@@ -533,7 +523,7 @@ function loadEventPhotos(eventId) {
 }
 
 function saveEventPhotos(eventId) {
-  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
+  const id = getResolvedEventId(eventId || STATE.activeEventId || '');
   const deletedSet = getDeletedPhotosSet(id);
   try {
     const cleanPhotos = (STATE.photos || [])
@@ -553,7 +543,7 @@ function saveEventPhotos(eventId) {
 }
 
 function loadEventVotes(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   try {
     STATE.votedPhotoIds = JSON.parse(localStorage.getItem(getEventVotedPhotosKey(id)) || '[]');
     STATE.votedCategoryIds = JSON.parse(localStorage.getItem(getEventVotedCategoriesKey(id)) || '[]');
@@ -564,7 +554,7 @@ function loadEventVotes(eventId) {
 }
 
 function saveEventVotes(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   localStorage.setItem(getEventVotedPhotosKey(id), JSON.stringify(STATE.votedPhotoIds));
   localStorage.setItem(getEventVotedCategoriesKey(id), JSON.stringify(STATE.votedCategoryIds));
 }
@@ -722,14 +712,104 @@ function formatDateForInput(dateVal) {
   return '';
 }
 
-function getEventShareUrl(eventId) {
+function normalizeDriveDirectUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let url = rawUrl.trim();
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+
+  // Ekstraksi Google Drive file ID
+  // Pola 1: /file/d/ID/view atau /file/d/ID
+  const matchFileD = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (matchFileD && matchFileD[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchFileD[1]}`;
+  }
+
+  // Pola 2: id=ID atau ?id=ID
+  const matchIdParam = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (matchIdParam && matchIdParam[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchIdParam[1]}`;
+  }
+
+  // Pola 3: drive.google.com/open?id=ID
+  const matchOpenId = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (matchOpenId && matchOpenId[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchOpenId[1]}`;
+  }
+
+  // Pola 4: uc?id=ID atau uc?export=view&id=ID
+  const matchUc = url.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+  if (matchUc && matchUc[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchUc[1]}`;
+  }
+
+  // Pola 5: Raw Drive file ID 25+ karakter alfanumerik
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(url)) {
+    return `https://lh3.googleusercontent.com/d/${url}`;
+  }
+
+  return url;
+}
+
+function normalizeFrameTargetUrl(rawUrl) {
+  return normalizeDriveDirectUrl(rawUrl);
+}
+
+function getEventShareUrl(eventOrId) {
+  let baseUrl = 'https://www.runway.my.id/cam';
   try {
     const loc = window.location;
     if (loc && loc.origin && !loc.origin.includes('localhost') && !loc.origin.startsWith('file:') && !loc.origin.includes('127.0.0.1')) {
-      return `${loc.origin}${loc.pathname}`.replace(/\/+$/, '');
+      baseUrl = `${loc.origin}${loc.pathname}`.replace(/\/+$/, '');
     }
   } catch (e) {}
-  return 'https://camera-blush-theta.vercel.app';
+
+  let ev = null;
+  let targetId = '';
+  if (eventOrId && typeof eventOrId === 'object') {
+    ev = eventOrId;
+    targetId = ev.idEvent || ev.slugEvent || ev.id || '';
+  } else if (eventOrId) {
+    targetId = String(eventOrId).trim();
+  } else {
+    ev = STATE.activeEvent;
+    targetId = STATE.activeEventId || (ev && (ev.idEvent || ev.slugEvent)) || '';
+  }
+
+  if (!ev && targetId) {
+    const lower = targetId.toLowerCase();
+    const cleanTargetSlug = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    ev = (STATE.events && STATE.events.find(e => e && (
+      e.idEvent === targetId || 
+      (e.slugEvent && (e.slugEvent.toLowerCase() === lower || e.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (e.namaEvent && (e.namaEvent.toLowerCase() === lower || e.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
+    ))) || 
+    (STATE.activeEvent && (
+      STATE.activeEvent.idEvent === targetId || 
+      (STATE.activeEvent.slugEvent && (STATE.activeEvent.slugEvent.toLowerCase() === lower || STATE.activeEvent.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (STATE.activeEvent.namaEvent && (STATE.activeEvent.namaEvent.toLowerCase() === lower || STATE.activeEvent.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
+    ) ? STATE.activeEvent : null);
+  }
+
+  let eventSlugOrName = '';
+  if (ev) {
+    if (ev.slugEvent && ev.slugEvent.trim()) {
+      eventSlugOrName = ev.slugEvent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    } else if (ev.namaEvent && ev.namaEvent.trim()) {
+      eventSlugOrName = ev.namaEvent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    } else if (ev.idEvent) {
+      eventSlugOrName = ev.idEvent;
+    }
+  }
+  if (!eventSlugOrName && targetId) {
+    eventSlugOrName = targetId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || targetId;
+  }
+
+  if (eventSlugOrName) {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${sep}event=${encodeURIComponent(eventSlugOrName)}`;
+  }
+  return baseUrl;
 }
 
 function syncBrowserUrlWithActiveEvent(eventId) {
@@ -748,7 +828,180 @@ function syncBrowserUrlWithActiveEvent(eventId) {
 }
 
 function getQrImageUrl(text, size = 300) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(text)}`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=H&margin=8&data=${encodeURIComponent(text)}`;
+}
+
+// Renderer Lencana Tengah QR Code (Persegi Panjang Horizontal Tanpa Frame & Ukuran Besar 1x)
+function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
+  // Dimensi persegi panjang horizontal besar 1x: lebar ~45%, tinggi ~28%
+  const badgeW = Math.round(size * 0.45);
+  const badgeH = Math.round(size * 0.28);
+  const boxX = (size - badgeW) / 2;
+  const boxY = (size - badgeH) / 2;
+  const radius = Math.round(badgeH * 0.16);
+
+  // 1. Gambar latar badge persegi panjang putih bersih (Tanpa Frame / Border)
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.20)';
+  ctx.shadowBlur = Math.max(3, Math.round(size * 0.014));
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = Math.max(1, Math.round(size * 0.004));
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(boxX, boxY, badgeW, badgeH, radius);
+  } else {
+    ctx.rect(boxX, boxY, badgeW, badgeH);
+  }
+  ctx.fill();
+  ctx.restore();
+
+  // 2. Konten Badge: Gambar Logo Kustom (RUNWAY Entertainment / Google Drive) ATAU Insignia Emas Mewah
+  if (logoImgObj && (logoImgObj.naturalWidth > 0 || logoImgObj.width > 0)) {
+    const nw = logoImgObj.naturalWidth || logoImgObj.width;
+    const nh = logoImgObj.naturalHeight || logoImgObj.height;
+    const padX = Math.max(2, Math.round(badgeW * 0.04));
+    const padY = Math.max(2, Math.round(badgeH * 0.06));
+    const availW = badgeW - (padX * 2);
+    const availH = badgeH - (padY * 2);
+
+    const scale = Math.min(availW / nw, availH / nh);
+    const drawW = nw * scale;
+    const drawH = nh * scale;
+    const drawX = boxX + (badgeW - drawW) / 2;
+    const drawY = boxY + (badgeH - drawH) / 2;
+
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(boxX + 1, boxY + 1, badgeW - 2, badgeH - 2, Math.max(1, radius - 1));
+    } else {
+      ctx.rect(boxX + 1, boxY + 1, badgeW - 2, badgeH - 2);
+    }
+    ctx.clip();
+    ctx.drawImage(logoImgObj, drawX, drawY, drawW, drawH);
+    ctx.restore();
+  } else {
+    // Insignia Emas Vektor Proporsional Horizontal (RUNWAY Camera Luxury Insignia)
+    ctx.save();
+    const cx = size / 2;
+    const cy = size / 2;
+    const s = badgeH * 0.65;
+    const left = cx - (s * 1.3) / 2;
+    const top = cy - s / 2.2;
+    const w = s * 1.3;
+    const h = s * 0.72;
+    const r = s * 0.14;
+
+    // Body kamera horizontal gradien emas
+    const goldGrad = ctx.createLinearGradient(left, top, left + w, top + h);
+    goldGrad.addColorStop(0, '#F3E5AB');
+    goldGrad.addColorStop(0.5, '#D4AF37');
+    goldGrad.addColorStop(1, '#AA7C11');
+
+    ctx.fillStyle = goldGrad;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(left, top, w, h, r);
+    } else {
+      ctx.rect(left, top, w, h);
+    }
+    ctx.fill();
+
+    // Top flash bump
+    const bumpW = w * 0.30;
+    const bumpH = h * 0.22;
+    const bumpX = cx - bumpW / 2;
+    const bumpY = top - bumpH * 0.65;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(bumpX, bumpY, bumpW, bumpH, r * 0.5);
+    } else {
+      ctx.rect(bumpX, bumpY, bumpW, bumpH);
+    }
+    ctx.fill();
+
+    // Lensa lingkaran kamera
+    ctx.fillStyle = '#14141C';
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.52, h * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineWidth = Math.max(1.5, Math.round(s * 0.08));
+    ctx.strokeStyle = '#F3E5AB';
+    ctx.stroke();
+
+    // Pupil emas
+    ctx.fillStyle = '#D4AF37';
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.52, h * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// Engine Komposit Gambar QR Code dengan Logo di Titik Tengah (Error-Correction H 30% Redundancy)
+async function generateQrWithLogo(text, size = 300, logoUrl = '') {
+  const qrApiUrl = getQrImageUrl(text, size);
+  const rawLogo = logoUrl || STATE.appLogoUrl || localStorage.getItem('snapevent_app_logo_url') || '';
+  const finalLogoUrl = rawLogo ? normalizeDriveDirectUrl(rawLogo) : '';
+
+  return new Promise((resolve) => {
+    const qrImg = new Image();
+    qrImg.crossOrigin = 'anonymous';
+    qrImg.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(qrImg, 0, 0, size, size);
+
+        if (finalLogoUrl) {
+          const logoImg = new Image();
+          logoImg.crossOrigin = 'anonymous';
+          logoImg.onload = () => {
+            try {
+              drawCenterLogoBadge(ctx, size, logoImg);
+              resolve(canvas.toDataURL('image/png'));
+            } catch (errLogo) {
+              console.warn("QR logo composite canvas error:", errLogo);
+              drawCenterLogoBadge(ctx, size, null);
+              resolve(canvas.toDataURL('image/png'));
+            }
+          };
+          logoImg.onerror = () => {
+            drawCenterLogoBadge(ctx, size, null);
+            resolve(canvas.toDataURL('image/png'));
+          };
+          logoImg.src = finalLogoUrl;
+        } else {
+          // Bila belum ada logo kustom dari Google Drive, gunakan Insignia Kamera Emas SnapEvent
+          drawCenterLogoBadge(ctx, size, null);
+          resolve(canvas.toDataURL('image/png'));
+        }
+      } catch (errCanvas) {
+        console.warn("QR canvas draw error:", errCanvas);
+        resolve(qrApiUrl);
+      }
+    };
+    qrImg.onerror = () => resolve(qrApiUrl);
+    qrImg.src = qrApiUrl;
+  });
+}
+
+async function setQrWithLogoToElement(imgEl, text, size = 300, logoUrl = '') {
+  if (!imgEl) return;
+  // Pasang QR standar sementara agar visual tidak kedip kosong
+  imgEl.src = getQrImageUrl(text, size);
+  try {
+    const finalDataUrl = await generateQrWithLogo(text, size, logoUrl);
+    if (finalDataUrl && imgEl) {
+      imgEl.src = finalDataUrl;
+    }
+  } catch (e) {}
 }
 
 function normalizeFrameTargetUrl(rawUrl) {
@@ -828,11 +1081,12 @@ function getAvailableFrames() {
 
   const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
   if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
-    let eventFrameName = STATE.activeEvent?.customFrameName || 'Bingkai Acara';
-    if (eventFrameName.length > 20) {
-      eventFrameName = 'Bingkai Acara';
+    let eventFrameName = STATE.activeEvent?.customFrameName || 'Bingkai Resmi Acara';
+    if (eventFrameName.length > 25) {
+      eventFrameName = 'Bingkai Resmi Acara';
     }
-    allFrames.push({
+    // Tempatkan custom frame acara di index 0 (paling atas) agar otomatis menjadi default
+    allFrames.unshift({
       id: 'CUSTOM_EVENT',
       name: `🖼️ ${eventFrameName}`,
       type: 'custom',
@@ -858,16 +1112,13 @@ function getAvailableFrames() {
     }
 
     const isCustomMatch = (id, frame) => {
-      if (!frame) return false;
+      if (!frame || !id) return false;
       if (frame.id === id) return true;
       if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
         return (frame.id === 'CUSTOM_EVENT' || (activeCustomData && frame.dataUrl === activeCustomData) || frame.scope === 'event');
       }
-      if (String(id).startsWith('frame_') || String(id).startsWith('FRAME_')) {
-        if (frame.id === id) return true;
-        if (frame.id === 'CUSTOM_EVENT') return true;
-        if (activeCustomData && frame.dataUrl === activeCustomData) return true;
-        if (frame.scope === 'event') return true;
+      if (frame.id === 'CUSTOM_EVENT') {
+        return (id === 'CUSTOM_EVENT' || id === 'CUSTOM');
       }
       return false;
     };
@@ -958,208 +1209,13 @@ function resetGuestNameSession() {
   }, 250);
 }
 
-// Default Seed / Mock Data for Instant Browser & Offline Preview (5 Complete Events)
+// Data Penampung Murni Realtime (Bebas Hardcode Demo)
 const MOCK_DATA = {
-  events: [
-    {
-      idEvent: "EVT-202611-001",
-      namaEvent: "The Wedding of Sarah and Kevin",
-      slugEvent: "the-wedding-of-sarah-and-kevin",
-      tanggalEvent: "2026-11-20",
-      hashtagEvent: "#SarahKevinEverAfter",
-      maxFotoPerGuest: 10,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO"],
-      gdriveFolderId: "",
-      statusEvent: "AKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202611-392",
-      namaEvent: "The Wedding of Hans & Yurike",
-      slugEvent: "hans-yurike",
-      tanggalEvent: "2026-11-25",
-      hashtagEvent: "#Hans&Yurike",
-      maxFotoPerGuest: 5,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "POLAROID",
-      activeFrames: ["POLAROID"],
-      gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
-      statusEvent: "AKTIF",
-      customFrameUrl: "",
-      categories: [
-        { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-        { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
-        { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
-      ]
-    },
-    {
-      idEvent: "EVT-202612-105",
-      namaEvent: "Annual Gala Dinner PT Nusantara Tech",
-      slugEvent: "nusantara-gala-2026",
-      tanggalEvent: "2026-12-15",
-      hashtagEvent: "#NusantaraGala2026",
-      maxFotoPerGuest: 8,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "CUSTOM_EVENT",
-      activeFrames: ["CUSTOM_EVENT", "GOLD_DECO", "POLAROID", "MINIMAL"],
-      gdriveFolderId: "",
-      statusEvent: "AKTIF",
-      customFrameUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='28' y='28' width='1024' height='1294' fill='none' stroke='%23D4AF37' stroke-width='14' rx='28'/><rect x='52' y='52' width='976' height='1246' fill='none' stroke='%23F3E5AB' stroke-width='3' rx='18'/><circle cx='52' cy='52' r='18' fill='%23D4AF37'/><circle cx='1028' cy='52' r='18' fill='%23D4AF37'/><circle cx='52' cy='1298' r='18' fill='%23D4AF37'/><circle cx='1028' cy='1298' r='18' fill='%23D4AF37'/><rect x='120' y='1175' width='840' height='110' fill='rgba(15,15,20,0.88)' stroke='%23D4AF37' stroke-width='2' rx='16'/><text x='540' y='1225' fill='%23F3E5AB' font-family='serif' font-size='32' font-weight='bold' text-anchor='middle'>ANNUAL GALA DINNER</text><text x='540' y='1262' fill='%23D4AF37' font-family='sans-serif' font-size='20' font-weight='bold' text-anchor='middle'>PT NUSANTARA TECH • 2026</text></svg>",
-      customFrameName: "Nusantara Gala Frame"
-    },
-    {
-      idEvent: "EVT-202612-210",
-      namaEvent: "Clarissa's Sweet 17: Enchanted Forest",
-      slugEvent: "clarissa-sweet-17",
-      tanggalEvent: "2026-12-28",
-      hashtagEvent: "#ClarissaSweet17",
-      maxFotoPerGuest: 12,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO", "POLAROID"],
-      gdriveFolderId: "",
-      statusEvent: "INAKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202701-015",
-      namaEvent: "Alumni Homecoming SMAN 1 Angkatan 2016",
-      slugEvent: "reuni-smansa-2016",
-      tanggalEvent: "2027-01-10",
-      hashtagEvent: "#Smansa16Reunited",
-      maxFotoPerGuest: 15,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL", "NONE"],
-      gdriveFolderId: "",
-      statusEvent: "INAKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202611-456",
-      namaEvent: "ilham & sherwin",
-      slugEvent: "ilham---sherwin",
-      tanggalEvent: "2026-11-13",
-      hashtagEvent: "#ilhamsherwin",
-      maxFotoPerGuest: 10,
-      maxVotePerGuest: 1,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "CUSTOM_EVENT",
-      activeFrames: ["CUSTOM_EVENT"],
-      gdriveFolderId: "1q2v8CBLClFD2WX8dqhVRSaRfb80OVW_1",
-      statusEvent: "AKTIF",
-      customFrameUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='30' y='30' width='1020' height='1290' fill='none' stroke='%23D4AF37' stroke-width='4' rx='16'/><rect x='100' y='1160' width='880' height='130' fill='rgba(10,10,14,0.88)' stroke='%23D4AF37' stroke-width='2' rx='12'/><text x='540' y='1215' fill='%23F3E5AB' font-family='serif' font-style='italic' font-size='38' font-weight='bold' text-anchor='middle'>ilham &amp; sherwin</text><text x='540' y='1255' fill='%23D4AF37' font-family='sans-serif' font-size='20' font-weight='600' text-anchor='middle'>#ilhamsherwin</text></svg>",
-      customFrameName: "ilham & sherwin Frame"
-    }
-  ],
-  event: {
-    idEvent: "EVT-202611-001",
-    namaEvent: "The Wedding of Sarah & Kevin",
-    slugEvent: "sarah-kevin",
-    tanggalEvent: "2026-11-20",
-    hashtagEvent: "#SarahKevinEverAfter",
-    maxFotoPerGuest: 10,
-    maxVotePerGuest: 1,
-    revealMode: "SEGERA",
-    isRevealed: true,
-    likeEnabled: true,
-    publicVisible: true,
-    activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-    frameLockMode: "multi",
-    singleLockedFrame: "GOLD_DECO",
-    activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
-    gdriveFolderId: "",
-    statusEvent: "AKTIF",
-    customFrameUrl: ""
-  },
-  categories: [
-    { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-    { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
-    { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
-  ],
-  samplePhotos: [
-    {
-      idFoto: "FTO-DEMO-001",
-      guestNama: "Sarah & Kevin",
-      caption: "Momen terbaik malam ini bersama sahabat tercinta!",
-      cameraStyle: "800T",
-      frameStyle: "GOLD_DECO",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 14,
-      categoryLikes: { "KAT-1": 14, "Best Dressed Guest": 14 },
-      idKategori: "KAT-1",
-      namaKategori: "Best Dressed Guest",
-      isFeatured: true,
-      createdAt: "2026-11-08 19:15:00"
-    },
-    {
-      idFoto: "FTO-DEMO-002",
-      guestNama: "David L.",
-      caption: "Keluarga besar groomsmen siap meriahkan pesta!",
-      cameraStyle: "WARM",
-      frameStyle: "POLAROID",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 9,
-      categoryLikes: { "KAT-2": 9, "Best Outfit": 9 },
-      idKategori: "KAT-2",
-      namaKategori: "Best Outfit",
-      isFeatured: false,
-      createdAt: "2026-11-08 19:30:00"
-    },
-    {
-      idFoto: "FTO-DEMO-003",
-      guestNama: "Clara",
-      caption: "Cheers untuk cinta abadi!",
-      cameraStyle: "BW",
-      frameStyle: "MINIMAL",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 7,
-      categoryLikes: { "KAT-3": 7, "Pose Terheboh": 7 },
-      idKategori: "KAT-3",
-      namaKategori: "Pose Terheboh",
-      isFeatured: false,
-      createdAt: "2026-11-08 19:45:00"
-    }
-  ]
+  events: [],
+  event: null,
+  categories: [],
+  samplePhotos: []
 };
-MOCK_DATA.event = MOCK_DATA.events[0];
 
 // --- 2. INITIALIZATION ON DOM READY ---
 window.addEventListener('DOMContentLoaded', () => {
@@ -1205,15 +1261,13 @@ async function initApp() {
   if (Array.isArray(STATE.events)) {
     STATE.events = STATE.events.filter(e => e && !deletedEventsSet.has(String(e.idEvent)));
   }
-  if (!Array.isArray(STATE.events) || STATE.events.length === 0) {
-    const filteredMock = (MOCK_DATA.events || []).filter(mockEvt => !deletedEventsSet.has(String(mockEvt.idEvent)));
-    STATE.events = filteredMock;
-    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  if (!Array.isArray(STATE.events)) {
+    STATE.events = [];
   }
 
   if (!STATE.activeEvent) {
     const savedActiveId = localStorage.getItem('snapevent_active_event_id');
-    const activeCandidate = (STATE.events || []).find(e => e.statusEvent === 'AKTIF') || (STATE.events || []).find(e => e.idEvent === 'EVT-202611-392');
+    const activeCandidate = (STATE.events || []).find(e => e.statusEvent === 'AKTIF') || (STATE.events && STATE.events[0]);
     if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
       const savedEv = STATE.events.find(e => e.idEvent === savedActiveId);
       if (savedEv && savedEv.statusEvent === 'INAKTIF' && activeCandidate) {
@@ -1221,11 +1275,11 @@ async function initApp() {
       } else {
         STATE.activeEventId = savedActiveId;
       }
-    } else {
-      STATE.activeEventId = activeCandidate ? activeCandidate.idEvent : ((STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-392');
+    } else if (activeCandidate) {
+      STATE.activeEventId = activeCandidate.idEvent;
       localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
     }
-    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || activeCandidate || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
+    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || activeCandidate || null;
   }
 
   // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan status event tersebut INAKTIF atau TIDAK DITEMUKAN
@@ -1276,16 +1330,21 @@ async function initApp() {
   applyEventToUI();
 
   // 3. SEGERA TAMPILKAN HALAMAN AKTIF TANPA MENUNGGU JARINGAN INTERNET (< 20ms)
-  if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
+  // Persistensi halaman & tab saat refresh (F5): Pertahankan posisi terakhir pengguna
+  const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
+  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
+
+  if (savedView === 'viewAdmin' && isAdmin) {
     showView('viewAdmin');
-    renderAdminDashboard(); // Kartu 5 Event, 13 Foto, 8 Suara langsung tampil tanpa skeleton delay!
-  } else if (!STATE.guestNama || !STATE.guestNama.trim()) {
+    renderAdminDashboard();
+    const savedAdminTab = sessionStorage.getItem('snapevent_current_admintab') || 'events';
+    switchAdminTab(savedAdminTab);
+  } else if (!isAdmin && (!STATE.guestNama || !STATE.guestNama.trim())) {
     showView('viewWelcome');
   } else {
-    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
     showView(savedView);
     if (savedView === 'viewGallery') {
-      renderGallery(); // Langsung render foto cache lokal seketika!
+      renderGallery();
     }
   }
 
@@ -1661,11 +1720,6 @@ async function loadEventData() {
           STATE.events = res.allEvents
             .filter(serverEv => serverEv && !deletedEventsSet.has(String(serverEv.idEvent)))
             .map(serverEv => {
-              // Pulihkan nama asli jika sempat tertimpa "Event Baru"
-              if (serverEv.idEvent === 'EVT-202611-001' && (serverEv.namaEvent === 'Event Baru' || !serverEv.namaEvent)) {
-                serverEv.namaEvent = 'The Wedding of Sarah & Kevin';
-                serverEv.hashtagEvent = '#SarahKevin2026';
-              }
               const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
               let sMode = serverEv.frameLockMode || localEv?.frameLockMode || 'multi';
               let sLocked = serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO';
@@ -1755,6 +1809,18 @@ async function loadEventData() {
           if (res.globalConfig.podium_display_mode) {
             STATE.podiumDisplayMode = res.globalConfig.podium_display_mode;
             localStorage.setItem('snapevent_podium_mode', STATE.podiumDisplayMode);
+          }
+          if (res.globalConfig.stage_photos_enabled !== undefined) {
+            STATE.stagePhotosEnabled = parseBoolSafe(res.globalConfig.stage_photos_enabled);
+            localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
+          }
+          if (res.globalConfig.stage_photos_title) {
+            STATE.stagePhotosTitle = res.globalConfig.stage_photos_title;
+            localStorage.setItem('snapevent_stage_photos_title', STATE.stagePhotosTitle);
+          }
+          if (res.globalConfig.stage_photos_link) {
+            STATE.stagePhotosLink = res.globalConfig.stage_photos_link;
+            localStorage.setItem('snapevent_stage_photos_link', STATE.stagePhotosLink);
           }
           if (res.globalConfig.deleted_photos) {
             try {
@@ -2032,6 +2098,18 @@ async function syncEventsFromBackend(showToastNotice = false) {
             localStorage.setItem('snapevent_user_accounts', JSON.stringify(STATE.userAccounts));
           } catch (e) { }
         }
+        if (res.globalConfig.stage_photos_enabled !== undefined) {
+          STATE.stagePhotosEnabled = parseBoolSafe(res.globalConfig.stage_photos_enabled);
+          localStorage.setItem('snapevent_stage_photos_enabled', String(STATE.stagePhotosEnabled));
+        }
+        if (res.globalConfig.stage_photos_title) {
+          STATE.stagePhotosTitle = res.globalConfig.stage_photos_title;
+          localStorage.setItem('snapevent_stage_photos_title', STATE.stagePhotosTitle);
+        }
+        if (res.globalConfig.stage_photos_link) {
+          STATE.stagePhotosLink = res.globalConfig.stage_photos_link;
+          localStorage.setItem('snapevent_stage_photos_link', STATE.stagePhotosLink);
+        }
         applyGlobalConfigToUI();
       }
 
@@ -2120,9 +2198,10 @@ async function loadGallery() {
         }
       });
       const serverIds = new Set(serverPhotos.map(p => p.idFoto));
+      const serverFileIds = new Set(serverPhotos.map(p => p.gdriveFileId || p.driveFileId).filter(Boolean));
 
-      // Pertahankan HANYA foto lokal yang sedang aktif dalam antrean upload saat ini
-      // Foto zombie/stuck dari sesi sebelumnya otomatis dibersihkan agar hanya foto online valid yang tampil
+      // Pertahankan foto lokal terkini yang sedang aktif atau baru diunggah (< 5 menit)
+      // Mencegah foto hilang saat transisi upload ke Google Drive
       const now = Date.now();
       const pendingLocalPhotos = (STATE.photos || []).filter(p => {
         if (!p) return false;
@@ -2130,13 +2209,26 @@ async function loadGallery() {
         if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
         if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
         if (serverIds.has(p.idFoto)) return false;
-        // Hanya pertahankan jika proses upload aktif sedang berjalan di memori
+        if (p.gdriveFileId && serverFileIds.has(p.gdriveFileId)) return false;
+        if (p.driveFileId && serverFileIds.has(p.driveFileId)) return false;
+
+        // 1. Pertahankan jika proses upload aktif sedang berjalan di memori
         if (IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
-        // Atau jika foto offline baru saja diambil kurang dari 25 detik lalu
+        // 2. Pertahankan jika foto diunggah dalam kurun 5 menit terakhir
+        if (p.uploadStartedAt && (now - p.uploadStartedAt) < 300000) return true;
+        // 3. Atau jika foto offline baru saja diambil
         if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) {
           const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
           if (tsMatch && tsMatch[1]) {
-            return (now - parseInt(tsMatch[1], 10)) < 25000;
+            return (now - parseInt(tsMatch[1], 10)) < 120000;
+          }
+          return true;
+        }
+        // 4. Atau jika foto memiliki URL cloud valid dan baru saja dibuat
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('https://')) {
+          const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
+          if (tsMatch && tsMatch[1]) {
+            return (now - parseInt(tsMatch[1], 10)) < 300000;
           }
         }
         return false;
@@ -2151,10 +2243,7 @@ async function loadGallery() {
         return true;
       });
 
-      // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
-      if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
-        finalPhotos = MOCK_DATA.samplePhotos.filter(p => p && !deletedSet.has(String(p.idFoto)));
-      }
+
 
       // Pertahankan like, kategori penghargaan, dan riwayat vote lokal secara pintar
       const availableCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
@@ -2231,11 +2320,22 @@ async function autoUploadPendingPhotos(pendingList) {
   if (!STATE.gasApiUrl || !Array.isArray(pendingList) || pendingList.length === 0) return;
   for (const photo of pendingList) {
     if (!photo.gdriveViewUrl || !photo.gdriveViewUrl.startsWith('data:')) continue;
-    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue; // KUNCI MUTLAK: Mencegah upload file kembar ke Google Drive!
+    if (IN_FLIGHT_PHOTO_UPLOADS.has(photo.idFoto)) continue;
+
+    // KUNCI ANTI-DUPLIKASI: Jika foto sedang dalam proses upload atau baru dicapture < 60 detik lalu, lewati agar tidak dobel saat pindah app
+    const sessionInflight = sessionStorage.getItem('snapevent_inflight_' + photo.idFoto);
+    const timeSinceStarted = Date.now() - (photo.uploadStartedAt || Number(sessionInflight) || 0);
+    if ((photo.isUploading || sessionInflight) && timeSinceStarted < 60000) {
+      continue;
+    }
+
     IN_FLIGHT_PHOTO_UPLOADS.add(photo.idFoto);
+    sessionStorage.setItem('snapevent_inflight_' + photo.idFoto, String(Date.now()));
+
     try {
       const payload = {
         action: "uploadPhoto",
+        clientPhotoId: photo.idFoto,
         eventId: getResolvedEventId(photo.eventId || STATE.activeEventId),
         guestId: photo.guestId || STATE.guestId,
         guestNama: photo.guestNama || "Tamu",
@@ -2254,6 +2354,7 @@ async function autoUploadPendingPhotos(pendingList) {
         if (res.idFoto) photo.idFoto = res.idFoto;
         if (res.viewUrl) photo.gdriveViewUrl = res.viewUrl;
         photo.isUploading = false;
+        sessionStorage.removeItem('snapevent_inflight_' + photo.idFoto);
         saveEventPhotos(STATE.activeEventId);
         renderGallery();
       }
@@ -2313,6 +2414,50 @@ function applyGlobalConfigToUI() {
   if (p3El) p3El.value = STATE.podiumTitleP3 || '🥉 Juara 3 (Perunggu)';
   const modeEl = document.getElementById('cfgPodiumDisplayMode');
   if (modeEl) modeEl.value = STATE.podiumDisplayMode || 'all';
+
+  // Sinkronisasi Menu & Pengaturan Foto Panggung (Stage Photos)
+  const stageEnabled = Boolean(STATE.stagePhotosEnabled);
+  const stageTitle = STATE.stagePhotosTitle || 'Foto Panggung';
+  const stageLink = STATE.stagePhotosLink || '';
+
+  const navBtnStage = document.getElementById('navBtnStagePhotos');
+  if (navBtnStage) {
+    if (stageEnabled) navBtnStage.classList.remove('hidden');
+    else navBtnStage.classList.add('hidden');
+  }
+  const navLabel = document.getElementById('navStagePhotosLabel');
+  if (navLabel) navLabel.textContent = stageTitle;
+
+  const bannerStage = document.getElementById('galleryStagePhotosBanner');
+  if (bannerStage) {
+    if (stageEnabled) {
+      bannerStage.classList.remove('hidden');
+      const bTitle = document.getElementById('stagePhotosBannerTitle');
+      if (bTitle) bTitle.textContent = stageTitle;
+    } else {
+      bannerStage.classList.add('hidden');
+    }
+  }
+
+  const spTitleEl = document.getElementById('stagePhotosViewTitle');
+  if (spTitleEl) spTitleEl.textContent = stageTitle;
+
+  const spDriveLink = document.getElementById('btnStagePhotosDriveLink');
+  if (spDriveLink) {
+    if (stageLink) {
+      spDriveLink.href = stageLink;
+      spDriveLink.classList.remove('hidden');
+    } else {
+      spDriveLink.classList.add('hidden');
+    }
+  }
+
+  const cfgEnabled = document.getElementById('cfgStagePhotosEnabled');
+  if (cfgEnabled) cfgEnabled.checked = stageEnabled;
+  const cfgTitle = document.getElementById('cfgStagePhotosTitle');
+  if (cfgTitle) cfgTitle.value = stageTitle;
+  const cfgLink = document.getElementById('cfgStagePhotosLink');
+  if (cfgLink) cfgLink.value = stageLink;
 }
 
 function applyEventToUI() {
@@ -2334,8 +2479,8 @@ function applyEventToUI() {
   // Sinkronisasi Gambar QR Code di Layar Selamat Datang
   const welcomeQrImg = document.getElementById('welcomeQrImg');
   if (welcomeQrImg) {
-    const eventUrl = getEventShareUrl(ev.idEvent);
-    welcomeQrImg.src = getQrImageUrl(eventUrl, 250);
+    const eventUrl = getEventShareUrl(ev);
+    setQrWithLogoToElement(welcomeQrImg, eventUrl, 300);
   }
 
   // Preload Custom Frame jika ada
@@ -2351,20 +2496,22 @@ function applyEventToUI() {
 
   // Set bingkai aktif sesuai kebijakan frame acara
   const availFrames = getAvailableFrames();
+  const activeCustomData = ev.customFrameData || ev.customFrameUrl;
   const isSingle = (ev.frameLockMode === 'single' || availFrames.length <= 1);
-  let targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
+  let targetFrame = (activeCustomData ? 'CUSTOM_EVENT' : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO'));
 
   if (isSingle) {
-    const lockedFrame = ev.singleLockedFrame || targetFrame;
+    const lockedFrame = ev.singleLockedFrame || (activeCustomData ? 'CUSTOM_EVENT' : targetFrame);
     const match = availFrames.find(f => f.id === lockedFrame || f.id === 'CUSTOM_EVENT' || String(f.id).startsWith('frame_') || String(f.id).startsWith('FRAME_')) || availFrames[0];
-    targetFrame = match ? match.id : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
+    targetFrame = match ? match.id : (activeCustomData ? 'CUSTOM_EVENT' : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO'));
   } else {
     // Multi-frame mode: Jika tamu sudah memilih manual dalam sesi ini, pertahankan pilihannya
     if (STATE.userHasSelectedFrame && availFrames.some(f => f.id === STATE.activeFrame)) {
       targetFrame = STATE.activeFrame;
     } else {
       // Prioritaskan bingkai kustom resmi pertama yang diatur oleh Admin
-      targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
+      const customEventFrame = availFrames.find(f => f.id === 'CUSTOM_EVENT' || f.type === 'custom');
+      targetFrame = customEventFrame ? customEventFrame.id : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
     }
   }
   STATE.activeFrame = targetFrame;
@@ -2421,11 +2568,126 @@ function applyEventToUI() {
   updateGuestIdentityUI();
 }
 
+// --- 3B. STAGE PHOTOS (FOTO PANGGUNG) GALLERY & LIGHTBOX ---
+let STAGE_PHOTOS_DATA = [];
+let IS_LOADING_STAGE_PHOTOS = false;
+
+async function loadStagePhotos(forceRefresh = false) {
+  const grid = document.getElementById('stagePhotosGrid');
+  const loading = document.getElementById('stagePhotosLoading');
+  const empty = document.getElementById('stagePhotosEmpty');
+
+  const stageLink = STATE.stagePhotosLink || localStorage.getItem('snapevent_stage_photos_link');
+  const driveBtn = document.getElementById('btnStagePhotosDriveLink');
+  if (driveBtn) {
+    if (stageLink) {
+      driveBtn.href = stageLink;
+      driveBtn.classList.remove('hidden');
+    } else {
+      driveBtn.classList.add('hidden');
+    }
+  }
+
+  if (!stageLink) {
+    if (loading) loading.classList.add('hidden');
+    if (grid) grid.innerHTML = '';
+    if (empty) {
+      empty.classList.remove('hidden');
+      const emptyDesc = empty.querySelector('p');
+      if (emptyDesc) emptyDesc.textContent = 'Tautan Google Drive belum diatur oleh admin di Pengaturan Global.';
+    }
+    return;
+  }
+
+  if (STAGE_PHOTOS_DATA.length > 0 && !forceRefresh) {
+    renderStagePhotos(STAGE_PHOTOS_DATA);
+    return;
+  }
+
+  if (IS_LOADING_STAGE_PHOTOS) return;
+  IS_LOADING_STAGE_PHOTOS = true;
+
+  if (loading) loading.classList.remove('hidden');
+  if (empty) empty.classList.add('hidden');
+
+  try {
+    const res = await callGasApiSafe('getStagePhotos', { driveFolderUrl: stageLink });
+    if (res && res.status === 'success' && Array.isArray(res.photos) && res.photos.length > 0) {
+      STAGE_PHOTOS_DATA = res.photos;
+      renderStagePhotos(res.photos);
+    } else {
+      STAGE_PHOTOS_DATA = [];
+      if (grid) grid.innerHTML = '';
+      if (empty) {
+        empty.classList.remove('hidden');
+        const emptyDesc = empty.querySelector('p');
+        if (emptyDesc) emptyDesc.textContent = res?.message || 'Belum ada foto yang diunggah ke folder Google Drive ini.';
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal memuat Foto Panggung:', err);
+    if (STAGE_PHOTOS_DATA.length > 0) {
+      renderStagePhotos(STAGE_PHOTOS_DATA);
+    } else {
+      if (empty) empty.classList.remove('hidden');
+    }
+  } finally {
+    IS_LOADING_STAGE_PHOTOS = false;
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+function renderStagePhotos(photos) {
+  const grid = document.getElementById('stagePhotosGrid');
+  const empty = document.getElementById('stagePhotosEmpty');
+  if (!grid) return;
+
+  if (!photos || photos.length === 0) {
+    grid.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+
+  if (empty) empty.classList.add('hidden');
+  grid.innerHTML = photos.map(photo => `
+    <div class="stage-photo-card group relative aspect-[4/5] rounded-xl overflow-hidden bg-zinc-900 border border-white/10 hover:border-brand-gold/60 transition cursor-pointer shadow-lg" data-url="${photo.viewUrl || photo.thumbnailUrl}" data-name="${photo.name || 'Foto Panggung'}">
+      <img src="${photo.thumbnailUrl || photo.viewUrl}" alt="${photo.name || 'Foto Panggung'}" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+      <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2.5">
+        <span class="text-[11px] font-medium text-white truncate drop-shadow">${photo.name || 'Foto Panggung'}</span>
+      </div>
+      <div class="absolute top-2 right-2 bg-black/60 backdrop-blur-md rounded-full p-1.5 text-zinc-300 group-hover:text-brand-gold transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
+      </div>
+    </div>
+  `).join('');
+
+  grid.querySelectorAll('.stage-photo-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const url = card.getAttribute('data-url');
+      const name = card.getAttribute('data-name');
+      openStagePhotoZoom(url, name);
+    });
+  });
+}
+
+function openStagePhotoZoom(url, name) {
+  const modal = document.getElementById('modalStagePhotoZoom');
+  const img = document.getElementById('stagePhotoZoomImg');
+  const nameEl = document.getElementById('stagePhotoZoomName');
+  const dlBtn = document.getElementById('btnDownloadStagePhotoZoom');
+
+  if (img) img.src = url;
+  if (nameEl) nameEl.textContent = name || 'Foto Panggung';
+  if (dlBtn) dlBtn.href = url;
+  if (modal) modal.classList.remove('hidden');
+}
+
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
-  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
+  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
+  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu (kecuali Admin yang sedang login)
   if (viewId === 'viewCamera') {
-    if (!STATE.guestNama || !STATE.guestNama.trim()) {
+    if (!isAdmin && (!STATE.guestNama || !STATE.guestNama.trim())) {
       showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
       showView('viewWelcome');
       const inputEl = document.getElementById('inputGuestName');
@@ -2440,7 +2702,7 @@ function showView(viewId) {
   }
 
   // Hide all views first with both class and explicit style.display
-  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewAdmin', 'viewEventClosed'].forEach(id => {
+  ['viewWelcome', 'viewCamera', 'viewGallery', 'viewStagePhotos', 'viewAdmin', 'viewEventClosed'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.classList.add('hidden');
@@ -2506,6 +2768,10 @@ function showView(viewId) {
       document.getElementById('navBtnGallery')?.classList.remove('text-zinc-400');
       renderGallery();
       loadGallery();
+    } else if (viewId === 'viewStagePhotos') {
+      document.getElementById('navBtnStagePhotos')?.classList.add('text-brand-gold');
+      document.getElementById('navBtnStagePhotos')?.classList.remove('text-zinc-400');
+      loadStagePhotos();
     } else if (viewId === 'viewWelcome') {
       document.getElementById('navBtnEventInfo')?.classList.add('text-brand-gold');
       document.getElementById('navBtnEventInfo')?.classList.remove('text-zinc-400');
@@ -2547,12 +2813,12 @@ function applyActiveFrame(frameId) {
     if (singleBadge) singleBadge.classList.add('hidden');
     if (frameContainer) frameContainer.classList.remove('hidden');
   }
-  
+
   const customImgEl = document.getElementById('vfCustomFrameImg');
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
   
   let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
-  if (!customUrl) {
+  if (!customUrl && (selected?.id === 'CUSTOM_EVENT' || selected?.type === 'custom' || String(selected?.id).startsWith('frame_') || String(selected?.id).startsWith('FRAME_'))) {
     const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === selected?.id) : null;
     customUrl = cf?.dataUrl || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
   }
@@ -2564,8 +2830,14 @@ function applyActiveFrame(frameId) {
 
   const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT' || String(selected.id).indexOf('frame_') === 0 || String(selected.id).indexOf('FRAME_') === 0 || customUrl));
 
+  const vfContainer = document.getElementById('viewfinderFrameContainer');
   if (isCustomFrame && customUrl) {
     if (customImgEl) {
+      customImgEl.onload = () => {
+        if (vfContainer && customImgEl.naturalWidth && customImgEl.naturalHeight) {
+          vfContainer.style.aspectRatio = `${customImgEl.naturalWidth} / ${customImgEl.naturalHeight}`;
+        }
+      };
       customImgEl.onerror = () => {
         if (customUrl && customUrl.includes('googleusercontent.com/d/')) {
           const fileId = customUrl.split('/d/')[1];
@@ -2582,10 +2854,16 @@ function applyActiveFrame(frameId) {
       builtInOverlayEl.classList.add('hidden'); // Sembunyikan overlay teks built-in sepenuhnya saat custom PNG aktif
     }
     preloadFrameImage(customUrl).then(img => {
-      if (img) STATE.customFrameImgObj = img;
+      if (img) {
+        STATE.customFrameImgObj = img;
+        if (vfContainer && img.naturalWidth && img.naturalHeight) {
+          vfContainer.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        }
+      }
     });
   } else {
     STATE.customFrameImgObj = null;
+    if (vfContainer) vfContainer.style.aspectRatio = '4 / 5';
     if (customImgEl) customImgEl.classList.add('hidden');
     if (builtInOverlayEl) {
       if (selected && selected.id === 'NONE') {
@@ -2646,20 +2924,21 @@ const FRAME_IMG_CACHE = new Map();
 
 function preloadFrameImage(dataUrl) {
   if (!dataUrl) return Promise.resolve(null);
-  if (FRAME_IMG_CACHE.has(dataUrl)) {
-    const cached = FRAME_IMG_CACHE.get(dataUrl);
+  const normalizedUrl = normalizeDriveDirectUrl(dataUrl) || dataUrl;
+  if (FRAME_IMG_CACHE.has(normalizedUrl)) {
+    const cached = FRAME_IMG_CACHE.get(normalizedUrl);
     if (cached && (cached.complete || cached.naturalWidth > 0)) {
       return Promise.resolve(cached);
     }
   }
   return new Promise((resolve) => {
     const img = new Image();
-    const isBase64 = String(dataUrl).indexOf('data:image/') === 0;
+    const isBase64 = String(normalizedUrl).indexOf('data:image/') === 0;
     if (!isBase64) {
       img.crossOrigin = 'anonymous';
     }
     img.onload = () => {
-      FRAME_IMG_CACHE.set(dataUrl, img);
+      FRAME_IMG_CACHE.set(normalizedUrl, img);
       resolve(img);
     };
     img.onerror = () => {
@@ -2667,20 +2946,20 @@ function preloadFrameImage(dataUrl) {
         // Fallback: muat tanpa crossOrigin jika browser menolak header CORS
         const fallback = new Image();
         fallback.onload = () => {
-          FRAME_IMG_CACHE.set(dataUrl, fallback);
+          FRAME_IMG_CACHE.set(normalizedUrl, fallback);
           resolve(fallback);
         };
         fallback.onerror = () => {
-          console.warn("Preload custom frame image error:", dataUrl);
+          console.warn('Preload custom frame image error:', normalizedUrl);
           resolve(null);
         };
-        fallback.src = dataUrl;
+        fallback.src = normalizedUrl;
       } else {
-        console.warn("Preload custom frame image error:", dataUrl);
+        console.warn('Preload custom frame image error:', normalizedUrl);
         resolve(null);
       }
     };
-    img.src = dataUrl;
+    img.src = normalizedUrl;
   });
 }
 
@@ -2887,9 +3166,47 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   // Simpan referensi gambar mentah agar user bisa mengganti bingkai sesuka hati di modal review
   STATE.rawCapturedImageObj = imgSource;
 
-  // Aspect ratio 4:5 Portrait Standard FHD (1080 x 1350)
-  canvas.width = 1080;
-  canvas.height = 1350;
+  // JANGAN DI UBAH UKURAN FRAMENYA: Ambil resolusi asli bingkai kustom jika sedang aktif
+  const customImgEl = document.getElementById('vfCustomFrameImg');
+  const isVfCustomActive = customImgEl && !customImgEl.classList.contains('hidden') && customImgEl.src;
+  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
+
+  let frameToUse = overrideFrame;
+  if (!frameToUse) {
+    if (isVfCustomActive || STATE.customFrameImgObj || (activeCustomData && (STATE.activeFrame === 'CUSTOM_EVENT' || STATE.activeFrame === 'CUSTOM'))) {
+      frameToUse = 'CUSTOM_EVENT';
+    } else {
+      frameToUse = STATE.activeFrame || (activeCustomData ? 'CUSTOM_EVENT' : 'GOLD_DECO');
+    }
+  }
+  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
+    frameToUse = STATE.activeEvent.singleLockedFrame || (activeCustomData ? 'CUSTOM_EVENT' : (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'CUSTOM_EVENT');
+  }
+  STATE.activeFrame = frameToUse;
+
+  let customFrameImg = null;
+  const avail = getAvailableFrames();
+  const customObj = avail.find(f => f.id === frameToUse && (f.type === 'custom' || f.dataUrl)) ||
+    (Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === frameToUse) : null);
+  let customDataUrl = customObj ? customObj.dataUrl : null;
+  if (!customDataUrl && (frameToUse !== 'GOLD_DECO' && frameToUse !== 'POLAROID' && frameToUse !== 'MINIMAL' && frameToUse !== 'NONE')) {
+    customDataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+  }
+  if (customDataUrl) {
+    customFrameImg = await preloadFrameImage(customDataUrl);
+  }
+  if (!customFrameImg && STATE.customFrameImgObj) {
+    customFrameImg = STATE.customFrameImgObj;
+  }
+
+  if (customFrameImg && customFrameImg.naturalWidth && customFrameImg.naturalHeight) {
+    canvas.width = customFrameImg.naturalWidth;
+    canvas.height = customFrameImg.naturalHeight;
+  } else {
+    // Aspect ratio 4:5 Portrait Standard FHD (1080 x 1350)
+    canvas.width = 1080;
+    canvas.height = 1350;
+  }
 
   // Optimasi Rendering HD: Smoothing Tajam & Berkualitas Tinggi
   ctx.imageSmoothingEnabled = true;
@@ -2899,8 +3216,8 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const isLiveVideo = (imgSource && imgSource.tagName === 'VIDEO') || (imgSource === document.getElementById('cameraVideo'));
   const zoomFactor = (isLiveVideo && (STATE.cameraZoom || 1.0) > 1.0) ? STATE.cameraZoom : 1.0;
 
-  const rawW = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || 1080;
-  const rawH = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || 1350;
+  const rawW = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width || canvas.width;
+  const rawH = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height || canvas.height;
 
   const cropW = rawW / zoomFactor;
   const cropH = rawH / zoomFactor;
@@ -2944,11 +3261,6 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   applyColorFilter(ctx, canvas.width, canvas.height, STATE.activeFilter);
 
   // 3. Render Selected Custom Frame & Hashtag
-  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
-  if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
-    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
-  }
-  STATE.activeFrame = frameToUse;
   await renderCustomFrameOverlay(ctx, canvas.width, canvas.height, frameToUse);
 
   // Tampilkan ke elemen <img> pratinjau dengan kualitas FHD (JPEG 0.98 + target 1 MB - 3 MB)
@@ -2959,6 +3271,10 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   const reviewImg = document.getElementById('reviewPhotoImg');
   if (reviewImg) {
     reviewImg.src = dataUrl;
+  }
+  const reviewContainer = document.getElementById('reviewPhotoContainer');
+  if (reviewContainer && canvas.width && canvas.height) {
+    reviewContainer.style.aspectRatio = `${canvas.width} / ${canvas.height}`;
   }
 
   // Render Pilihan Frame Pasca-Foto di Modal Review
@@ -3037,9 +3353,9 @@ function applyColorFilter(ctx, w, h, filterName) {
 }
 
 async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
-  const evName = STATE.activeEvent?.namaEvent || "The Wedding of Sarah & Kevin";
-  const hashtag = STATE.activeEvent?.hashtagEvent || "#SarahKevinEverAfter";
-  const dateStr = STATE.activeEvent?.tanggalEvent || "20.11.2026";
+  const evName = STATE.activeEvent?.namaEvent || "Acara Spesial";
+  const hashtag = STATE.activeEvent?.hashtagEvent || "";
+  const dateStr = STATE.activeEvent?.tanggalEvent || "";
 
   if (frameStyle === 'GOLD_DECO') {
     // Luxury Double Border Gold Art Deco
@@ -3118,69 +3434,29 @@ async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
       dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
     }
 
+    // 1. Prioritas paling awal: Gunakan image object yang sudah ter-load di memori (STATE.customFrameImgObj atau element DOM)
+    let cachedImg = STATE.customFrameImgObj;
+    const customImgEl = document.getElementById('vfCustomFrameImg');
+    if (!cachedImg && customImgEl && customImgEl.complete && customImgEl.naturalWidth > 0 && !customImgEl.classList.contains('hidden')) {
+      cachedImg = customImgEl;
+    }
+    if (cachedImg && (cachedImg.complete || cachedImg.naturalWidth > 0) && (cachedImg.naturalWidth > 0 || cachedImg.width > 0)) {
+      ctx.drawImage(cachedImg, 0, 0, w, h);
+      return;
+    }
+
     if (dataUrl) {
-      const frameImg = await preloadFrameImage(dataUrl);
+      const normalized = normalizeDriveDirectUrl(dataUrl) || dataUrl;
+      const frameImg = await preloadFrameImage(normalized);
       if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
-        // Jaga proporsi asli bingkai kustom agar tidak gepeng/terdistorsi
-        const fw = frameImg.naturalWidth || frameImg.width;
-        const fh = frameImg.naturalHeight || frameImg.height;
-        if (fw && fh) {
-          const fRatio = fw / fh;
-          const canvasRatio = w / h;
-          if (Math.abs(fRatio - canvasRatio) < 0.05) {
-            ctx.drawImage(frameImg, 0, 0, w, h);
-          } else {
-            let drawW = w;
-            let drawH = w / fRatio;
-            let drawX = 0;
-            let drawY = (h - drawH) / 2;
-            if (drawH < h) {
-              drawH = h;
-              drawW = h * fRatio;
-              drawX = (w - drawW) / 2;
-              drawY = 0;
-            }
-            ctx.drawImage(frameImg, drawX, drawY, drawW, drawH);
-          }
-        } else {
-          ctx.drawImage(frameImg, 0, 0, w, h);
-        }
+        STATE.customFrameImgObj = frameImg;
+        // Gambar seluruh bingkai kustom pas memenuhi canvas (0, 0, w, h) tanpa pemotongan / zero-crop
+        ctx.drawImage(frameImg, 0, 0, w, h);
         return;
       }
     }
 
-    const customImgEl = document.getElementById('vfCustomFrameImg');
-    let fallbackImg = STATE.customFrameImgObj;
-    if (!fallbackImg && customImgEl && customImgEl.complete && customImgEl.naturalWidth > 0 && !customImgEl.classList.contains('hidden')) {
-      fallbackImg = customImgEl;
-    }
 
-    if (fallbackImg && (fallbackImg.complete || fallbackImg.naturalWidth > 0)) {
-      const fw = fallbackImg.naturalWidth || fallbackImg.width;
-      const fh = fallbackImg.naturalHeight || fallbackImg.height;
-      if (fw && fh) {
-        const fRatio = fw / fh;
-        const canvasRatio = w / h;
-        if (Math.abs(fRatio - canvasRatio) < 0.05) {
-          ctx.drawImage(fallbackImg, 0, 0, w, h);
-        } else {
-          let drawW = w;
-          let drawH = w / fRatio;
-          let drawX = 0;
-          let drawY = (h - drawH) / 2;
-          if (drawH < h) {
-            drawH = h;
-            drawW = h * fRatio;
-            drawX = (w - drawW) / 2;
-            drawY = 0;
-          }
-          ctx.drawImage(fallbackImg, drawX, drawY, drawW, drawH);
-        }
-      } else {
-        ctx.drawImage(fallbackImg, 0, 0, w, h);
-      }
-      return;
-    }
 
     // Fallback Border Emas jika gambar gagal dimuat
     ctx.lineWidth = 14;
@@ -3329,8 +3605,11 @@ async function handleSavePhotoToDrive() {
       categoryLikes: {},
       isFeatured: false,
       isUploading: true,
+      uploadStartedAt: Date.now(),
       createdAt: "Baru Saja"
     };
+
+    sessionStorage.setItem('snapevent_inflight_' + tempPhotoId, String(Date.now()));
 
     STATE.photos = [tempLocalPhoto, ...(STATE.photos || []).filter(p => p.idFoto !== tempPhotoId)];
     saveEventPhotos(targetEventId);
@@ -3347,14 +3626,18 @@ async function handleSavePhotoToDrive() {
     showToast("📸 Foto tersimpan! Mengunggah ke server cloud di latar belakang...", "info");
 
     // 4. JALANKAN PROSES UPLOAD DI LATAR BELAKANG DENGAN KUNCI ANTI-DUPLIKASI
+    const targetFolderId = (STATE.activeEvent && STATE.activeEvent.gdriveFolderId) || STATE.driveMasterId || '';
     uploadPhotoInBackground({
       action: "uploadPhoto",
+      clientPhotoId: tempPhotoId,
       eventId: targetEventId,
       guestId: STATE.guestId,
       guestNama: STATE.guestNama || "Tamu",
       caption: caption || "Momen seru!",
       cameraStyle: STATE.activeFilter || "RAW",
       frameStyle: STATE.activeFrame || "POLAROID",
+      gdriveFolderId: targetFolderId,
+      folderId: targetFolderId,
       imageBase64: finalDataUrl
     }, tempPhotoId);
   } finally {
@@ -3401,6 +3684,7 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
         createdAt: "Baru Saja"
       };
 
+      sessionStorage.removeItem('snapevent_inflight_' + tempPhotoId);
       const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
       if (idx !== -1) {
         STATE.photos[idx] = cloudPhoto;
@@ -3415,12 +3699,37 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
       setTimeout(() => { loadGallery(); }, 600);
     } else if (res && res.status === 'limit_reached') {
       showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+      const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+      if (idx !== -1) {
+        STATE.photos[idx].isUploading = false;
+        STATE.photos[idx].uploadFailed = true;
+        saveEventPhotos(payload.eventId);
+        renderGallery();
+      }
     } else {
-      console.warn("Upload response:", res);
+      console.warn("Upload response error:", res);
+      const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+      if (idx !== -1) {
+        STATE.photos[idx].isUploading = false;
+        STATE.photos[idx].uploadFailed = true;
+        saveEventPhotos(payload.eventId);
+        renderGallery();
+      }
+      const errMsg = (res && res.message) ? res.message : "Gagal upload ke Google Drive (Periksa izin DriveApp).";
+      showToast(`⚠️ ${errMsg}`, "warning", 6000);
     }
   } catch (err) {
     console.warn("uploadPhotoInBackground network issue:", err);
+    const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+    if (idx !== -1) {
+      STATE.photos[idx].isUploading = false;
+      STATE.photos[idx].uploadFailed = true;
+      saveEventPhotos(payload.eventId);
+      renderGallery();
+    }
+    showToast("⚠️ Gangguan koneksi saat mengunggah foto ke Google Drive.", "warning", 5000);
   } finally {
+    sessionStorage.removeItem('snapevent_inflight_' + tempPhotoId);
     IN_FLIGHT_PHOTO_UPLOADS.delete(tempPhotoId);
   }
 }
@@ -4200,7 +4509,21 @@ function openPhotoZoom(photo) {
   document.getElementById('modalZoomPhoto').classList.remove('hidden');
 }
 
-// --- 9. LIVE SLIDESHOW ENGINE ---
+// --- 9. LIVE SLIDESHOW ENGINE (PROYEKTOR PANGGUNG) ---
+function getEligibleSlideshowPhotos() {
+  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
+  const hiddenSet = getHiddenPhotosSet(STATE.activeEventId);
+  return (Array.isArray(STATE.photos) ? STATE.photos : []).filter(p => {
+    if (!p) return false;
+    if (deletedSet.has(String(p.idFoto))) return false;
+    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
+    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+    if (hiddenSet.has(String(p.idFoto))) return false;
+    if (p.isVisible === false || p.photoStatus === 'SEMBUNYI') return false;
+    return true;
+  });
+}
+
 function openSlideshow() {
   const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
   const isLocked = !isAdmin && STATE.activeEvent && (STATE.activeEvent.isRevealed === false || (STATE.activeEvent.revealMode === 'SETELAH' && !STATE.activeEvent.isRevealed));
@@ -4225,10 +4548,11 @@ function openSlideshow() {
   const qrImg = document.getElementById('slideshowQrImg');
   if (qrImg) {
     const eventUrl = getEventShareUrl(STATE.activeEventId);
-    qrImg.src = getQrImageUrl(eventUrl, 500);
+    setQrWithLogoToElement(qrImg, eventUrl, 500);
   }
 
-  if (STATE.photos.length === 0) {
+  const eligiblePhotos = getEligibleSlideshowPhotos();
+  if (eligiblePhotos.length === 0) {
     document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
     document.getElementById('slideshowImg').classList.add('hidden');
     const backdrop = document.getElementById('slideshowBackdropImg');
@@ -4246,16 +4570,25 @@ function openSlideshow() {
 
   if (STATE.slideshowTimer) clearInterval(STATE.slideshowTimer);
   STATE.slideshowTimer = setInterval(() => {
-    STATE.slideshowIndex = (STATE.slideshowIndex + 1) % STATE.photos.length;
+    const currentEligible = getEligibleSlideshowPhotos();
+    if (currentEligible.length === 0) {
+      document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
+      document.getElementById('slideshowImg').classList.add('hidden');
+      return;
+    }
+    STATE.slideshowIndex = (STATE.slideshowIndex + 1) % currentEligible.length;
     showSlideshowPhoto();
   }, 6000);
 }
 
 function showSlideshowPhoto() {
-  if (STATE.photos.length === 0) return;
+  const eligiblePhotos = getEligibleSlideshowPhotos();
+  if (eligiblePhotos.length === 0) return;
   const img = document.getElementById('slideshowImg');
   const backdrop = document.getElementById('slideshowBackdropImg');
-  const p = STATE.photos[STATE.slideshowIndex];
+  if (STATE.slideshowIndex >= eligiblePhotos.length) STATE.slideshowIndex = 0;
+  const p = eligiblePhotos[STATE.slideshowIndex];
+  if (!p) return;
 
   img.style.opacity = '0';
   if (backdrop) backdrop.style.opacity = '0';
@@ -4358,7 +4691,7 @@ async function verifyAdminLogin() {
 }
 
 function openShareQrModal(eventObj) {
-  const ev = eventObj || STATE.activeEvent || MOCK_DATA.event;
+  const ev = eventObj || STATE.activeEvent || (STATE.events && STATE.events[0]) || {};
   const modal = document.getElementById('modalShareQr');
   if (!modal) return;
 
@@ -4367,14 +4700,14 @@ function openShareQrModal(eventObj) {
   const imgEl = document.getElementById('shareQrImg');
   const urlInput = document.getElementById('shareQrUrlInput');
 
-  if (titleEl) titleEl.textContent = ev.namaEvent;
-  if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent;
+  if (titleEl) titleEl.textContent = ev.namaEvent || "Acara SnapEvent";
+  if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent || "#SnapEvent";
 
-  const eventUrl = getEventShareUrl(ev.idEvent);
-  const qrUrl = getQrImageUrl(eventUrl, 300);
-
-  if (imgEl) imgEl.src = qrUrl;
+  const eventUrl = getEventShareUrl(ev);
   if (urlInput) urlInput.value = eventUrl;
+  if (imgEl) {
+    setQrWithLogoToElement(imgEl, eventUrl, 350);
+  }
 
   modal.classList.remove('hidden');
 }
@@ -4721,15 +5054,17 @@ function renderAdminFrameSettings(eventObj) {
   const currentEvId = eventObj ? getResolvedEventId(eventObj.idEvent) : getResolvedEventId(STATE.activeEventId);
 
   const isCustomMatch = (id, f) => {
-    if (!f) return false;
+    if (!f || !id) return false;
     if (f.id === id) return true;
-    const isCustomId = (id === 'CUSTOM_EVENT' || id === 'CUSTOM' || String(id).startsWith('frame_') || String(id).startsWith('FRAME_'));
-    const isEvCustom = (f.type === 'custom' || f.id === 'CUSTOM_EVENT' || String(f.id).startsWith('frame_') || String(f.id).startsWith('FRAME_') || (eventCustomData && f.dataUrl === eventCustomData));
-    if (isCustomId && isEvCustom) {
-      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') return true;
+    if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') {
       if (f.id === 'CUSTOM_EVENT') return true;
       if (f.scope === 'event' && (!f.eventId || getResolvedEventId(f.eventId) === currentEvId)) return true;
       if (eventCustomData && f.dataUrl === eventCustomData) return true;
+      return false;
+    }
+    if (f.id === 'CUSTOM_EVENT') {
+      if (id === 'CUSTOM_EVENT' || id === 'CUSTOM') return true;
+      return false;
     }
     return false;
   };
@@ -4776,7 +5111,7 @@ function renderAdminFrameSettings(eventObj) {
   if (container) {
     container.innerHTML = '';
     sortedFrames.forEach((frame) => {
-      const isChecked = activeOrder.some(a => isCustomMatch(a, frame)) || (!eventObj && frame.id !== 'NONE');
+      const isChecked = activeOrder.includes(frame.id) || activeOrder.some(a => isCustomMatch(a, frame)) || (!eventObj && frame.id !== 'NONE');
       const row = document.createElement('div');
       row.className = "frame-sortable-item flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#111116] border border-white/10 hover:border-brand-gold/40 transition select-none group";
       row.setAttribute('draggable', 'true');
@@ -4873,9 +5208,21 @@ function syncFrameSettingsFromDOM() {
     }
   }
 
-  // Sinkronkan daftar visual single lock
+  // Sinkronkan daftar visual single lock & update activeFrames
   const targetEventId = document.getElementById('formEventId')?.value;
   const currentEv = (STATE.events && STATE.events.find(evItem => evItem.idEvent === targetEventId)) || STATE.activeEvent;
+  if (currentEv) {
+    const checkedFrames = [];
+    document.querySelectorAll('#adminFrameSortableList .frame-sortable-item').forEach(item => {
+      const chk = item.querySelector('.adm-frame-check');
+      if (chk && chk.checked) {
+        checkedFrames.push(chk.value);
+      }
+    });
+    if (checkedFrames.length > 0) {
+      currentEv.activeFrames = checkedFrames;
+    }
+  }
   const candidateFrames = getAllAdminCandidateFrames(currentEv);
   const currentLocked = singleSelect?.value || 'GOLD_DECO';
   renderSingleLockCustomFrameList(candidateFrames, currentLocked);
@@ -5345,6 +5692,7 @@ function renderCategoryInputRows(cats) {
 }
 
 function switchAdminTab(tabName) {
+  sessionStorage.setItem('snapevent_current_admintab', tabName);
   document.querySelectorAll('.adm-tab').forEach(b => {
     b.classList.remove('bg-brand-gold', 'text-black');
     b.classList.add('bg-white/5', 'text-zinc-300');
@@ -5642,6 +5990,8 @@ async function saveAdminEventForm() {
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
+  const formTitle = document.getElementById('formEventTitle')?.textContent || '';
+  const isNewEvent = !existingEv.idEvent || formTitle.includes('Buat');
 
   if (!nama && existingEv && existingEv.namaEvent) {
     nama = existingEv.namaEvent;
@@ -5837,8 +6187,10 @@ async function saveAdminEventForm() {
   if (STATE.gasApiUrl) {
     try {
       const res = await callGasApiSafe('adminSaveEvent', {
-        idEvent: savedEvent.idEvent,
-        eventId: savedEvent.idEvent,
+        isNewEvent: isNewEvent,
+        idEvent: isNewEvent ? '' : savedEvent.idEvent,
+        eventId: isNewEvent ? '' : savedEvent.idEvent,
+        clientEventId: savedEvent.idEvent,
         namaEvent: nama,
         slugEvent: savedEvent.slugEvent,
         tanggalEvent: tanggal,
@@ -5882,7 +6234,19 @@ async function saveAdminEventForm() {
       }).catch(() => {});
       syncBrowserUrlWithActiveEvent(savedEvent.idEvent);
 
-      if (res && res.status === 'success') {
+      if (res && (res.status === 'success' || res.status === 'ok')) {
+        const officialId = res.idEvent || res.eventId;
+        if (officialId && officialId !== savedEvent.idEvent) {
+          const oldId = savedEvent.idEvent;
+          savedEvent.idEvent = officialId;
+          const idx = STATE.events.findIndex(e => e.idEvent === oldId);
+          if (idx >= 0) STATE.events[idx] = savedEvent;
+          STATE.activeEventId = officialId;
+          STATE.activeEvent = savedEvent;
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+          localStorage.setItem('snapevent_active_event_id', officialId);
+          localStorage.setItem('snapevent_active_event', JSON.stringify(savedEvent));
+        }
         if (res.customFrameUrl) {
           savedEvent.customFrameUrl = res.customFrameUrl;
           if (STATE.activeEvent && STATE.activeEvent.idEvent === savedEvent.idEvent) {
@@ -5893,6 +6257,8 @@ async function saveAdminEventForm() {
       } else if (res && res.status === 'error') {
         console.warn("GAS simpan peringatan:", res.message);
       }
+      // Re-sinkronisasi daftar acara dari Google Sheets
+      syncEventsFromBackend(true);
     } catch (err) {
       console.warn("Sinkronisasi GAS warn:", err.message);
     }
@@ -6019,6 +6385,56 @@ function bindEvents() {
     const inputGuest = document.getElementById('inputGuestName');
     if (inputGuest) {
       setTimeout(() => inputGuest.focus(), 250);
+    }
+  });
+
+  // Tombol Aksi di Samping QR Code Halaman Sambutan (viewWelcome: Share, Download, Copy Link)
+  document.getElementById('btnWelcomeShareLink')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    const eventName = STATE.activeEvent?.namaEvent || STATE.appTitle || "SnapEvent";
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: eventName,
+          text: `Ayo abadikan momen di ${eventName}! Buka kamera digital sekali pakai di link ini:`,
+          url: shareUrl
+        });
+        showToast("✅ Berhasil membagikan link acara!", "success");
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
+    } catch (e) {
+      prompt("Salin link acara ini:", shareUrl);
+    }
+  });
+
+  document.getElementById('btnWelcomeDownloadQr')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    const eventName = (STATE.activeEvent?.namaEvent || "acara").replace(/[^a-zA-Z0-9_-]/g, '_');
+    showToast("⏳ Menyiapkan QR Code resolusi tinggi berlogo...", "info");
+    const qrDownloadUrl = await generateQrWithLogo(shareUrl, 1000);
+    const a = document.createElement('a');
+    a.href = qrDownloadUrl;
+    a.download = `QR-Code-${eventName}.png`;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast("⬇️ Gambar QR Code 1000px HD berhasil diunduh!", "success");
+  });
+
+  document.getElementById('btnWelcomeCopyQrLink')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
+    } catch (e) {
+      prompt("Salin link acara ini:", shareUrl);
     }
   });
 
@@ -6461,6 +6877,37 @@ function bindEvents() {
     document.getElementById('modalAdminPin').classList.add('hidden');
   });
   document.getElementById('btnSubmitAdminPin').addEventListener('click', verifyAdminLogin);
+
+  // Akses Tombol Enter pada Form Login Admin
+  const formAdminLogin = document.getElementById('formAdminLogin');
+  if (formAdminLogin) {
+    formAdminLogin.addEventListener('submit', (e) => {
+      e.preventDefault();
+      verifyAdminLogin();
+    });
+  }
+  document.getElementById('inputAdminUser')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      verifyAdminLogin();
+    }
+  });
+  document.getElementById('inputAdminPass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      verifyAdminLogin();
+    }
+  });
+
+  // Tombol Pintas Akses Live Cam & Galeri bagi Admin yang Sedang Login
+  document.getElementById('btnAdminGoCamera')?.addEventListener('click', () => {
+    showView('viewCamera');
+  });
+  document.getElementById('btnAdminGoGallery')?.addEventListener('click', () => {
+    showView('viewGallery');
+    loadGallery();
+  });
+
   document.getElementById('btnAdminLogout').addEventListener('click', () => {
     sessionStorage.removeItem('snapevent_admin_session');
     showView('viewCamera');
@@ -6488,19 +6935,8 @@ function bindEvents() {
     btn.addEventListener('click', () => {
       const tab = btn.getAttribute('data-admintab');
       if (tab === 'create') {
-        const currentFormId = document.getElementById('formEventId')?.value;
-        if (!currentFormId) {
-          if (STATE.activeEvent) {
-            populateEditEventForm(STATE.activeEvent);
-          } else {
-            resetCreateEventForm();
-          }
-        }
-        const dateInput = document.getElementById('formEventTanggal');
-        if (dateInput && !dateInput.value) {
-          const now = new Date();
-          dateInput.value = (STATE.activeEvent && formatDateForInput(STATE.activeEvent.tanggalEvent)) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        }
+        // Klik tab '+ Buat Event Baru' SELALU membuka formulir bersih baru (tidak memuat event lama)
+        resetCreateEventForm();
       }
       switchAdminTab(tab);
     });
@@ -6651,6 +7087,19 @@ function bindEvents() {
     const podiumP3 = document.getElementById('cfgPodiumTitleP3')?.value.trim() || '🥉 Juara 3 (Perunggu)';
     const podiumMode = document.getElementById('cfgPodiumDisplayMode')?.value || 'all';
 
+    // Pengaturan Foto Panggung (Stage Photos)
+    const stagePhotosEnabled = document.getElementById('cfgStagePhotosEnabled')?.checked ? 'true' : 'false';
+    const stagePhotosTitle = document.getElementById('cfgStagePhotosTitle')?.value.trim() || 'Foto Panggung';
+    const stagePhotosLink = document.getElementById('cfgStagePhotosLink')?.value.trim() || '';
+
+    STATE.stagePhotosEnabled = (stagePhotosEnabled === 'true');
+    STATE.stagePhotosTitle = stagePhotosTitle;
+    STATE.stagePhotosLink = stagePhotosLink;
+
+    localStorage.setItem('snapevent_stage_photos_enabled', stagePhotosEnabled);
+    localStorage.setItem('snapevent_stage_photos_title', stagePhotosTitle);
+    localStorage.setItem('snapevent_stage_photos_link', stagePhotosLink);
+
     STATE.gasApiUrl = url;
     STATE.appTitle = appTitle;
     STATE.appLogoUrl = appLogoUrl;
@@ -6695,6 +7144,9 @@ function bindEvents() {
         podium_title_p2: podiumP2,
         podium_title_p3: podiumP3,
         podium_display_mode: podiumMode,
+        stage_photos_enabled: stagePhotosEnabled,
+        stage_photos_title: stagePhotosTitle,
+        stage_photos_link: stagePhotosLink,
         gas_webapp_url: url,
         user_accounts: JSON.stringify(STATE.userAccounts)
       };
@@ -6725,6 +7177,64 @@ function bindEvents() {
   });
 
   // Tombol Hapus Cache Offline & Sinkronkan Ulang (Admin)
+  // Listener Menu & Modal Foto Panggung (Stage Photos)
+  document.getElementById('navBtnStagePhotos')?.addEventListener('click', () => showView('viewStagePhotos'));
+  document.getElementById('galleryStagePhotosBanner')?.addEventListener('click', () => showView('viewStagePhotos'));
+  document.getElementById('btnRefreshStagePhotos')?.addEventListener('click', () => loadStagePhotos(true));
+  document.getElementById('btnCloseStageZoom')?.addEventListener('click', () => {
+    document.getElementById('modalStagePhotoZoom')?.classList.add('hidden');
+  });
+
+  // Tombol Uji Tautan Foto Panggung di Admin Pengaturan Global
+  document.getElementById('btnTestStagePhotos')?.addEventListener('click', async () => {
+    const link = document.getElementById('cfgStagePhotosLink')?.value.trim() || STATE.stagePhotosLink;
+    const resEl = document.getElementById('txtStagePhotosTestResult');
+    if (!link) {
+      if (resEl) {
+        resEl.textContent = '⚠️ Masukkan link folder Google Drive terlebih dahulu!';
+        resEl.className = 'text-xs text-amber-400 font-medium';
+        resEl.classList.remove('hidden');
+      }
+      return;
+    }
+    if (resEl) {
+      resEl.textContent = '⏳ Menguji tautan Google Drive...';
+      resEl.className = 'text-xs text-zinc-400 font-medium';
+      resEl.classList.remove('hidden');
+    }
+    try {
+      const resp = await callGasApiSafe('getStagePhotos', { driveFolderUrl: link });
+      if (resp && resp.status === 'success') {
+        const count = Array.isArray(resp.photos) ? resp.photos.length : 0;
+        if (resEl) {
+          resEl.textContent = `✅ Berhasil! Terhubung ke Google Drive. Ditemukan ${count} foto.`;
+          resEl.className = 'text-xs text-emerald-400 font-medium';
+        }
+      } else {
+        if (resEl) {
+          resEl.textContent = `⚠️ Respon server: ${resp?.message || 'Folder kosong atau belum dibagikan secara publik (Anyone with the link can view)'}`;
+          resEl.className = 'text-xs text-amber-400 font-medium';
+        }
+      }
+    } catch (e) {
+      if (resEl) {
+        resEl.textContent = `❌ Gagal menghubungi server: ${e.message}`;
+        resEl.className = 'text-xs text-rose-400 font-medium';
+      }
+    }
+  });
+
+  // Listener Salin Link QR di Halaman Sambutan
+  document.getElementById('btnWelcomeCopyLink')?.addEventListener('click', async () => {
+    const shareUrl = getEventShareUrl(STATE.activeEventId);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
+    } catch (e) {
+      prompt("Salin link acara ini:", shareUrl);
+    }
+  });
+
   document.getElementById('btnAdminPurgeOfflineCache')?.addEventListener('click', async () => {
     const targetId = getResolvedEventId(STATE.activeEventId);
     localStorage.removeItem('snapevent_photos_' + targetId);
