@@ -1752,6 +1752,28 @@ function handleAdminSaveEvent(payload) {
           finalCreated,
           sanitizeCellValue(finalFrameUrl, 500)
         ]]);
+      } else {
+        // INSERT EVENT BARU: idEvent dari frontend yang belum ada di spreadsheet
+        savedIdEvent = idEvent;
+        eventSheet.appendRow([
+          sanitizeCellValue(savedIdEvent),
+          sanitizeCellValue(namaEvent),
+          sanitizeCellValue(slugEvent),
+          sanitizeCellValue(tanggalEvent),
+          sanitizeCellValue(hashtagEvent),
+          maxFoto,
+          maxVote,
+          revealMode,
+          isRevealed,
+          likeEnabled,
+          publicVisible,
+          sanitizeCellValue(cameraStyles),
+          sanitizeCellValue(frames),
+          sanitizeCellValue(folderId),
+          "AKTIF",
+          nowStr,
+          sanitizeCellValue(customFrameUrl, 500)
+        ]);
       }
     }
 

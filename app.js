@@ -101,33 +101,24 @@ const STATE = {
 
 // --- DATA ISOLATION HELPERS PER EVENT ---
 function getResolvedEventId(idOrSlug) {
-  // Jika STATE.activeEvent sudah aktif tersinkron dari server, utamakan ID aktif tersebut jika target adalah default
-  if ((!idOrSlug || idOrSlug === 'EVT-202611-001' || idOrSlug === 'DEFAULT') && STATE.activeEvent && STATE.activeEvent.idEvent) {
-    return STATE.activeEvent.idEvent;
+  if (!idOrSlug) {
+    return (STATE.activeEvent && STATE.activeEvent.idEvent) || STATE.activeEventId || (STATE.events && STATE.events[0]?.idEvent) || '';
   }
-  const target = String(idOrSlug || (STATE.activeEvent && STATE.activeEvent.idEvent) || STATE.activeEventId || '').trim();
-  if (!target) return (STATE.activeEvent && STATE.activeEvent.idEvent) || (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
+  const target = String(idOrSlug).trim();
   if (/^EVT-\d+/i.test(target)) return target;
 
   const lower = target.toLowerCase();
-  // Alias langsung untuk event default Sarah & Kevin agar kebal terhadap variasi slug/parameter
-  if (
-    lower === 'the-wedding-of-sarah-and-kevin' ||
-    lower === 'the-wedding-of-sarah-&-kevin' ||
-    lower === 'sarah-kevin' ||
-    lower === 'sarahkevineverafter' ||
-    (lower.includes('sarah') && lower.includes('kevin'))
-  ) {
-    return 'EVT-202611-001';
-  }
-
-  const allKnown = [...(STATE.events || []), ...(MOCK_DATA.events || [])];
+  const allKnown = STATE.events || [];
   const ev = allKnown.find(e => 
-    e.idEvent === target || 
-    (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
-    (e.namaEvent && e.namaEvent.toLowerCase() === lower)
+    e && (
+      e.idEvent === target || 
+      (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
+      (e.namaEvent && e.namaEvent.toLowerCase() === lower)
+    )
   );
   if (ev && ev.idEvent) return ev.idEvent;
+  return target;
+}
   if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
   return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
 }
@@ -504,22 +495,10 @@ function loadEventPhotos(eventId) {
         return p;
       }) : [];
     } else {
-      // Migrasi atau fallback ke mock data sample jika event default demo
-      const legacy = JSON.parse(localStorage.getItem('snapevent_local_photos') || '[]');
-      const defaultMockId = (MOCK_DATA.events && MOCK_DATA.events[0]) ? MOCK_DATA.events[0].idEvent : 'EVT-202611-001';
-      if (resolvedId === 'EVT-202611-001' || resolvedId === defaultMockId) {
-        if (legacy.length > 0) {
-          STATE.photos = legacy.filter(p => p && !deletedSet.has(String(p.idFoto)));
-        } else {
-          STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
-        }
-        localStorage.setItem(key, JSON.stringify(STATE.photos));
-      } else {
-        STATE.photos = [];
-      }
+      STATE.photos = [];
     }
   } catch (e) {
-    STATE.photos = (MOCK_DATA.samplePhotos || []).filter(p => p && !deletedSet.has(String(p.idFoto)));
+    STATE.photos = [];
   }
 
   // Auto-synthesize categoryLikes jika ada likes namun belum terpetakan ke kategori acara
@@ -736,13 +715,31 @@ function formatDateForInput(dateVal) {
 }
 
 function getEventShareUrl(eventId) {
+  let baseUrl = 'https://www.runway.my.id/cam';
   try {
     const loc = window.location;
     if (loc && loc.origin && !loc.origin.includes('localhost') && !loc.origin.startsWith('file:') && !loc.origin.includes('127.0.0.1')) {
-      return `${loc.origin}${loc.pathname}`.replace(/\/+$/, '');
+      baseUrl = `${loc.origin}${loc.pathname}`.replace(/\/+$/, '');
     }
   } catch (e) {}
-  return 'https://www.runway.my.id/cam';
+
+  const targetId = eventId || STATE.activeEventId || '';
+  let eventSlugOrName = '';
+  if (targetId) {
+    const ev = (STATE.events && STATE.events.find(e => e && (e.idEvent === targetId || e.slugEvent === targetId))) || 
+               (STATE.activeEvent && (STATE.activeEvent.idEvent === targetId || STATE.activeEvent.slugEvent === targetId) ? STATE.activeEvent : null);
+    if (ev) {
+      eventSlugOrName = ev.slugEvent || (ev.namaEvent ? ev.namaEvent.toLowerCase().replace(/[^a-z0-9]/g, '-') : '') || ev.idEvent || targetId;
+    } else {
+      eventSlugOrName = targetId;
+    }
+  }
+
+  if (eventSlugOrName) {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${sep}event=${encodeURIComponent(eventSlugOrName)}`;
+  }
+  return baseUrl;
 }
 
 function syncBrowserUrlWithActiveEvent(eventId) {
@@ -761,7 +758,107 @@ function syncBrowserUrlWithActiveEvent(eventId) {
 }
 
 function getQrImageUrl(text, size = 300) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(text)}`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=H&margin=8&data=${encodeURIComponent(text)}`;
+}
+
+// Engine Komposit Gambar QR Code dengan Logo di Titik Tengah (Error-Correction H 30% Redundancy)
+async function generateQrWithLogo(text, size = 300, logoUrl = '') {
+  const qrApiUrl = getQrImageUrl(text, size);
+  const rawLogo = logoUrl || STATE.appLogoUrl || localStorage.getItem('snapevent_app_logo_url') || '';
+  const finalLogoUrl = rawLogo ? normalizeDriveDirectUrl(rawLogo) : '';
+
+  if (!finalLogoUrl) {
+    return qrApiUrl;
+  }
+
+  return new Promise((resolve) => {
+    const qrImg = new Image();
+    qrImg.crossOrigin = 'anonymous';
+    qrImg.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(qrImg, 0, 0, size, size);
+
+        const logoImg = new Image();
+        logoImg.crossOrigin = 'anonymous';
+        logoImg.onload = () => {
+          try {
+            // Ukuran logo tengah: 23-25% dari total dimensi QR code
+            const logoBoxSize = Math.round(size * 0.24);
+            const boxX = (size - logoBoxSize) / 2;
+            const boxY = (size - logoBoxSize) / 2;
+            const radius = Math.round(logoBoxSize * 0.22);
+
+            // 1. Gambar latar badge putih dengan bayangan lembut
+            ctx.save();
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+            ctx.shadowBlur = Math.max(4, Math.round(size * 0.015));
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.005));
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            if (ctx.roundRect) {
+              ctx.roundRect(boxX, boxY, logoBoxSize, logoBoxSize, radius);
+            } else {
+              ctx.rect(boxX, boxY, logoBoxSize, logoBoxSize);
+            }
+            ctx.fill();
+
+            // 2. Garis tepi emas mewah (#D4AF37)
+            ctx.lineWidth = Math.max(2, Math.round(size * 0.007));
+            ctx.strokeStyle = '#D4AF37';
+            ctx.stroke();
+            ctx.restore();
+
+            // 3. Gambar logo di dalam badge dengan padding lembut
+            const padding = Math.max(2, Math.round(logoBoxSize * 0.12));
+            const innerSize = logoBoxSize - (padding * 2);
+            const innerX = boxX + padding;
+            const innerY = boxY + padding;
+
+            ctx.save();
+            ctx.beginPath();
+            if (ctx.roundRect) {
+              ctx.roundRect(innerX, innerY, innerSize, innerSize, Math.max(3, radius - 3));
+            } else {
+              ctx.rect(innerX, innerY, innerSize, innerSize);
+            }
+            ctx.clip();
+            ctx.drawImage(logoImg, innerX, innerY, innerSize, innerSize);
+            ctx.restore();
+
+            resolve(canvas.toDataURL('image/png'));
+          } catch (errLogo) {
+            console.warn("QR logo composite canvas error:", errLogo);
+            resolve(qrApiUrl);
+          }
+        };
+        logoImg.onerror = () => resolve(qrApiUrl);
+        logoImg.src = finalLogoUrl;
+      } catch (errCanvas) {
+        console.warn("QR canvas draw error:", errCanvas);
+        resolve(qrApiUrl);
+      }
+    };
+    qrImg.onerror = () => resolve(qrApiUrl);
+    qrImg.src = qrApiUrl;
+  });
+}
+
+async function setQrWithLogoToElement(imgEl, text, size = 300, logoUrl = '') {
+  if (!imgEl) return;
+  // Pasang QR standar sementara agar visual tidak kedip kosong
+  imgEl.src = getQrImageUrl(text, size);
+  try {
+    const finalDataUrl = await generateQrWithLogo(text, size, logoUrl);
+    if (finalDataUrl && imgEl) {
+      imgEl.src = finalDataUrl;
+    }
+  } catch (e) {}
 }
 
 function normalizeFrameTargetUrl(rawUrl) {
@@ -968,208 +1065,13 @@ function resetGuestNameSession() {
   }, 250);
 }
 
-// Default Seed / Mock Data for Instant Browser & Offline Preview (5 Complete Events)
+// Data Penampung Murni Realtime (Bebas Hardcode Demo)
 const MOCK_DATA = {
-  events: [
-    {
-      idEvent: "EVT-202611-001",
-      namaEvent: "The Wedding of Sarah and Kevin",
-      slugEvent: "the-wedding-of-sarah-and-kevin",
-      tanggalEvent: "2026-11-20",
-      hashtagEvent: "#SarahKevinEverAfter",
-      maxFotoPerGuest: 10,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO"],
-      gdriveFolderId: "",
-      statusEvent: "AKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202611-392",
-      namaEvent: "The Wedding of Hans & Yurike",
-      slugEvent: "hans-yurike",
-      tanggalEvent: "2026-11-25",
-      hashtagEvent: "#Hans&Yurike",
-      maxFotoPerGuest: 5,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "POLAROID",
-      activeFrames: ["POLAROID"],
-      gdriveFolderId: "1FZoLfd0fczTX2N6y-xAI-G4KgVDnEfQk",
-      statusEvent: "AKTIF",
-      customFrameUrl: "",
-      categories: [
-        { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-        { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
-        { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
-      ]
-    },
-    {
-      idEvent: "EVT-202612-105",
-      namaEvent: "Annual Gala Dinner PT Nusantara Tech",
-      slugEvent: "nusantara-gala-2026",
-      tanggalEvent: "2026-12-15",
-      hashtagEvent: "#NusantaraGala2026",
-      maxFotoPerGuest: 8,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "CUSTOM_EVENT",
-      activeFrames: ["CUSTOM_EVENT", "GOLD_DECO", "POLAROID", "MINIMAL"],
-      gdriveFolderId: "",
-      statusEvent: "AKTIF",
-      customFrameUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='28' y='28' width='1024' height='1294' fill='none' stroke='%23D4AF37' stroke-width='14' rx='28'/><rect x='52' y='52' width='976' height='1246' fill='none' stroke='%23F3E5AB' stroke-width='3' rx='18'/><circle cx='52' cy='52' r='18' fill='%23D4AF37'/><circle cx='1028' cy='52' r='18' fill='%23D4AF37'/><circle cx='52' cy='1298' r='18' fill='%23D4AF37'/><circle cx='1028' cy='1298' r='18' fill='%23D4AF37'/><rect x='120' y='1175' width='840' height='110' fill='rgba(15,15,20,0.88)' stroke='%23D4AF37' stroke-width='2' rx='16'/><text x='540' y='1225' fill='%23F3E5AB' font-family='serif' font-size='32' font-weight='bold' text-anchor='middle'>ANNUAL GALA DINNER</text><text x='540' y='1262' fill='%23D4AF37' font-family='sans-serif' font-size='20' font-weight='bold' text-anchor='middle'>PT NUSANTARA TECH • 2026</text></svg>",
-      customFrameName: "Nusantara Gala Frame"
-    },
-    {
-      idEvent: "EVT-202612-210",
-      namaEvent: "Clarissa's Sweet 17: Enchanted Forest",
-      slugEvent: "clarissa-sweet-17",
-      tanggalEvent: "2026-12-28",
-      hashtagEvent: "#ClarissaSweet17",
-      maxFotoPerGuest: 12,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO", "POLAROID"],
-      gdriveFolderId: "",
-      statusEvent: "INAKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202701-015",
-      namaEvent: "Alumni Homecoming SMAN 1 Angkatan 2016",
-      slugEvent: "reuni-smansa-2016",
-      tanggalEvent: "2027-01-10",
-      hashtagEvent: "#Smansa16Reunited",
-      maxFotoPerGuest: 15,
-      maxVotePerGuest: 2,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "multi",
-      singleLockedFrame: "GOLD_DECO",
-      activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL", "NONE"],
-      gdriveFolderId: "",
-      statusEvent: "INAKTIF",
-      customFrameUrl: ""
-    },
-    {
-      idEvent: "EVT-202611-456",
-      namaEvent: "ilham & sherwin",
-      slugEvent: "ilham---sherwin",
-      tanggalEvent: "2026-11-13",
-      hashtagEvent: "#ilhamsherwin",
-      maxFotoPerGuest: 10,
-      maxVotePerGuest: 1,
-      revealMode: "SEGERA",
-      isRevealed: true,
-      likeEnabled: true,
-      publicVisible: true,
-      activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-      frameLockMode: "single",
-      singleLockedFrame: "CUSTOM_EVENT",
-      activeFrames: ["CUSTOM_EVENT"],
-      gdriveFolderId: "1q2v8CBLClFD2WX8dqhVRSaRfb80OVW_1",
-      statusEvent: "AKTIF",
-      customFrameUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1080' height='1350' viewBox='0 0 1080 1350'><rect x='30' y='30' width='1020' height='1290' fill='none' stroke='%23D4AF37' stroke-width='4' rx='16'/><rect x='100' y='1160' width='880' height='130' fill='rgba(10,10,14,0.88)' stroke='%23D4AF37' stroke-width='2' rx='12'/><text x='540' y='1215' fill='%23F3E5AB' font-family='serif' font-style='italic' font-size='38' font-weight='bold' text-anchor='middle'>ilham &amp; sherwin</text><text x='540' y='1255' fill='%23D4AF37' font-family='sans-serif' font-size='20' font-weight='600' text-anchor='middle'>#ilhamsherwin</text></svg>",
-      customFrameName: "ilham & sherwin Frame"
-    }
-  ],
-  event: {
-    idEvent: "EVT-202611-001",
-    namaEvent: "The Wedding of Sarah & Kevin",
-    slugEvent: "sarah-kevin",
-    tanggalEvent: "2026-11-20",
-    hashtagEvent: "#SarahKevinEverAfter",
-    maxFotoPerGuest: 10,
-    maxVotePerGuest: 1,
-    revealMode: "SEGERA",
-    isRevealed: true,
-    likeEnabled: true,
-    publicVisible: true,
-    activeCameraStyles: ["RAW", "800T", "WARM", "BW"],
-    frameLockMode: "multi",
-    singleLockedFrame: "GOLD_DECO",
-    activeFrames: ["GOLD_DECO", "POLAROID", "MINIMAL"],
-    gdriveFolderId: "",
-    statusEvent: "AKTIF",
-    customFrameUrl: ""
-  },
-  categories: [
-    { idKategori: "KAT-1", namaKategori: "Best Dressed Guest", deskripsi: "Busana paling menawan malam ini", urutan: 1 },
-    { idKategori: "KAT-2", namaKategori: "Best Outfit", deskripsi: "Gaya busana paling memukau dan serasi", urutan: 2 },
-    { idKategori: "KAT-3", namaKategori: "Pose Terheboh", deskripsi: "Gaya paling kocak dan seru bersama geng", urutan: 3 }
-  ],
-  samplePhotos: [
-    {
-      idFoto: "FTO-DEMO-001",
-      guestNama: "Sarah & Kevin",
-      caption: "Momen terbaik malam ini bersama sahabat tercinta!",
-      cameraStyle: "800T",
-      frameStyle: "GOLD_DECO",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 14,
-      categoryLikes: { "KAT-1": 14, "Best Dressed Guest": 14 },
-      idKategori: "KAT-1",
-      namaKategori: "Best Dressed Guest",
-      isFeatured: true,
-      createdAt: "2026-11-08 19:15:00"
-    },
-    {
-      idFoto: "FTO-DEMO-002",
-      guestNama: "David L.",
-      caption: "Keluarga besar groomsmen siap meriahkan pesta!",
-      cameraStyle: "WARM",
-      frameStyle: "POLAROID",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 9,
-      categoryLikes: { "KAT-2": 9, "Best Outfit": 9 },
-      idKategori: "KAT-2",
-      namaKategori: "Best Outfit",
-      isFeatured: false,
-      createdAt: "2026-11-08 19:30:00"
-    },
-    {
-      idFoto: "FTO-DEMO-003",
-      guestNama: "Clara",
-      caption: "Cheers untuk cinta abadi!",
-      cameraStyle: "BW",
-      frameStyle: "MINIMAL",
-      gdriveViewUrl: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=800&q=80",
-      totalLikes: 7,
-      categoryLikes: { "KAT-3": 7, "Pose Terheboh": 7 },
-      idKategori: "KAT-3",
-      namaKategori: "Pose Terheboh",
-      isFeatured: false,
-      createdAt: "2026-11-08 19:45:00"
-    }
-  ]
+  events: [],
+  event: null,
+  categories: [],
+  samplePhotos: []
 };
-MOCK_DATA.event = MOCK_DATA.events[0];
 
 // --- 2. INITIALIZATION ON DOM READY ---
 window.addEventListener('DOMContentLoaded', () => {
@@ -1215,15 +1117,13 @@ async function initApp() {
   if (Array.isArray(STATE.events)) {
     STATE.events = STATE.events.filter(e => e && !deletedEventsSet.has(String(e.idEvent)));
   }
-  if (!Array.isArray(STATE.events) || STATE.events.length === 0) {
-    const filteredMock = (MOCK_DATA.events || []).filter(mockEvt => !deletedEventsSet.has(String(mockEvt.idEvent)));
-    STATE.events = filteredMock;
-    localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+  if (!Array.isArray(STATE.events)) {
+    STATE.events = [];
   }
 
   if (!STATE.activeEvent) {
     const savedActiveId = localStorage.getItem('snapevent_active_event_id');
-    const activeCandidate = (STATE.events || []).find(e => e.statusEvent === 'AKTIF') || (STATE.events || []).find(e => e.idEvent === 'EVT-202611-392');
+    const activeCandidate = (STATE.events || []).find(e => e.statusEvent === 'AKTIF') || (STATE.events && STATE.events[0]);
     if (savedActiveId && STATE.events.some(e => e.idEvent === savedActiveId)) {
       const savedEv = STATE.events.find(e => e.idEvent === savedActiveId);
       if (savedEv && savedEv.statusEvent === 'INAKTIF' && activeCandidate) {
@@ -1231,11 +1131,11 @@ async function initApp() {
       } else {
         STATE.activeEventId = savedActiveId;
       }
-    } else {
-      STATE.activeEventId = activeCandidate ? activeCandidate.idEvent : ((STATE.events && STATE.events[0]) ? STATE.events[0].idEvent : 'EVT-202611-392');
+    } else if (activeCandidate) {
+      STATE.activeEventId = activeCandidate.idEvent;
       localStorage.setItem('snapevent_active_event_id', STATE.activeEventId);
     }
-    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || activeCandidate || (STATE.events && STATE.events[0]) || MOCK_DATA.events[0];
+    STATE.activeEvent = (STATE.events && STATE.events.find(e => e.idEvent === STATE.activeEventId)) || activeCandidate || null;
   }
 
   // GERBANG KEAMANAN ACARA: Jika URL membawa parameter event dan status event tersebut INAKTIF atau TIDAK DITEMUKAN
@@ -1676,11 +1576,6 @@ async function loadEventData() {
           STATE.events = res.allEvents
             .filter(serverEv => serverEv && !deletedEventsSet.has(String(serverEv.idEvent)))
             .map(serverEv => {
-              // Pulihkan nama asli jika sempat tertimpa "Event Baru"
-              if (serverEv.idEvent === 'EVT-202611-001' && (serverEv.namaEvent === 'Event Baru' || !serverEv.namaEvent)) {
-                serverEv.namaEvent = 'The Wedding of Sarah & Kevin';
-                serverEv.hashtagEvent = '#SarahKevin2026';
-              }
               const localEv = (STATE.events || []).find(e => e.idEvent === serverEv.idEvent);
               let sMode = serverEv.frameLockMode || localEv?.frameLockMode || 'multi';
               let sLocked = serverEv.singleLockedFrame || localEv?.singleLockedFrame || 'GOLD_DECO';
@@ -2204,10 +2099,7 @@ async function loadGallery() {
         return true;
       });
 
-      // Fallback: Jika server mengembalikan 0 foto pada event default demo namun ada samplePhotos, jangan biarkan kosong
-      if (finalPhotos.length === 0 && targetId === 'EVT-202611-001' && Array.isArray(MOCK_DATA.samplePhotos) && MOCK_DATA.samplePhotos.length > 0) {
-        finalPhotos = MOCK_DATA.samplePhotos.filter(p => p && !deletedSet.has(String(p.idFoto)));
-      }
+
 
       // Pertahankan like, kategori penghargaan, dan riwayat vote lokal secara pintar
       const availableCats = (Array.isArray(STATE.activeCategories) && STATE.activeCategories.length > 0)
@@ -2444,7 +2336,7 @@ function applyEventToUI() {
   const welcomeQrImg = document.getElementById('welcomeQrImg');
   if (welcomeQrImg) {
     const eventUrl = getEventShareUrl(ev.idEvent);
-    welcomeQrImg.src = getQrImageUrl(eventUrl, 250);
+    setQrWithLogoToElement(welcomeQrImg, eventUrl, 300);
   }
 
   // Preload Custom Frame jika ada
@@ -3303,9 +3195,9 @@ function applyColorFilter(ctx, w, h, filterName) {
 }
 
 async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
-  const evName = STATE.activeEvent?.namaEvent || "The Wedding of Sarah & Kevin";
-  const hashtag = STATE.activeEvent?.hashtagEvent || "#SarahKevinEverAfter";
-  const dateStr = STATE.activeEvent?.tanggalEvent || "20.11.2026";
+  const evName = STATE.activeEvent?.namaEvent || "Acara Spesial";
+  const hashtag = STATE.activeEvent?.hashtagEvent || "";
+  const dateStr = STATE.activeEvent?.tanggalEvent || "";
 
   if (frameStyle === 'GOLD_DECO') {
     // Luxury Double Border Gold Art Deco
@@ -4467,7 +4359,7 @@ function openSlideshow() {
   const qrImg = document.getElementById('slideshowQrImg');
   if (qrImg) {
     const eventUrl = getEventShareUrl(STATE.activeEventId);
-    qrImg.src = getQrImageUrl(eventUrl, 500);
+    setQrWithLogoToElement(qrImg, eventUrl, 500);
   }
 
   const eligiblePhotos = getEligibleSlideshowPhotos();
@@ -4610,7 +4502,7 @@ async function verifyAdminLogin() {
 }
 
 function openShareQrModal(eventObj) {
-  const ev = eventObj || STATE.activeEvent || MOCK_DATA.event;
+  const ev = eventObj || STATE.activeEvent || (STATE.events && STATE.events[0]) || {};
   const modal = document.getElementById('modalShareQr');
   if (!modal) return;
 
@@ -4619,14 +4511,14 @@ function openShareQrModal(eventObj) {
   const imgEl = document.getElementById('shareQrImg');
   const urlInput = document.getElementById('shareQrUrlInput');
 
-  if (titleEl) titleEl.textContent = ev.namaEvent;
-  if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent;
+  if (titleEl) titleEl.textContent = ev.namaEvent || "Acara SnapEvent";
+  if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent || "#SnapEvent";
 
   const eventUrl = getEventShareUrl(ev.idEvent);
-  const qrUrl = getQrImageUrl(eventUrl, 300);
-
-  if (imgEl) imgEl.src = qrUrl;
   if (urlInput) urlInput.value = eventUrl;
+  if (imgEl) {
+    setQrWithLogoToElement(imgEl, eventUrl, 350);
+  }
 
   modal.classList.remove('hidden');
 }
@@ -6314,10 +6206,11 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('btnWelcomeDownloadQr')?.addEventListener('click', () => {
+  document.getElementById('btnWelcomeDownloadQr')?.addEventListener('click', async () => {
     const shareUrl = getEventShareUrl(STATE.activeEventId);
-    const qrDownloadUrl = getQrImageUrl(shareUrl, 1000);
     const eventName = (STATE.activeEvent?.namaEvent || "acara").replace(/[^a-zA-Z0-9_-]/g, '_');
+    showToast("⏳ Menyiapkan QR Code resolusi tinggi berlogo...", "info");
+    const qrDownloadUrl = await generateQrWithLogo(shareUrl, 1000);
     const a = document.createElement('a');
     a.href = qrDownloadUrl;
     a.download = `QR-Code-${eventName}.png`;
@@ -6325,7 +6218,7 @@ function bindEvents() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showToast("⬇️ Gambar QR Code resolusi tinggi siap diunduh!", "success");
+    showToast("⬇️ Gambar QR Code 1000px HD berhasil diunduh!", "success");
   });
 
   document.getElementById('btnWelcomeCopyQrLink')?.addEventListener('click', async () => {
