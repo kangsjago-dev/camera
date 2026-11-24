@@ -532,7 +532,10 @@ function saveEventPhotos(eventId) {
         if (deletedSet.has(String(p.idFoto))) return false;
         if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
         if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
-        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) return false;
+        // Simpan foto lokal yang sedang diupload dengan thumbnail ringan jika masih base64
+        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !p.cloudUploaded) {
+          return true;
+        }
         return true;
       })
       .slice(0, 100);
@@ -2281,9 +2284,15 @@ async function loadGallery() {
       }
 
       // Unggah otomatis untuk foto offline murni yang belum ada di antrean
-      const offlineUnstarted = pendingLocalPhotos.filter(p => 
-        p && p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:') && !IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)
-      );
+      // Hanya auto-upload foto offline murni yang dibuat lebih dari 2 menit lalu dan belum diunggah
+      const nowTs = Date.now();
+      const offlineUnstarted = pendingLocalPhotos.filter(p => {
+        if (!p || !p.gdriveViewUrl || !p.gdriveViewUrl.startsWith('data:')) return false;
+        if (p.cloudUploaded || IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return false;
+        if (sessionStorage.getItem('snapevent_uploaded_' + p.idFoto)) return false;
+        const started = p.uploadStartedAt || Number(sessionStorage.getItem('snapevent_inflight_' + p.idFoto)) || 0;
+        return (nowTs - started) > 120000;
+      });
       if (offlineUnstarted.length > 0) {
         autoUploadPendingPhotos(offlineUnstarted);
       }
@@ -2312,7 +2321,7 @@ async function autoUploadPendingPhotos(pendingList) {
     // KUNCI ANTI-DUPLIKASI: Jika foto sedang dalam proses upload atau baru dicapture < 60 detik lalu, lewati agar tidak dobel saat pindah app
     const sessionInflight = sessionStorage.getItem('snapevent_inflight_' + photo.idFoto);
     const timeSinceStarted = Date.now() - (photo.uploadStartedAt || Number(sessionInflight) || 0);
-    if ((photo.isUploading || sessionInflight) && timeSinceStarted < 60000) {
+    if (photo.cloudUploaded || photo.isUploading || sessionInflight || timeSinceStarted < 180000) {
       continue;
     }
 
@@ -3682,11 +3691,22 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
         STATE.photos.unshift(cloudPhoto);
       }
 
+      // Tandai foto sebagai terunggah cloud permanen agar tidak diunggah ulang
+      cloudPhoto.cloudUploaded = true;
+      cloudPhoto.isUploading = false;
+      sessionStorage.setItem('snapevent_uploaded_' + tempPhotoId, 'true');
+      if (res.idFoto) sessionStorage.setItem('snapevent_uploaded_' + res.idFoto, 'true');
+
       saveEventPhotos(payload.eventId);
+      
+      // Pastikan tab aktif galeri adalah SEMUA FOTO jika belum dipilih
+      if (!STATE.activeGalleryFilter || STATE.activeGalleryFilter === 'WINNERS') {
+        STATE.activeGalleryFilter = 'ALL';
+      }
       renderGallery();
       showToast("☁️ Foto berhasil terunggah ke Google Drive!", "success");
-      // Sinkronisasi otomatis dengan database Google Apps Script agar galeri langsung menampilkan data server
-      setTimeout(() => { loadGallery(); }, 600);
+      // Sinkronisasi dengan database Google Apps Script dengan jeda aman
+      setTimeout(() => { loadGallery(); }, 1500);
     } else if (res && res.status === 'limit_reached') {
       showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
       const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);

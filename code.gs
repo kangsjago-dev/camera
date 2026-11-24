@@ -1205,21 +1205,49 @@ function handleUploadPhoto(payload) {
 
     // Anti-Duplicate Idempotency Cache: Mencegah upload file kembar dari retry / auto-sync bersamaan
     const clientPhotoId = payload.clientPhotoId ? String(payload.clientPhotoId).trim() : "";
-    const imgFingerprint = "UPL_" + canonicalEventId + "_" + guestId + "_" + pureBase64.length + "_" + pureBase64.substring(0, 32);
+    const imgFingerprint = "UPL_" + canonicalEventId + "_" + guestId + "_" + pureBase64.length + "_" + pureBase64.substring(0, 64);
     const cache = CacheService.getScriptCache();
+    
+    // 1. Cek cache memori cepat untuk idempotensi request identik
     if (clientPhotoId) {
       const cachedByClientId = cache.get("CLIENT_UPL_" + clientPhotoId);
       if (cachedByClientId) {
-        try {
-          return JSON.parse(cachedByClientId);
-        } catch(e) {}
+        try { return JSON.parse(cachedByClientId); } catch(e) {}
       }
     }
     const cachedResponse = cache.get(imgFingerprint);
     if (cachedResponse) {
-      try {
-        return JSON.parse(cachedResponse);
-      } catch(e) {}
+      try { return JSON.parse(cachedResponse); } catch(e) {}
+    }
+
+    // 2. Cek database DataFoto untuk mendeteksi apakah foto yang sama persis baru diupload < 3 menit lalu oleh tamu ini
+    if (fotoSheet && fotoSheet.getLastRow() > 1) {
+      const existingRows = fotoSheet.getRange(2, 1, Math.min(fotoSheet.getLastRow() - 1, 50), 12).getDisplayValues();
+      const nowCheckMs = Date.now();
+      for (let rIdx = 0; rIdx < existingRows.length; rIdx++) {
+        const er = existingRows[rIdx];
+        const matchGuest = (er[COL_FOTO.GUEST_ID] === guestId || er[COL_FOTO.GUEST_NAMA] === guestNama);
+        const matchEv = (er[COL_FOTO.ID_EVENT] === canonicalEventId || er[COL_FOTO.ID_EVENT] === eventId);
+        if (matchGuest && matchEv) {
+          const rowCreated = er[COL_FOTO.CREATED_AT] ? new Date(er[COL_FOTO.CREATED_AT]).getTime() : 0;
+          if (rowCreated && (nowCheckMs - rowCreated) < 180000 && er[COL_FOTO.GDRIVE_FILE_ID]) {
+            // Tamu ini baru saja upload foto < 3 menit lalu, kembalikan hasil yang sama agar tidak dobel file di Drive
+            const deduplicatedResult = {
+              status: "success",
+              message: "Foto berhasil disimpan ke rol acara!",
+              idFoto: er[COL_FOTO.ID],
+              viewUrl: er[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + er[COL_FOTO.GDRIVE_FILE_ID]),
+              fileId: er[COL_FOTO.GDRIVE_FILE_ID],
+              remainingPhotos: Math.max(0, maxFoto - 1)
+            };
+            try {
+              if (clientPhotoId) cache.put("CLIENT_UPL_" + clientPhotoId, JSON.stringify(deduplicatedResult), 300);
+              cache.put(imgFingerprint, JSON.stringify(deduplicatedResult), 300);
+            } catch(eC) {}
+            return deduplicatedResult;
+          }
+        }
+      }
     }
 
     // 2. Validasi Kuota Foto Tamu & Deteksi Duplikasi Riwayat Upload Baru
