@@ -1100,6 +1100,12 @@ function handleUploadPhoto(payload) {
     let slugEvent = "";
     let canonicalEventId = eventId;
 
+    // Baca prioritas folder ID eksplisit dari payload jika disediakan
+    const explicitFolder = extractDriveFolderId(payload.gdriveFolderId || payload.folderId || "");
+    if (explicitFolder) {
+      folderId = explicitFolder;
+    }
+
     const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
     if (eventId && eventId !== "DEFAULT" && eventId !== "ACTIVE") {
       for (let i = 0; i < evRows.length; i++) {
@@ -1213,7 +1219,7 @@ function handleUploadPhoto(payload) {
 
     // 3. Simpan File ke Google Drive (Dengan Smart Reuse, Mencegah Folder Kosong Dobel)
     const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-    let masterFolderId = "12LfLW50HIuMUPCGQiRJKy_aO4RhVICjw";
+    let masterFolderId = "";
     if (configSheet && configSheet.getLastRow() > 1) {
       const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
       cRows.forEach(function(cr) {

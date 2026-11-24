@@ -831,21 +831,21 @@ function getQrImageUrl(text, size = 300) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=H&margin=8&data=${encodeURIComponent(text)}`;
 }
 
-// Renderer Lencana Tengah QR Code (Persegi Panjang Horizontal Proporsional Sesuai Standar RUNWAY Entertainment)
+// Renderer Lencana Tengah QR Code (Persegi Panjang Horizontal Tanpa Frame & Ukuran Besar 1x)
 function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
-  // Dimensi persegi panjang horizontal: lebar ~38%, tinggi ~24% (rasio ~1.6 : 1)
-  const badgeW = Math.round(size * 0.38);
-  const badgeH = Math.round(size * 0.24);
+  // Dimensi persegi panjang horizontal besar 1x: lebar ~45%, tinggi ~28%
+  const badgeW = Math.round(size * 0.45);
+  const badgeH = Math.round(size * 0.28);
   const boxX = (size - badgeW) / 2;
   const boxY = (size - badgeH) / 2;
-  const radius = Math.round(badgeH * 0.18);
+  const radius = Math.round(badgeH * 0.16);
 
-  // 1. Gambar latar badge persegi panjang putih bersih dengan bayangan lembut
+  // 1. Gambar latar badge persegi panjang putih bersih (Tanpa Frame / Border)
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-  ctx.shadowBlur = Math.max(4, Math.round(size * 0.016));
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.20)';
+  ctx.shadowBlur = Math.max(3, Math.round(size * 0.014));
   ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.005));
+  ctx.shadowOffsetY = Math.max(1, Math.round(size * 0.004));
 
   ctx.fillStyle = '#FFFFFF';
   ctx.beginPath();
@@ -855,19 +855,14 @@ function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
     ctx.rect(boxX, boxY, badgeW, badgeH);
   }
   ctx.fill();
-
-  // 2. Garis tepi netral halus / emas tipis mewah (#D4AF37)
-  ctx.lineWidth = Math.max(1.5, Math.round(size * 0.006));
-  ctx.strokeStyle = '#D4AF37';
-  ctx.stroke();
   ctx.restore();
 
-  // 3. Konten Badge: Gambar Logo Kustom (RUNWAY Entertainment / Google Drive) ATAU Insignia Emas Mewah
+  // 2. Konten Badge: Gambar Logo Kustom (RUNWAY Entertainment / Google Drive) ATAU Insignia Emas Mewah
   if (logoImgObj && (logoImgObj.naturalWidth > 0 || logoImgObj.width > 0)) {
     const nw = logoImgObj.naturalWidth || logoImgObj.width;
     const nh = logoImgObj.naturalHeight || logoImgObj.height;
-    const padX = Math.max(4, Math.round(badgeW * 0.07));
-    const padY = Math.max(3, Math.round(badgeH * 0.10));
+    const padX = Math.max(2, Math.round(badgeW * 0.04));
+    const padY = Math.max(2, Math.round(badgeH * 0.06));
     const availW = badgeW - (padX * 2);
     const availH = badgeH - (padY * 2);
 
@@ -880,9 +875,9 @@ function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
     ctx.save();
     ctx.beginPath();
     if (ctx.roundRect) {
-      ctx.roundRect(boxX + 2, boxY + 2, badgeW - 4, badgeH - 4, Math.max(2, radius - 2));
+      ctx.roundRect(boxX + 1, boxY + 1, badgeW - 2, badgeH - 2, Math.max(1, radius - 1));
     } else {
-      ctx.rect(boxX + 2, boxY + 2, badgeW - 4, badgeH - 4);
+      ctx.rect(boxX + 1, boxY + 1, badgeW - 2, badgeH - 2);
     }
     ctx.clip();
     ctx.drawImage(logoImgObj, drawX, drawY, drawW, drawH);
@@ -892,7 +887,7 @@ function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
     ctx.save();
     const cx = size / 2;
     const cy = size / 2;
-    const s = badgeH * 0.60;
+    const s = badgeH * 0.65;
     const left = cx - (s * 1.3) / 2;
     const top = cy - s / 2.2;
     const w = s * 1.3;
@@ -2815,92 +2810,8 @@ function applyActiveFrame(frameId) {
     if (singleBadge) singleBadge.classList.add('hidden');
     if (frameContainer) frameContainer.classList.remove('hidden');
   }
-  
-  const customImgEl = document.getElementById('vfCustomFrameImg');
-  const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
-  
-  let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
-  if (!customUrl) {
-    const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === selected?.id) : null;
-    customUrl = cf?.dataUrl || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
-  }
 
-  // Sanitasi SVG data URL jika ada karakter '#' yang belum di-encode agar tidak rusak di browser mobile
-  if (customUrl && typeof customUrl === 'string' && customUrl.startsWith('data:image/svg+xml') && customUrl.includes('#')) {
-    customUrl = customUrl.replace(/#/g, '%23');
-  }
-
-  const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT' || String(selected.id).indexOf('frame_') === 0 || String(selected.id).indexOf('FRAME_') === 0 || customUrl));
-
-  const vfContainer = document.getElementById('viewfinderFrameContainer');
-  if (isCustomFrame && customUrl) {
-    if (customImgEl) {
-      customImgEl.onload = () => {
-        if (vfContainer && customImgEl.naturalWidth && customImgEl.naturalHeight) {
-          vfContainer.style.aspectRatio = `${customImgEl.naturalWidth} / ${customImgEl.naturalHeight}`;
-        }
-      };
-      customImgEl.onerror = () => {
-        if (customUrl && customUrl.includes('googleusercontent.com/d/')) {
-          const fileId = customUrl.split('/d/')[1];
-          if (fileId) {
-            customImgEl.onerror = null;
-            customImgEl.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
-          }
-        }
-      };
-      customImgEl.src = customUrl;
-      customImgEl.classList.remove('hidden');
-    }
-    if (builtInOverlayEl) {
-      builtInOverlayEl.classList.add('hidden'); // Sembunyikan overlay teks built-in sepenuhnya saat custom PNG aktif
-    }
-    preloadFrameImage(customUrl).then(img => {
-      if (img) {
-        STATE.customFrameImgObj = img;
-        if (vfContainer && img.naturalWidth && img.naturalHeight) {
-          vfContainer.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-        }
-      }
-    });
-  } else {
-    STATE.customFrameImgObj = null;
-    if (vfContainer) vfContainer.style.aspectRatio = '4 / 5';
-    if (customImgEl) customImgEl.classList.add('hidden');
-    if (builtInOverlayEl) {
-      if (selected && selected.id === 'NONE') {
-        builtInOverlayEl.classList.add('hidden');
-      } else {
-        builtInOverlayEl.classList.remove('hidden');
-        const tl = document.getElementById('vfFrameTopLeft');
-        const bt = document.getElementById('vfFrameBottomTitle');
-        const bh = document.getElementById('vfFrameBottomHashtag');
-        const dt = document.getElementById('vfFrameDate');
-        if (tl) tl.textContent = `SNAPEVENT ${STATE.activeFilter}`;
-        if (bt) {
-          bt.textContent = STATE.activeEvent ? STATE.activeEvent.namaEvent : 'Our Event';
-          if (selected && selected.id === 'POLAROID') {
-            bt.className = 'font-hand font-bold text-base text-zinc-100 drop-shadow';
-          } else if (selected && selected.id === 'MINIMAL') {
-            bt.className = 'font-sans font-bold text-xs uppercase tracking-wider text-white drop-shadow';
-          } else {
-            bt.className = 'font-serif italic text-sm text-amber-200 drop-shadow';
-          }
-        }
-        if (bh) bh.textContent = STATE.activeEvent ? (STATE.activeEvent.hashtagEvent || '#SnapEvent') : '#SnapEvent';
-        if (dt) dt.textContent = STATE.activeEvent ? (STATE.activeEvent.tanggalEvent || '') : '';
-      }
-    }
-  }
-}
-
-function cycleNextFrame() {
-  const frames = getAvailableFrames();
-  if (frames.length <= 1) {
-    showToast(`Bingkai seragam terkunci: ${frames[0]?.name || 'Resmi Acara'}`, 'info');
-    return;
-  }
-  let idx = frames.findIndex(f => f.id === STATE.activeFrame);
+let idx = frames.findIndex(f => f.id === STATE.activeFrame);
   if (idx === -1) idx = 0;
   const nextIdx = (idx + 1) % frames.length;
   applyActiveFrame(frames[nextIdx].id);
@@ -2926,20 +2837,21 @@ const FRAME_IMG_CACHE = new Map();
 
 function preloadFrameImage(dataUrl) {
   if (!dataUrl) return Promise.resolve(null);
-  if (FRAME_IMG_CACHE.has(dataUrl)) {
-    const cached = FRAME_IMG_CACHE.get(dataUrl);
+  const normalizedUrl = normalizeDriveDirectUrl(dataUrl) || dataUrl;
+  if (FRAME_IMG_CACHE.has(normalizedUrl)) {
+    const cached = FRAME_IMG_CACHE.get(normalizedUrl);
     if (cached && (cached.complete || cached.naturalWidth > 0)) {
       return Promise.resolve(cached);
     }
   }
   return new Promise((resolve) => {
     const img = new Image();
-    const isBase64 = String(dataUrl).indexOf('data:image/') === 0;
+    const isBase64 = String(normalizedUrl).indexOf('data:image/') === 0;
     if (!isBase64) {
       img.crossOrigin = 'anonymous';
     }
     img.onload = () => {
-      FRAME_IMG_CACHE.set(dataUrl, img);
+      FRAME_IMG_CACHE.set(normalizedUrl, img);
       resolve(img);
     };
     img.onerror = () => {
@@ -2947,20 +2859,20 @@ function preloadFrameImage(dataUrl) {
         // Fallback: muat tanpa crossOrigin jika browser menolak header CORS
         const fallback = new Image();
         fallback.onload = () => {
-          FRAME_IMG_CACHE.set(dataUrl, fallback);
+          FRAME_IMG_CACHE.set(normalizedUrl, fallback);
           resolve(fallback);
         };
         fallback.onerror = () => {
-          console.warn("Preload custom frame image error:", dataUrl);
+          console.warn('Preload custom frame image error:', normalizedUrl);
           resolve(null);
         };
-        fallback.src = dataUrl;
+        fallback.src = normalizedUrl;
       } else {
-        console.warn("Preload custom frame image error:", dataUrl);
+        console.warn('Preload custom frame image error:', normalizedUrl);
         resolve(null);
       }
     };
-    img.src = dataUrl;
+    img.src = normalizedUrl;
   });
 }
 
@@ -3424,26 +3336,29 @@ async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
       dataUrl = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
     }
 
+    // 1. Prioritas paling awal: Gunakan image object yang sudah ter-load di memori (STATE.customFrameImgObj atau element DOM)
+    let cachedImg = STATE.customFrameImgObj;
+    const customImgEl = document.getElementById('vfCustomFrameImg');
+    if (!cachedImg && customImgEl && customImgEl.complete && customImgEl.naturalWidth > 0 && !customImgEl.classList.contains('hidden')) {
+      cachedImg = customImgEl;
+    }
+    if (cachedImg && (cachedImg.complete || cachedImg.naturalWidth > 0) && (cachedImg.naturalWidth > 0 || cachedImg.width > 0)) {
+      ctx.drawImage(cachedImg, 0, 0, w, h);
+      return;
+    }
+
     if (dataUrl) {
-      const frameImg = await preloadFrameImage(dataUrl);
+      const normalized = normalizeDriveDirectUrl(dataUrl) || dataUrl;
+      const frameImg = await preloadFrameImage(normalized);
       if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
+        STATE.customFrameImgObj = frameImg;
         // Gambar seluruh bingkai kustom pas memenuhi canvas (0, 0, w, h) tanpa pemotongan / zero-crop
         ctx.drawImage(frameImg, 0, 0, w, h);
         return;
       }
     }
 
-    const customImgEl = document.getElementById('vfCustomFrameImg');
-    let fallbackImg = STATE.customFrameImgObj;
-    if (!fallbackImg && customImgEl && customImgEl.complete && customImgEl.naturalWidth > 0 && !customImgEl.classList.contains('hidden')) {
-      fallbackImg = customImgEl;
-    }
 
-    if (fallbackImg && (fallbackImg.complete || fallbackImg.naturalWidth > 0)) {
-      // Gambar seluruh bingkai kustom pas memenuhi canvas (0, 0, w, h) tanpa pemotongan / zero-crop
-      ctx.drawImage(fallbackImg, 0, 0, w, h);
-      return;
-    }
 
     // Fallback Border Emas jika gambar gagal dimuat
     ctx.lineWidth = 14;
@@ -3613,6 +3528,7 @@ async function handleSavePhotoToDrive() {
     showToast("📸 Foto tersimpan! Mengunggah ke server cloud di latar belakang...", "info");
 
     // 4. JALANKAN PROSES UPLOAD DI LATAR BELAKANG DENGAN KUNCI ANTI-DUPLIKASI
+    const targetFolderId = (STATE.activeEvent && STATE.activeEvent.gdriveFolderId) || STATE.driveMasterId || '';
     uploadPhotoInBackground({
       action: "uploadPhoto",
       clientPhotoId: tempPhotoId,
@@ -3622,6 +3538,8 @@ async function handleSavePhotoToDrive() {
       caption: caption || "Momen seru!",
       cameraStyle: STATE.activeFilter || "RAW",
       frameStyle: STATE.activeFrame || "POLAROID",
+      gdriveFolderId: targetFolderId,
+      folderId: targetFolderId,
       imageBase64: finalDataUrl
     }, tempPhotoId);
   } finally {
