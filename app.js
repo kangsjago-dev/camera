@@ -2811,7 +2811,91 @@ function applyActiveFrame(frameId) {
     if (frameContainer) frameContainer.classList.remove('hidden');
   }
 
-let idx = frames.findIndex(f => f.id === STATE.activeFrame);
+  const customImgEl = document.getElementById('vfCustomFrameImg');
+  const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
+  
+  let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
+  if (!customUrl) {
+    const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === selected?.id) : null;
+    customUrl = cf?.dataUrl || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
+  }
+
+  // Sanitasi SVG data URL jika ada karakter '#' yang belum di-encode agar tidak rusak di browser mobile
+  if (customUrl && typeof customUrl === 'string' && customUrl.startsWith('data:image/svg+xml') && customUrl.includes('#')) {
+    customUrl = customUrl.replace(/#/g, '%23');
+  }
+
+  const isCustomFrame = Boolean(selected && (selected.type === 'custom' || selected.id === 'CUSTOM_EVENT' || String(selected.id).indexOf('frame_') === 0 || String(selected.id).indexOf('FRAME_') === 0 || customUrl));
+
+  const vfContainer = document.getElementById('viewfinderFrameContainer');
+  if (isCustomFrame && customUrl) {
+    if (customImgEl) {
+      customImgEl.onload = () => {
+        if (vfContainer && customImgEl.naturalWidth && customImgEl.naturalHeight) {
+          vfContainer.style.aspectRatio = `${customImgEl.naturalWidth} / ${customImgEl.naturalHeight}`;
+        }
+      };
+      customImgEl.onerror = () => {
+        if (customUrl && customUrl.includes('googleusercontent.com/d/')) {
+          const fileId = customUrl.split('/d/')[1];
+          if (fileId) {
+            customImgEl.onerror = null;
+            customImgEl.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
+          }
+        }
+      };
+      customImgEl.src = customUrl;
+      customImgEl.classList.remove('hidden');
+    }
+    if (builtInOverlayEl) {
+      builtInOverlayEl.classList.add('hidden'); // Sembunyikan overlay teks built-in sepenuhnya saat custom PNG aktif
+    }
+    preloadFrameImage(customUrl).then(img => {
+      if (img) {
+        STATE.customFrameImgObj = img;
+        if (vfContainer && img.naturalWidth && img.naturalHeight) {
+          vfContainer.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        }
+      }
+    });
+  } else {
+    STATE.customFrameImgObj = null;
+    if (vfContainer) vfContainer.style.aspectRatio = '4 / 5';
+    if (customImgEl) customImgEl.classList.add('hidden');
+    if (builtInOverlayEl) {
+      if (selected && selected.id === 'NONE') {
+        builtInOverlayEl.classList.add('hidden');
+      } else {
+        builtInOverlayEl.classList.remove('hidden');
+        const tl = document.getElementById('vfFrameTopLeft');
+        const bt = document.getElementById('vfFrameBottomTitle');
+        const bh = document.getElementById('vfFrameBottomHashtag');
+        const dt = document.getElementById('vfFrameDate');
+        if (tl) tl.textContent = `SNAPEVENT ${STATE.activeFilter}`;
+        if (bt) {
+          bt.textContent = STATE.activeEvent ? STATE.activeEvent.namaEvent : 'Our Event';
+          if (selected && selected.id === 'POLAROID') {
+            bt.className = 'font-hand font-bold text-base text-zinc-100 drop-shadow';
+          } else if (selected && selected.id === 'MINIMAL') {
+            bt.className = 'font-sans font-bold text-xs uppercase tracking-wider text-white drop-shadow';
+          } else {
+            bt.className = 'font-serif italic text-sm text-amber-200 drop-shadow';
+          }
+        }
+        if (bh) bh.textContent = STATE.activeEvent ? (STATE.activeEvent.hashtagEvent || '#SnapEvent') : '#SnapEvent';
+        if (dt) dt.textContent = STATE.activeEvent ? (STATE.activeEvent.tanggalEvent || '') : '';
+      }
+    }
+  }
+}
+
+function cycleNextFrame() {
+  const frames = getAvailableFrames();
+  if (frames.length <= 1) {
+    showToast(`Bingkai seragam terkunci: ${frames[0]?.name || 'Resmi Acara'}`, 'info');
+    return;
+  }
+  let idx = frames.findIndex(f => f.id === STATE.activeFrame);
   if (idx === -1) idx = 0;
   const nextIdx = (idx + 1) % frames.length;
   applyActiveFrame(frames[nextIdx].id);
