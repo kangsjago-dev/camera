@@ -108,12 +108,13 @@ function getResolvedEventId(idOrSlug) {
   if (/^EVT-\d+/i.test(target)) return target;
 
   const lower = target.toLowerCase();
+  const cleanTargetSlug = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const allKnown = STATE.events || [];
   const ev = allKnown.find(e => 
     e && (
       e.idEvent === target || 
-      (e.slugEvent && e.slugEvent.toLowerCase() === lower) ||
-      (e.namaEvent && e.namaEvent.toLowerCase() === lower)
+      (e.slugEvent && (e.slugEvent.toLowerCase() === lower || e.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (e.namaEvent && (e.namaEvent.toLowerCase() === lower || e.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
     )
   );
   if (ev && ev.idEvent) return ev.idEvent;
@@ -711,7 +712,50 @@ function formatDateForInput(dateVal) {
   return '';
 }
 
-function getEventShareUrl(eventId) {
+function normalizeDriveDirectUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let url = rawUrl.trim();
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+
+  // Ekstraksi Google Drive file ID
+  // Pola 1: /file/d/ID/view atau /file/d/ID
+  const matchFileD = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (matchFileD && matchFileD[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchFileD[1]}`;
+  }
+
+  // Pola 2: id=ID atau ?id=ID
+  const matchIdParam = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (matchIdParam && matchIdParam[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchIdParam[1]}`;
+  }
+
+  // Pola 3: drive.google.com/open?id=ID
+  const matchOpenId = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (matchOpenId && matchOpenId[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchOpenId[1]}`;
+  }
+
+  // Pola 4: uc?id=ID atau uc?export=view&id=ID
+  const matchUc = url.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+  if (matchUc && matchUc[1]) {
+    return `https://lh3.googleusercontent.com/d/${matchUc[1]}`;
+  }
+
+  // Pola 5: Raw Drive file ID 25+ karakter alfanumerik
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(url)) {
+    return `https://lh3.googleusercontent.com/d/${url}`;
+  }
+
+  return url;
+}
+
+function normalizeFrameTargetUrl(rawUrl) {
+  return normalizeDriveDirectUrl(rawUrl);
+}
+
+function getEventShareUrl(eventOrId) {
   let baseUrl = 'https://www.runway.my.id/cam';
   try {
     const loc = window.location;
@@ -720,16 +764,45 @@ function getEventShareUrl(eventId) {
     }
   } catch (e) {}
 
-  const targetId = eventId || STATE.activeEventId || '';
+  let ev = null;
+  let targetId = '';
+  if (eventOrId && typeof eventOrId === 'object') {
+    ev = eventOrId;
+    targetId = ev.idEvent || ev.slugEvent || ev.id || '';
+  } else if (eventOrId) {
+    targetId = String(eventOrId).trim();
+  } else {
+    ev = STATE.activeEvent;
+    targetId = STATE.activeEventId || (ev && (ev.idEvent || ev.slugEvent)) || '';
+  }
+
+  if (!ev && targetId) {
+    const lower = targetId.toLowerCase();
+    const cleanTargetSlug = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    ev = (STATE.events && STATE.events.find(e => e && (
+      e.idEvent === targetId || 
+      (e.slugEvent && (e.slugEvent.toLowerCase() === lower || e.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (e.namaEvent && (e.namaEvent.toLowerCase() === lower || e.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
+    ))) || 
+    (STATE.activeEvent && (
+      STATE.activeEvent.idEvent === targetId || 
+      (STATE.activeEvent.slugEvent && (STATE.activeEvent.slugEvent.toLowerCase() === lower || STATE.activeEvent.slugEvent.toLowerCase() === cleanTargetSlug)) ||
+      (STATE.activeEvent.namaEvent && (STATE.activeEvent.namaEvent.toLowerCase() === lower || STATE.activeEvent.namaEvent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === cleanTargetSlug))
+    ) ? STATE.activeEvent : null);
+  }
+
   let eventSlugOrName = '';
-  if (targetId) {
-    const ev = (STATE.events && STATE.events.find(e => e && (e.idEvent === targetId || e.slugEvent === targetId))) || 
-               (STATE.activeEvent && (STATE.activeEvent.idEvent === targetId || STATE.activeEvent.slugEvent === targetId) ? STATE.activeEvent : null);
-    if (ev) {
-      eventSlugOrName = ev.slugEvent || (ev.namaEvent ? ev.namaEvent.toLowerCase().replace(/[^a-z0-9]/g, '-') : '') || ev.idEvent || targetId;
-    } else {
-      eventSlugOrName = targetId;
+  if (ev) {
+    if (ev.slugEvent && ev.slugEvent.trim()) {
+      eventSlugOrName = ev.slugEvent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    } else if (ev.namaEvent && ev.namaEvent.trim()) {
+      eventSlugOrName = ev.namaEvent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    } else if (ev.idEvent) {
+      eventSlugOrName = ev.idEvent;
     }
+  }
+  if (!eventSlugOrName && targetId) {
+    eventSlugOrName = targetId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || targetId;
   }
 
   if (eventSlugOrName) {
@@ -758,15 +831,117 @@ function getQrImageUrl(text, size = 300) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=H&margin=8&data=${encodeURIComponent(text)}`;
 }
 
+// Renderer Lencana Tengah QR Code (Logo Kustom Google Drive atau Insignia Kamera Emas SnapEvent)
+function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
+  const logoBoxSize = Math.round(size * 0.24);
+  const boxX = (size - logoBoxSize) / 2;
+  const boxY = (size - logoBoxSize) / 2;
+  const radius = Math.round(logoBoxSize * 0.24);
+
+  // 1. Gambar latar badge squircle putih bersih dengan bayangan lembut
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+  ctx.shadowBlur = Math.max(4, Math.round(size * 0.018));
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.006));
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(boxX, boxY, logoBoxSize, logoBoxSize, radius);
+  } else {
+    ctx.rect(boxX, boxY, logoBoxSize, logoBoxSize);
+  }
+  ctx.fill();
+
+  // 2. Garis tepi emas mewah (#D4AF37)
+  ctx.lineWidth = Math.max(2, Math.round(size * 0.008));
+  ctx.strokeStyle = '#D4AF37';
+  ctx.stroke();
+  ctx.restore();
+
+  // 3. Konten Badge: Gambar Logo Kustom ATAU Insignia Kamera Emas SnapEvent
+  if (logoImgObj && logoImgObj.naturalWidth > 0) {
+    const padding = Math.max(2, Math.round(logoBoxSize * 0.12));
+    const innerSize = logoBoxSize - (padding * 2);
+    const innerX = boxX + padding;
+    const innerY = boxY + padding;
+
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(innerX, innerY, innerSize, innerSize, Math.max(3, radius - 3));
+    } else {
+      ctx.rect(innerX, innerY, innerSize, innerSize);
+    }
+    ctx.clip();
+    ctx.drawImage(logoImgObj, innerX, innerY, innerSize, innerSize);
+    ctx.restore();
+  } else {
+    // Insignia Kamera Emas SnapEvent Vektor (Mewah, Elegan, Tajam)
+    ctx.save();
+    const cx = size / 2;
+    const cy = size / 2;
+    const s = logoBoxSize * 0.52; // Skala ikon kamera
+    const left = cx - s / 2;
+    const top = cy - s / 2.3;
+    const w = s;
+    const h = s * 0.72;
+    const r = s * 0.14;
+
+    // Body kamera (Gradien Emas Mewah)
+    const goldGrad = ctx.createLinearGradient(left, top, left + w, top + h);
+    goldGrad.addColorStop(0, '#F3E5AB');
+    goldGrad.addColorStop(0.5, '#D4AF37');
+    goldGrad.addColorStop(1, '#AA7C11');
+
+    ctx.fillStyle = goldGrad;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(left, top, w, h, r);
+    } else {
+      ctx.rect(left, top, w, h);
+    }
+    ctx.fill();
+
+    // Top flash bump
+    const bumpW = w * 0.32;
+    const bumpH = h * 0.22;
+    const bumpX = cx - bumpW / 2;
+    const bumpY = top - bumpH * 0.7;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(bumpX, bumpY, bumpW, bumpH, r * 0.6);
+    } else {
+      ctx.rect(bumpX, bumpY, bumpW, bumpH);
+    }
+    ctx.fill();
+
+    // Lensa lingkaran kamera (Background Gelap + Ring Emas)
+    ctx.fillStyle = '#14141C';
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.52, h * 0.34, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineWidth = Math.max(1.5, Math.round(s * 0.08));
+    ctx.strokeStyle = '#F3E5AB';
+    ctx.stroke();
+
+    // Titik pupil lensa
+    ctx.fillStyle = '#D4AF37';
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.52, h * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
 // Engine Komposit Gambar QR Code dengan Logo di Titik Tengah (Error-Correction H 30% Redundancy)
 async function generateQrWithLogo(text, size = 300, logoUrl = '') {
   const qrApiUrl = getQrImageUrl(text, size);
   const rawLogo = logoUrl || STATE.appLogoUrl || localStorage.getItem('snapevent_app_logo_url') || '';
   const finalLogoUrl = rawLogo ? normalizeDriveDirectUrl(rawLogo) : '';
-
-  if (!finalLogoUrl) {
-    return qrApiUrl;
-  }
 
   return new Promise((resolve) => {
     const qrImg = new Image();
@@ -779,63 +954,29 @@ async function generateQrWithLogo(text, size = 300, logoUrl = '') {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(qrImg, 0, 0, size, size);
 
-        const logoImg = new Image();
-        logoImg.crossOrigin = 'anonymous';
-        logoImg.onload = () => {
-          try {
-            // Ukuran logo tengah: 23-25% dari total dimensi QR code
-            const logoBoxSize = Math.round(size * 0.24);
-            const boxX = (size - logoBoxSize) / 2;
-            const boxY = (size - logoBoxSize) / 2;
-            const radius = Math.round(logoBoxSize * 0.22);
-
-            // 1. Gambar latar badge putih dengan bayangan lembut
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
-            ctx.shadowBlur = Math.max(4, Math.round(size * 0.015));
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.005));
-
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            if (ctx.roundRect) {
-              ctx.roundRect(boxX, boxY, logoBoxSize, logoBoxSize, radius);
-            } else {
-              ctx.rect(boxX, boxY, logoBoxSize, logoBoxSize);
+        if (finalLogoUrl) {
+          const logoImg = new Image();
+          logoImg.crossOrigin = 'anonymous';
+          logoImg.onload = () => {
+            try {
+              drawCenterLogoBadge(ctx, size, logoImg);
+              resolve(canvas.toDataURL('image/png'));
+            } catch (errLogo) {
+              console.warn("QR logo composite canvas error:", errLogo);
+              drawCenterLogoBadge(ctx, size, null);
+              resolve(canvas.toDataURL('image/png'));
             }
-            ctx.fill();
-
-            // 2. Garis tepi emas mewah (#D4AF37)
-            ctx.lineWidth = Math.max(2, Math.round(size * 0.007));
-            ctx.strokeStyle = '#D4AF37';
-            ctx.stroke();
-            ctx.restore();
-
-            // 3. Gambar logo di dalam badge dengan padding lembut
-            const padding = Math.max(2, Math.round(logoBoxSize * 0.12));
-            const innerSize = logoBoxSize - (padding * 2);
-            const innerX = boxX + padding;
-            const innerY = boxY + padding;
-
-            ctx.save();
-            ctx.beginPath();
-            if (ctx.roundRect) {
-              ctx.roundRect(innerX, innerY, innerSize, innerSize, Math.max(3, radius - 3));
-            } else {
-              ctx.rect(innerX, innerY, innerSize, innerSize);
-            }
-            ctx.clip();
-            ctx.drawImage(logoImg, innerX, innerY, innerSize, innerSize);
-            ctx.restore();
-
+          };
+          logoImg.onerror = () => {
+            drawCenterLogoBadge(ctx, size, null);
             resolve(canvas.toDataURL('image/png'));
-          } catch (errLogo) {
-            console.warn("QR logo composite canvas error:", errLogo);
-            resolve(qrApiUrl);
-          }
-        };
-        logoImg.onerror = () => resolve(qrApiUrl);
-        logoImg.src = finalLogoUrl;
+          };
+          logoImg.src = finalLogoUrl;
+        } else {
+          // Bila belum ada logo kustom dari Google Drive, gunakan Insignia Kamera Emas SnapEvent
+          drawCenterLogoBadge(ctx, size, null);
+          resolve(canvas.toDataURL('image/png'));
+        }
       } catch (errCanvas) {
         console.warn("QR canvas draw error:", errCanvas);
         resolve(qrApiUrl);
@@ -2332,7 +2473,7 @@ function applyEventToUI() {
   // Sinkronisasi Gambar QR Code di Layar Selamat Datang
   const welcomeQrImg = document.getElementById('welcomeQrImg');
   if (welcomeQrImg) {
-    const eventUrl = getEventShareUrl(ev.idEvent);
+    const eventUrl = getEventShareUrl(ev);
     setQrWithLogoToElement(welcomeQrImg, eventUrl, 300);
   }
 
@@ -4511,7 +4652,7 @@ function openShareQrModal(eventObj) {
   if (titleEl) titleEl.textContent = ev.namaEvent || "Acara SnapEvent";
   if (hashtagEl) hashtagEl.textContent = ev.hashtagEvent || "#SnapEvent";
 
-  const eventUrl = getEventShareUrl(ev.idEvent);
+  const eventUrl = getEventShareUrl(ev);
   if (urlInput) urlInput.value = eventUrl;
   if (imgEl) {
     setQrWithLogoToElement(imgEl, eventUrl, 350);

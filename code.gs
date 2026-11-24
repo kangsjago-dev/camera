@@ -553,10 +553,14 @@ function handleGetEventDetails(eventId, guestId) {
   let matchedRow = null;
   const rows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 17).getDisplayValues();
 
-  // 1. Coba cari berdasarkan eventId (ID atau Slug)
+  // 1. Coba cari berdasarkan eventId (ID, Slug, atau Nama Acara)
   if (eventId && eventId !== "ACTIVE" && eventId !== "DEFAULT") {
+    const targetSlug = createSlug(eventId);
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][COL_EVENT.ID] === eventId || rows[i][COL_EVENT.SLUG] === eventId) {
+      if (rows[i][COL_EVENT.ID] === eventId || 
+          rows[i][COL_EVENT.SLUG] === eventId || 
+          createSlug(rows[i][COL_EVENT.SLUG]) === targetSlug || 
+          createSlug(rows[i][COL_EVENT.NAMA]) === targetSlug) {
         matchedRow = rows[i];
         break;
       }
