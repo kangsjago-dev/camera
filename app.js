@@ -2163,6 +2163,7 @@ async function loadGallery() {
 
   // Indikator visual loading non-intrusif jika galeri masih kosong
   if ((!STATE.photos || STATE.photos.length === 0) && grid && !grid.innerHTML.trim()) {
+    if (empty) empty.classList.add('hidden');
     grid.innerHTML = `
       <div class="col-span-2 sm:col-span-3 md:col-span-4 py-12 text-center">
         <div class="w-8 h-8 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -2208,29 +2209,13 @@ async function loadGallery() {
         if (deletedSet.has(String(p.idFoto))) return false;
         if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
         if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
+        // Jika server sudah memiliki foto ini, biarkan entri server yang menjadi sumber data
         if (serverIds.has(p.idFoto)) return false;
         if (p.gdriveFileId && serverFileIds.has(p.gdriveFileId)) return false;
         if (p.driveFileId && serverFileIds.has(p.driveFileId)) return false;
 
-        // 1. Pertahankan jika proses upload aktif sedang berjalan di memori
-        if (IN_FLIGHT_PHOTO_UPLOADS.has(p.idFoto)) return true;
-        // 2. Pertahankan jika foto diunggah dalam kurun 5 menit terakhir
-        if (p.uploadStartedAt && (now - p.uploadStartedAt) < 300000) return true;
-        // 3. Atau jika foto offline baru saja diambil
-        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('data:')) {
-          const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
-          if (tsMatch && tsMatch[1]) {
-            return (now - parseInt(tsMatch[1], 10)) < 120000;
-          }
-          return true;
-        }
-        // 4. Atau jika foto memiliki URL cloud valid dan baru saja dibuat
-        if (p.gdriveViewUrl && p.gdriveViewUrl.startsWith('https://')) {
-          const tsMatch = String(p.idFoto).match(/FTO-(\d{10,13})/);
-          if (tsMatch && tsMatch[1]) {
-            return (now - parseInt(tsMatch[1], 10)) < 300000;
-          }
-        }
+        // Foto lokal yang valid (memiliki gambar base64 atau URL Drive) selalu dipertahankan!
+        if (p.gdriveViewUrl || p.imageBase64 || p.imageUrl) return true;
         return false;
       });
 
@@ -2286,8 +2271,10 @@ async function loadGallery() {
         if (!STATE.votedPhotoIds.includes(vid)) STATE.votedPhotoIds.push(vid);
       });
 
-      STATE.photos = finalPhotos;
-      saveEventPhotos(targetId);
+      if (finalPhotos.length > 0 || (res.photos && res.photos.length > 0)) {
+        STATE.photos = finalPhotos;
+        saveEventPhotos(targetId);
+      }
       renderGallery();
       if (!document.getElementById('adminTabGallery')?.classList.contains('hidden')) {
         renderAdminGallery();
@@ -3677,10 +3664,13 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
         cameraStyle: payload.cameraStyle,
         frameStyle: payload.frameStyle,
         gdriveViewUrl: res.viewUrl || (res.fileId ? `https://lh3.googleusercontent.com/d/${res.fileId}` : payload.imageBase64),
+        gdriveFileId: res.fileId || '',
+        driveFileId: res.fileId || '',
         totalLikes: 0,
         categoryLikes: {},
         isFeatured: false,
         isUploading: false,
+        uploadStartedAt: Date.now(),
         createdAt: "Baru Saja"
       };
 

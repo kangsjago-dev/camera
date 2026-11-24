@@ -280,6 +280,24 @@ function doGet(e) {
       });
     }
 
+    if (action === "checkDrive") {
+      try {
+        const root = DriveApp.getRootFolder();
+        return createJsonResponse({
+          status: "success",
+          driveAuthorized: true,
+          message: "Layanan Google Drive (DriveApp) aktif dan terotorisasi penuh.",
+          rootName: root.getName()
+        });
+      } catch (e) {
+        return createJsonResponse({
+          status: "error",
+          driveAuthorized: false,
+          message: "Akses Google Drive belum diotorisasi: " + e.message
+        });
+      }
+    }
+
     if (action === "getInitialData" || action === "getAllEvents" || action === "adminGetEvents") {
       return createJsonResponse(handleGetAllEvents());
     }
@@ -867,7 +885,16 @@ function handleGetGallery(eventId, guestId) {
     for (let j = 0; j < fRows.length; j++) {
       const fr = fRows[j];
       const rowEventId = fr[COL_FOTO.ID_EVENT];
-      if (rowEventId === eventId || rowEventId === canonicalEventId || rowEventId === eventSlug) {
+      const rowEvLower = String(rowEventId || "").trim().toLowerCase();
+      const matchEv = (
+        rowEventId === eventId || 
+        rowEventId === canonicalEventId || 
+        rowEventId === eventSlug ||
+        rowEvLower === String(eventId || "").trim().toLowerCase() ||
+        rowEvLower === String(canonicalEventId || "").trim().toLowerCase() ||
+        rowEvLower === String(eventSlug || "").trim().toLowerCase()
+      );
+      if (matchEv) {
         const fileId = String(fr[COL_FOTO.GDRIVE_FILE_ID] || "").trim();
         const viewUrl = String(fr[COL_FOTO.GDRIVE_VIEW_URL] || "").trim();
 
