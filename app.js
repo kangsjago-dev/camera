@@ -1276,21 +1276,16 @@ async function initApp() {
   applyEventToUI();
 
   // 3. SEGERA TAMPILKAN HALAMAN AKTIF TANPA MENUNGGU JARINGAN INTERNET (< 20ms)
-  // Persistensi halaman & tab saat refresh (F5): Pertahankan posisi terakhir pengguna
-  const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
-  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
-
-  if (savedView === 'viewAdmin' && isAdmin) {
+  if (sessionStorage.getItem('snapevent_admin_session') === 'true') {
     showView('viewAdmin');
-    renderAdminDashboard();
-    const savedAdminTab = sessionStorage.getItem('snapevent_current_admintab') || 'events';
-    switchAdminTab(savedAdminTab);
-  } else if (!isAdmin && (!STATE.guestNama || !STATE.guestNama.trim())) {
+    renderAdminDashboard(); // Kartu 5 Event, 13 Foto, 8 Suara langsung tampil tanpa skeleton delay!
+  } else if (!STATE.guestNama || !STATE.guestNama.trim()) {
     showView('viewWelcome');
   } else {
+    const savedView = sessionStorage.getItem('snapevent_current_view') || 'viewCamera';
     showView(savedView);
     if (savedView === 'viewGallery') {
-      renderGallery();
+      renderGallery(); // Langsung render foto cache lokal seketika!
     }
   }
 
@@ -2428,10 +2423,9 @@ function applyEventToUI() {
 
 // --- 4. VIEW ROUTER & NAVIGATION ---
 function showView(viewId) {
-  const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
-  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu (kecuali Admin yang sedang login)
+  // GERBANG WAJIB IDENTITAS TAMU: Sebelum menggunakan kamera wajib isi nama dulu!
   if (viewId === 'viewCamera') {
-    if (!isAdmin && (!STATE.guestNama || !STATE.guestNama.trim())) {
+    if (!STATE.guestNama || !STATE.guestNama.trim()) {
       showToast("Silakan masukkan nama panggilan Anda terlebih dahulu untuk membuka kamera!", "warning");
       showView('viewWelcome');
       const inputEl = document.getElementById('inputGuestName');
@@ -3127,8 +3121,30 @@ async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     if (dataUrl) {
       const frameImg = await preloadFrameImage(dataUrl);
       if (frameImg && (frameImg.naturalWidth > 0 || frameImg.width > 0)) {
-        // Gambar seluruh bingkai kustom pas memenuhi canvas (0, 0, w, h) tanpa pemotongan / zero-crop
-        ctx.drawImage(frameImg, 0, 0, w, h);
+        // Jaga proporsi asli bingkai kustom agar tidak gepeng/terdistorsi
+        const fw = frameImg.naturalWidth || frameImg.width;
+        const fh = frameImg.naturalHeight || frameImg.height;
+        if (fw && fh) {
+          const fRatio = fw / fh;
+          const canvasRatio = w / h;
+          if (Math.abs(fRatio - canvasRatio) < 0.05) {
+            ctx.drawImage(frameImg, 0, 0, w, h);
+          } else {
+            let drawW = w;
+            let drawH = w / fRatio;
+            let drawX = 0;
+            let drawY = (h - drawH) / 2;
+            if (drawH < h) {
+              drawH = h;
+              drawW = h * fRatio;
+              drawX = (w - drawW) / 2;
+              drawY = 0;
+            }
+            ctx.drawImage(frameImg, drawX, drawY, drawW, drawH);
+          }
+        } else {
+          ctx.drawImage(frameImg, 0, 0, w, h);
+        }
         return;
       }
     }
@@ -3140,8 +3156,29 @@ async function renderCustomFrameOverlay(ctx, w, h, frameStyle) {
     }
 
     if (fallbackImg && (fallbackImg.complete || fallbackImg.naturalWidth > 0)) {
-      // Gambar seluruh bingkai kustom pas memenuhi canvas (0, 0, w, h) tanpa pemotongan / zero-crop
-      ctx.drawImage(fallbackImg, 0, 0, w, h);
+      const fw = fallbackImg.naturalWidth || fallbackImg.width;
+      const fh = fallbackImg.naturalHeight || fallbackImg.height;
+      if (fw && fh) {
+        const fRatio = fw / fh;
+        const canvasRatio = w / h;
+        if (Math.abs(fRatio - canvasRatio) < 0.05) {
+          ctx.drawImage(fallbackImg, 0, 0, w, h);
+        } else {
+          let drawW = w;
+          let drawH = w / fRatio;
+          let drawX = 0;
+          let drawY = (h - drawH) / 2;
+          if (drawH < h) {
+            drawH = h;
+            drawW = h * fRatio;
+            drawX = (w - drawW) / 2;
+            drawY = 0;
+          }
+          ctx.drawImage(fallbackImg, drawX, drawY, drawW, drawH);
+        }
+      } else {
+        ctx.drawImage(fallbackImg, 0, 0, w, h);
+      }
       return;
     }
 
@@ -4163,21 +4200,7 @@ function openPhotoZoom(photo) {
   document.getElementById('modalZoomPhoto').classList.remove('hidden');
 }
 
-// --- 9. LIVE SLIDESHOW ENGINE (PROYEKTOR PANGGUNG) ---
-function getEligibleSlideshowPhotos() {
-  const deletedSet = getDeletedPhotosSet(STATE.activeEventId);
-  const hiddenSet = getHiddenPhotosSet(STATE.activeEventId);
-  return (Array.isArray(STATE.photos) ? STATE.photos : []).filter(p => {
-    if (!p) return false;
-    if (deletedSet.has(String(p.idFoto))) return false;
-    if (p.gdriveFileId && deletedSet.has(String(p.gdriveFileId))) return false;
-    if (p.driveFileId && deletedSet.has(String(p.driveFileId))) return false;
-    if (hiddenSet.has(String(p.idFoto))) return false;
-    if (p.isVisible === false || p.photoStatus === 'SEMBUNYI') return false;
-    return true;
-  });
-}
-
+// --- 9. LIVE SLIDESHOW ENGINE ---
 function openSlideshow() {
   const isAdmin = (sessionStorage.getItem('snapevent_admin_session') === 'true');
   const isLocked = !isAdmin && STATE.activeEvent && (STATE.activeEvent.isRevealed === false || (STATE.activeEvent.revealMode === 'SETELAH' && !STATE.activeEvent.isRevealed));
@@ -4205,8 +4228,7 @@ function openSlideshow() {
     qrImg.src = getQrImageUrl(eventUrl, 500);
   }
 
-  const eligiblePhotos = getEligibleSlideshowPhotos();
-  if (eligiblePhotos.length === 0) {
+  if (STATE.photos.length === 0) {
     document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
     document.getElementById('slideshowImg').classList.add('hidden');
     const backdrop = document.getElementById('slideshowBackdropImg');
@@ -4224,25 +4246,16 @@ function openSlideshow() {
 
   if (STATE.slideshowTimer) clearInterval(STATE.slideshowTimer);
   STATE.slideshowTimer = setInterval(() => {
-    const currentEligible = getEligibleSlideshowPhotos();
-    if (currentEligible.length === 0) {
-      document.getElementById('slideshowEmptyMsg').classList.remove('hidden');
-      document.getElementById('slideshowImg').classList.add('hidden');
-      return;
-    }
-    STATE.slideshowIndex = (STATE.slideshowIndex + 1) % currentEligible.length;
+    STATE.slideshowIndex = (STATE.slideshowIndex + 1) % STATE.photos.length;
     showSlideshowPhoto();
   }, 6000);
 }
 
 function showSlideshowPhoto() {
-  const eligiblePhotos = getEligibleSlideshowPhotos();
-  if (eligiblePhotos.length === 0) return;
+  if (STATE.photos.length === 0) return;
   const img = document.getElementById('slideshowImg');
   const backdrop = document.getElementById('slideshowBackdropImg');
-  if (STATE.slideshowIndex >= eligiblePhotos.length) STATE.slideshowIndex = 0;
-  const p = eligiblePhotos[STATE.slideshowIndex];
-  if (!p) return;
+  const p = STATE.photos[STATE.slideshowIndex];
 
   img.style.opacity = '0';
   if (backdrop) backdrop.style.opacity = '0';
@@ -5332,7 +5345,6 @@ function renderCategoryInputRows(cats) {
 }
 
 function switchAdminTab(tabName) {
-  sessionStorage.setItem('snapevent_current_admintab', tabName);
   document.querySelectorAll('.adm-tab').forEach(b => {
     b.classList.remove('bg-brand-gold', 'text-black');
     b.classList.add('bg-white/5', 'text-zinc-300');
@@ -6010,55 +6022,6 @@ function bindEvents() {
     }
   });
 
-  // Tombol Aksi di Samping QR Code Halaman Sambutan (viewWelcome: Share, Download, Copy Link)
-  document.getElementById('btnWelcomeShareLink')?.addEventListener('click', async () => {
-    const shareUrl = getEventShareUrl(STATE.activeEventId);
-    const eventName = STATE.activeEvent?.namaEvent || STATE.appTitle || "SnapEvent";
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: eventName,
-          text: `Ayo abadikan momen di ${eventName}! Buka kamera digital sekali pakai di link ini:`,
-          url: shareUrl
-        });
-        showToast("✅ Berhasil membagikan link acara!", "success");
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
-    } catch (e) {
-      prompt("Salin link acara ini:", shareUrl);
-    }
-  });
-
-  document.getElementById('btnWelcomeDownloadQr')?.addEventListener('click', () => {
-    const shareUrl = getEventShareUrl(STATE.activeEventId);
-    const qrDownloadUrl = getQrImageUrl(shareUrl, 1000);
-    const eventName = (STATE.activeEvent?.namaEvent || "acara").replace(/[^a-zA-Z0-9_-]/g, '_');
-    const a = document.createElement('a');
-    a.href = qrDownloadUrl;
-    a.download = `QR-Code-${eventName}.png`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast("⬇️ Gambar QR Code resolusi tinggi siap diunduh!", "success");
-  });
-
-  document.getElementById('btnWelcomeCopyQrLink')?.addEventListener('click', async () => {
-    const shareUrl = getEventShareUrl(STATE.activeEventId);
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      showToast("📋 Link acara berhasil disalin ke clipboard!", "success");
-    } catch (e) {
-      prompt("Salin link acara ini:", shareUrl);
-    }
-  });
-
   // Switcher Radio Mode Kebijakan Bingkai (Multi-Frame vs Single Lock) di Panel Admin
   document.querySelectorAll('input[name="frameLockModeRadio"]').forEach(radio => {
     radio.addEventListener('change', (e) => {
@@ -6498,37 +6461,6 @@ function bindEvents() {
     document.getElementById('modalAdminPin').classList.add('hidden');
   });
   document.getElementById('btnSubmitAdminPin').addEventListener('click', verifyAdminLogin);
-
-  // Akses Tombol Enter pada Form Login Admin
-  const formAdminLogin = document.getElementById('formAdminLogin');
-  if (formAdminLogin) {
-    formAdminLogin.addEventListener('submit', (e) => {
-      e.preventDefault();
-      verifyAdminLogin();
-    });
-  }
-  document.getElementById('inputAdminUser')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      verifyAdminLogin();
-    }
-  });
-  document.getElementById('inputAdminPass')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      verifyAdminLogin();
-    }
-  });
-
-  // Tombol Pintas Akses Live Cam & Galeri bagi Admin yang Sedang Login
-  document.getElementById('btnAdminGoCamera')?.addEventListener('click', () => {
-    showView('viewCamera');
-  });
-  document.getElementById('btnAdminGoGallery')?.addEventListener('click', () => {
-    showView('viewGallery');
-    loadGallery();
-  });
-
   document.getElementById('btnAdminLogout').addEventListener('click', () => {
     sessionStorage.removeItem('snapevent_admin_session');
     showView('viewCamera');
