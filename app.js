@@ -1081,11 +1081,12 @@ function getAvailableFrames() {
 
   const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
   if (activeCustomData && !allFrames.some(f => f.dataUrl === activeCustomData)) {
-    let eventFrameName = STATE.activeEvent?.customFrameName || 'Bingkai Acara';
-    if (eventFrameName.length > 20) {
-      eventFrameName = 'Bingkai Acara';
+    let eventFrameName = STATE.activeEvent?.customFrameName || 'Bingkai Resmi Acara';
+    if (eventFrameName.length > 25) {
+      eventFrameName = 'Bingkai Resmi Acara';
     }
-    allFrames.push({
+    // Tempatkan custom frame acara di index 0 (paling atas) agar otomatis menjadi default
+    allFrames.unshift({
       id: 'CUSTOM_EVENT',
       name: `🖼️ ${eventFrameName}`,
       type: 'custom',
@@ -2495,20 +2496,22 @@ function applyEventToUI() {
 
   // Set bingkai aktif sesuai kebijakan frame acara
   const availFrames = getAvailableFrames();
+  const activeCustomData = ev.customFrameData || ev.customFrameUrl;
   const isSingle = (ev.frameLockMode === 'single' || availFrames.length <= 1);
-  let targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
+  let targetFrame = (activeCustomData ? 'CUSTOM_EVENT' : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO'));
 
   if (isSingle) {
-    const lockedFrame = ev.singleLockedFrame || targetFrame;
+    const lockedFrame = ev.singleLockedFrame || (activeCustomData ? 'CUSTOM_EVENT' : targetFrame);
     const match = availFrames.find(f => f.id === lockedFrame || f.id === 'CUSTOM_EVENT' || String(f.id).startsWith('frame_') || String(f.id).startsWith('FRAME_')) || availFrames[0];
-    targetFrame = match ? match.id : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
+    targetFrame = match ? match.id : (activeCustomData ? 'CUSTOM_EVENT' : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO'));
   } else {
     // Multi-frame mode: Jika tamu sudah memilih manual dalam sesi ini, pertahankan pilihannya
     if (STATE.userHasSelectedFrame && availFrames.some(f => f.id === STATE.activeFrame)) {
       targetFrame = STATE.activeFrame;
     } else {
       // Prioritaskan bingkai kustom resmi pertama yang diatur oleh Admin
-      targetFrame = availFrames[0] ? availFrames[0].id : 'GOLD_DECO';
+      const customEventFrame = availFrames.find(f => f.id === 'CUSTOM_EVENT' || f.type === 'custom');
+      targetFrame = customEventFrame ? customEventFrame.id : (availFrames[0] ? availFrames[0].id : 'GOLD_DECO');
     }
   }
   STATE.activeFrame = targetFrame;
@@ -2815,7 +2818,7 @@ function applyActiveFrame(frameId) {
   const builtInOverlayEl = document.getElementById('viewfinderFrameOverlay');
   
   let customUrl = (selected && selected.dataUrl) ? selected.dataUrl : null;
-  if (!customUrl) {
+  if (!customUrl && (selected?.id === 'CUSTOM_EVENT' || selected?.type === 'custom' || String(selected?.id).startsWith('frame_') || String(selected?.id).startsWith('FRAME_'))) {
     const cf = Array.isArray(STATE.customFrames) ? STATE.customFrames.find(f => f.id === selected?.id) : null;
     customUrl = cf?.dataUrl || STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl || STATE.tempCustomFrameData;
   }
@@ -3164,9 +3167,20 @@ async function processPhotoWithFrameAndFilter(imgSource, overrideFrame) {
   STATE.rawCapturedImageObj = imgSource;
 
   // JANGAN DI UBAH UKURAN FRAMENYA: Ambil resolusi asli bingkai kustom jika sedang aktif
-  let frameToUse = overrideFrame || STATE.activeFrame || 'GOLD_DECO';
+  const customImgEl = document.getElementById('vfCustomFrameImg');
+  const isVfCustomActive = customImgEl && !customImgEl.classList.contains('hidden') && customImgEl.src;
+  const activeCustomData = STATE.activeEvent?.customFrameData || STATE.activeEvent?.customFrameUrl;
+
+  let frameToUse = overrideFrame;
+  if (!frameToUse) {
+    if (isVfCustomActive || STATE.customFrameImgObj || (activeCustomData && (STATE.activeFrame === 'CUSTOM_EVENT' || STATE.activeFrame === 'CUSTOM'))) {
+      frameToUse = 'CUSTOM_EVENT';
+    } else {
+      frameToUse = STATE.activeFrame || (activeCustomData ? 'CUSTOM_EVENT' : 'GOLD_DECO');
+    }
+  }
   if (STATE.activeEvent && STATE.activeEvent.frameLockMode === 'single') {
-    frameToUse = STATE.activeEvent.singleLockedFrame || (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'GOLD_DECO';
+    frameToUse = STATE.activeEvent.singleLockedFrame || (activeCustomData ? 'CUSTOM_EVENT' : (Array.isArray(STATE.activeEvent.activeFrames) && STATE.activeEvent.activeFrames[0]) || 'CUSTOM_EVENT');
   }
   STATE.activeFrame = frameToUse;
 
@@ -3685,12 +3699,37 @@ async function uploadPhotoInBackground(payload, tempPhotoId) {
       setTimeout(() => { loadGallery(); }, 600);
     } else if (res && res.status === 'limit_reached') {
       showToast(res.message || "Batas kuota foto acara telah tercapai.", "warning");
+      const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+      if (idx !== -1) {
+        STATE.photos[idx].isUploading = false;
+        STATE.photos[idx].uploadFailed = true;
+        saveEventPhotos(payload.eventId);
+        renderGallery();
+      }
     } else {
-      console.warn("Upload response:", res);
+      console.warn("Upload response error:", res);
+      const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+      if (idx !== -1) {
+        STATE.photos[idx].isUploading = false;
+        STATE.photos[idx].uploadFailed = true;
+        saveEventPhotos(payload.eventId);
+        renderGallery();
+      }
+      const errMsg = (res && res.message) ? res.message : "Gagal upload ke Google Drive (Periksa izin DriveApp).";
+      showToast(`⚠️ ${errMsg}`, "warning", 6000);
     }
   } catch (err) {
     console.warn("uploadPhotoInBackground network issue:", err);
+    const idx = STATE.photos.findIndex(p => p.idFoto === tempPhotoId);
+    if (idx !== -1) {
+      STATE.photos[idx].isUploading = false;
+      STATE.photos[idx].uploadFailed = true;
+      saveEventPhotos(payload.eventId);
+      renderGallery();
+    }
+    showToast("⚠️ Gangguan koneksi saat mengunggah foto ke Google Drive.", "warning", 5000);
   } finally {
+    sessionStorage.removeItem('snapevent_inflight_' + tempPhotoId);
     IN_FLIGHT_PHOTO_UPLOADS.delete(tempPhotoId);
   }
 }

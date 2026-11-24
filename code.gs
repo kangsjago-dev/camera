@@ -1,3 +1,19 @@
+
+/**
+ * Jalankan fungsi ini 1x dari editor Google Apps Script untuk otorisasi akses DriveApp!
+ * Klik "Run" -> "Review Permissions" -> "Allow" agar Web App berizin penuh menyimpan foto ke Google Drive.
+ */
+function otorisasiAksesGoogleDrive() {
+  try {
+    const root = DriveApp.getRootFolder();
+    Logger.log("✅ Izin DriveApp berhasil diotorisasi! Root folder name: " + root.getName());
+    return "✅ Otorisasi Google Drive berhasil! Layanan DriveApp siap digunakan.";
+  } catch (e) {
+    Logger.log("❌ Error otorisasi DriveApp: " + e.message);
+    throw e;
+  }
+}
+
 /**
  * ================================================================================
  * SNAPEVENT: CODE.GS - BACKEND CONTROLLER & GOOGLE DRIVE INTEGRATION
@@ -1113,7 +1129,9 @@ function handleUploadPhoto(payload) {
           canonicalEventId = evRows[i][COL_EVENT.ID];
           targetEventRow = i + 2;
           maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
-          folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          if (!folderId) {
+            folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          }
           namaEvent = evRows[i][COL_EVENT.NAMA];
           slugEvent = evRows[i][COL_EVENT.SLUG];
           break;
@@ -1128,7 +1146,9 @@ function handleUploadPhoto(payload) {
           canonicalEventId = evRows[i][COL_EVENT.ID];
           targetEventRow = i + 2;
           maxFoto = Number(evRows[i][COL_EVENT.MAX_FOTO]) || 10;
-          folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          if (!folderId) {
+            folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+          }
           namaEvent = evRows[i][COL_EVENT.NAMA];
           slugEvent = evRows[i][COL_EVENT.SLUG];
           break;
@@ -1227,7 +1247,15 @@ function handleUploadPhoto(payload) {
       });
     }
 
-    let parentFolder = DriveApp.getRootFolder();
+    let parentFolder;
+    try {
+      parentFolder = DriveApp.getRootFolder();
+    } catch(driveAuthErr) {
+      return { 
+        status: "error", 
+        message: "Akses Google Drive belum diotorisasi di Google Apps Script: " + driveAuthErr.message + ". Silakan jalankan fungsi otorisasiAksesGoogleDrive di editor Apps Script dan klik Allow." 
+      };
+    }
     if (masterFolderId) {
       try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
     }
