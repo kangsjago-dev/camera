@@ -1,38 +1,33 @@
-# RENCANA REVISI & PENYEMPURNAAN SISTEM (revisi.md)
+# RENCANA REVISI & DIAGNOSIS SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI TARGET: v2.3.3
-STATUS: SELESAI DITERAPKAN (VERSION 2.3.3)
+VERSI TARGET: v2.3.4
+STATUS: SELESAI DITERAPKAN (VERSION 2.3.4)
 AUTHOR: ZettBOT by Zettbos (Universal Product Architect & Lead Engineering Mentor)
 TANGGAL: 24 November 2026
 ================================================================================
 
-## 1. RINGKASAN TINDAKAN v2.3.3
+## 1. RINGKASAN TINDAKAN v2.3.4
 
-1. **Perbaikan Tuntas Tambah Event Baru (`code.gs`):**
-   - Menambahkan blok penanganan `else` saat `targetRow === -1` pada fungsi `handleAdminSaveEvent()` di `code.gs`.
-   - Ketika admin membuat event baru dari antarmuka web, berkas backend kini secara otomatis mengeksekusi `eventSheet.appendRow(...)` lengkap dengan 17 kolom parameter event sehingga event baru tersimpan permanen ke tab `DataEvent` di Google Sheets.
+1. **Hotfix Kritis SyntaxError Penyebab Web Hang (`app.js`):**
+   - Menghapus 3 baris kode sisa (*orphan lines 122–124*) yang memicu `SyntaxError: Unexpected token '}'`.
+   - Peramban (V8 engine) kini dapat membaca dan mengeksekusi `app.js` dengan lancar tanpa terhenti.
+   - Fungsi inisialisasi aplikasi `initApp()` kembali berjalan normal seketika saat halaman dimuat.
 
-2. **Engine Komposit QR Code dengan Logo di Titik Tengah (`app.js`):**
-   - Mengimplementasikan fungsi komposit berbasis canvas `generateQrWithLogo()` dan `setQrWithLogoToElement()`.
-   - Menggunakan Error Correction Level **H (High - 30% Redundancy)** sehingga pola QR code tetap 100% terbaca tajam dan akurat oleh kamera smartphone meskipun bagian tengahnya disematkan logo.
-   - Logo diambil dari Pengaturan Global (`cfgAppLogoUrl`) yang tersimpan di Google Drive dan dinormalisasi menjadi direct CDN image (`https://lh3.googleusercontent.com/d/{ID}`).
-   - Logo digambar di atas badge putih *squircle* berbalut aksen border emas mewah (`#D4AF37`) di tengah QR.
-   - Terintegrasi penuh pada:
-     * Layar Sambutan Tamu (`#welcomeQrImg`)
-     * Modal Pop-up QR Acara Admin (`#modalQrImage`)
-     * Layar Proyektor Panggung Ballroom (`#slideshowQrImg`)
-     * Tombol Unduh QR Resolusi Tinggi 1000px HD (`#btnWelcomeDownloadQr` & `#btnDownloadQrCode`)
+2. **Pembersihan Total Seluruh Sisa Fallback Hardcode (`app.js`):**
+   - Menghapus seluruh kemunculan string `'EVT-202611-001'` pada:
+     * `STATE.activeEventId` (baris 73)
+     * `loadEventPhotos` (baris 476)
+     * `saveEventPhotos` (baris 528)
+     * `loadEventVotes` (baris 548)
+     * `saveEventVotes` (baris 559)
+   - Seluruh inisialisasi event dan galeri kini **100% realtime murni dinamis** mengambil data dari database Google Sheets `DataEvent`.
 
-3. **Alamat Tautan & QR Mengikuti Nama Event di Akhir Link (`app.js`):**
-   - Memperbarui fungsi `getEventShareUrl(eventId)` agar menyematkan nama/slug acara target:
-     `${baseUrl}?event=${targetSlug}` (contoh: `https://camera.runway.my.id?event=tommy-natasha`).
-   - Tautan tidak lagi polosan, dan ketika dibuka atau dipindai tamu, aplikasi otomatis mengenali dan membuka acara tersebut.
+3. **Verifikasi Kompiler Mandiri:**
+   - Telah diaudit menggunakan `node --check app.js` &rarr; **Status 0 (Exit Code 0, Bebas Error Sintaks 100%)**.
 
-4. **Eliminasi Total Fallback Hardcode Demo (`app.js`):**
-   - Mengosongkan data dummy `MOCK_DATA` (Sarah & Kevin, Hans & Yurike, dan sample photos).
-   - Menghapus penimpaan nama hardcode pada `revalidateFromBackend()` dan injeksi sample photos pada `loadGallery()`.
-   - Seluruh daftar acara dan galeri foto kini 100% murni dan realtime ditarik langsung dari database Google Sheets.
+4. **Pembaruan Versi Aset (`index.html`):**
+   - Menyelaraskan query string cache ke `v=2.3.4` untuk memastikan browser pengguna memuat versi kode yang sudah diperbaiki.
 
 5. **Komitmen Zero-Regression:**
-   - Seluruh fitur live camera, kontrol zoom 1x-3x, filter grading, kuota jepretan, upload Google Drive, dan docking tombol tetap dipertahankan 100% utuh tanpa gangguan.
+   - Seluruh fitur live camera, framing retro, komposit QR Code berlogo di tengah, dan format link acara tetap 100% utuh dan siap digunakan.

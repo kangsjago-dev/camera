@@ -70,7 +70,7 @@ const STATE = {
   guestNama: localStorage.getItem('snapevent_guest_nama') || '',
 
   // Active Event Context
-  activeEventId: localStorage.getItem('snapevent_active_event_id') || 'EVT-202611-001',
+  activeEventId: localStorage.getItem('snapevent_active_event_id') || '',
   activeEvent: null,
   activeCategories: [],
 
@@ -118,9 +118,6 @@ function getResolvedEventId(idOrSlug) {
   );
   if (ev && ev.idEvent) return ev.idEvent;
   return target;
-}
-  if (STATE.activeEvent && STATE.activeEvent.idEvent) return STATE.activeEvent.idEvent;
-  return (STATE.events && STATE.events[0]?.idEvent) || 'EVT-202611-001';
 }
 
 function getEventPhotosKey(eventId) {
@@ -473,7 +470,7 @@ function recordDeletedEvent(idEvent) {
 }
 
 function loadEventPhotos(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   const resolvedId = getResolvedEventId(id);
   const key = getEventPhotosKey(resolvedId);
   const deletedSet = getDeletedPhotosSet(resolvedId);
@@ -525,7 +522,7 @@ function loadEventPhotos(eventId) {
 }
 
 function saveEventPhotos(eventId) {
-  const id = getResolvedEventId(eventId || STATE.activeEventId || 'EVT-202611-001');
+  const id = getResolvedEventId(eventId || STATE.activeEventId || '');
   const deletedSet = getDeletedPhotosSet(id);
   try {
     const cleanPhotos = (STATE.photos || [])
@@ -545,7 +542,7 @@ function saveEventPhotos(eventId) {
 }
 
 function loadEventVotes(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   try {
     STATE.votedPhotoIds = JSON.parse(localStorage.getItem(getEventVotedPhotosKey(id)) || '[]');
     STATE.votedCategoryIds = JSON.parse(localStorage.getItem(getEventVotedCategoriesKey(id)) || '[]');
@@ -556,7 +553,7 @@ function loadEventVotes(eventId) {
 }
 
 function saveEventVotes(eventId) {
-  const id = eventId || STATE.activeEventId || 'EVT-202611-001';
+  const id = eventId || STATE.activeEventId || '';
   localStorage.setItem(getEventVotedPhotosKey(id), JSON.stringify(STATE.votedPhotoIds));
   localStorage.setItem(getEventVotedCategoriesKey(id), JSON.stringify(STATE.votedCategoryIds));
 }
