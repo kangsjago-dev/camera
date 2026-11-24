@@ -1675,7 +1675,7 @@ function handleAdminSaveEvent(payload) {
 
     let savedIdEvent = idEvent;
 
-    if (!idEvent) {
+    if (!idEvent || payload.isNewEvent === true || payload.isNewEvent === "true") {
       // INSERT EVENT BARU (17 Kolom)
       savedIdEvent = generateIncrementalId(eventSheet, "EVT-" + ymStr + "-", COL_EVENT.ID);
       eventSheet.appendRow([

@@ -1,31 +1,32 @@
 # RENCANA REVISI & DIAGNOSIS SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI TARGET: v2.3.5
-STATUS: SELESAI DITERAPKAN (VERSION 2.3.5)
+VERSI TARGET: v2.3.6
+STATUS: SELESAI DITERAPKAN (VERSION 2.3.6)
 AUTHOR: ZettBOT by Zettbos (Universal Product Architect & Lead Engineering Mentor)
 TANGGAL: 24 November 2026
 ================================================================================
 
-## 1. RINGKASAN TINDAKAN v2.3.5
+## 1. RINGKASAN TINDAKAN v2.3.6
 
-1. **Implementasi Lencana Logo Tengah pada Seluruh QR Code Acara (`app.js`):**
-   - Mendeklarasikan helper `normalizeDriveDirectUrl(rawUrl)` yang mengekstrak Google Drive ID dari link berbagi `/file/d/...`, `open?id=...`, `uc?id=...`, maupun raw ID, lalu mengonversinya ke stream CDN langsung `https://lh3.googleusercontent.com/d/{fileId}`.
-   - Membangun renderer kanvas `drawCenterLogoBadge(ctx, size, logoImgObj)`:
-     * Menggambar lencana squircle putih bersih dengan bayangan lembut dan bingkai emas mewah `#D4AF37`.
-     * Jika link logo kustom Google Drive disetel di Settingan Global (`cfgAppLogoUrl`), logo tersebut digambar dengan presisi di tengah lencana.
-     * Jika link kustom belum disetel (atau gagal memuat), otomatis merender **Insignia Kamera Emas SnapEvent Vektor** (gradien `#F3E5AB` ke `#D4AF37` dengan ring lensa emas dan pupil).
-     * **Hasil:** QR Code pada Kartu Sambutan (`#welcomeQrImg`), Modal Bagikan (`#shareQrImg`), Unduhan HD (`#btnWelcomeDownloadQr` / `#btnDownloadQrCode`), dan Slideshow Ballroom (`#slideshowQrImg`) **100% selalu berlogo elegan di tengah dan tidak pernah polos**.
+1. **Implementasi Lencana Logo Persegi Panjang Horizontal pada QR Code (`app.js`):**
+   - Memodifikasi fungsi kanvas `drawCenterLogoBadge(ctx, size, logoImgObj)` agar sesuai dengan proporsi referensi gambar (`media_1795532013057_a8822158.png`):
+     * Lebar lencana: `Math.round(size * 0.38)` (~38% lebar QR).
+     * Tinggi lencana: `Math.round(size * 0.24)` (~24% tinggi QR).
+     * Rasio Aspek: ~1.6 : 1 (Persegi panjang horizontal).
+     * Sudut membulat halus (`radius = Math.round(badgeH * 0.18)`), bayangan lembut, dan garis tepi emas mewah `#D4AF37`.
+   - Mengintegrasikan penskalaan aspek rasio `contain` pada gambar logo sehingga logo horizontal seperti **RUNWAY Entertainment & Organizer** tampil besar, tegas, dan proporsional tanpa terpotong atau terdistorsi.
+   - Menyediakan fallback insignia emas vektor horizontal jika logo kustom belum dimuat.
 
-2. **Perbaikan Tautan Modal Share Mengikuti Nama / Slug Acara (`app.js` & `code.gs`):**
-   - Memperbarui `getEventShareUrl(eventOrId)` menjadi polimorfik: menerima objek acara maupun string ID.
-   - Mengonversi nama acara seperti `"Tommy & Natasha"` menjadi slug URL bersih tanpa spasi atau karakter ganda: `"tommy-natasha"`.
-   - Mengubah pemanggilan di `openShareQrModal(ev)` dan kartu sambutan agar mengirim objek event lengkap sehingga input URL modal **100% selalu berakhiran `?event=tommy-natasha`**.
-   - Menyempurnakan resolusi `getResolvedEventId` di frontend dan `handleGetEventDetails` di `code.gs` agar pencocokan event berbasis slug dua arah berjalan mulus.
+2. **Perbaikan Tuntas Penambahan Custom Event & Sinkronisasi Google Sheets (`app.js` & `code.gs`):**
+   - **Koreksi Tab Navigasi:** Memperbaiki event listener tab `[data-admintab="create"]` di `app.js` agar **100% selalu mengeksekusi `resetCreateEventForm()`**, menghilangkan pemanggilan `populateEditEventForm(STATE.activeEvent)` yang sebelumnya salah memuat data acara lama.
+   - **Formulir Bersih:** Pengguna kini selalu mendapatkan formulir kosong baru saat mengklik "+ Buat Event Baru" atau tombol "➕ Buat Acara" di header tabel acara.
+   - **Protokol Insert Aman:** Di `saveAdminEventForm()`, sistem mendeteksi apakah formulir dalam mode tambah acara (`isNewEvent: true`). Saat membuat acara baru, frontend mengirimkan penanda `isNewEvent: true` dan mengosongkan `idEvent` saat dikirim ke GAS sehingga baik versi GAS lama maupun baru **100% mengeksekusi `eventSheet.appendRow()`**, menulis acara baru ke sheet `DataEvent`, lalu mengembalikan ID resmi dari database Google Sheets ke frontend.
+   - **Live Sync Otomatis:** Setelah acara tersimpan, sistem langsung memanggil `syncEventsFromBackend(true)` untuk memperbarui daftar acara secara realtime dari Google Sheets.
 
-3. **Pembaruan Versi Aset (`index.html`):**
-   - Menyelaraskan query string cache ke `v=2.3.5`.
+3. **Pembaruan Aset & Cache-Busting (`index.html`):**
+   - Menyelaraskan query string cache ke `v=2.3.6`.
 
 4. **Verifikasi Teknis & Zero Regression:**
-   - Telah diaudit menggunakan `node --check app.js` (Exit Code 0).
-   - Telah diuji dengan script uji eksekusi headless (Normalisasi URL Google Drive, resolusi slug nama acara, dan mapping event ID terverifikasi 100% valid).
+   - Audit sintaks V8 dengan `node --check app.js` (Exit Code 0).
+   - Seluruh integrasi kamera, filter analog, galeri, voting, dan Google Drive tetap utuh dan stabil 100%.

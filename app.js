@@ -831,65 +831,75 @@ function getQrImageUrl(text, size = 300) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=H&margin=8&data=${encodeURIComponent(text)}`;
 }
 
-// Renderer Lencana Tengah QR Code (Logo Kustom Google Drive atau Insignia Kamera Emas SnapEvent)
+// Renderer Lencana Tengah QR Code (Persegi Panjang Horizontal Proporsional Sesuai Standar RUNWAY Entertainment)
 function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
-  const logoBoxSize = Math.round(size * 0.24);
-  const boxX = (size - logoBoxSize) / 2;
-  const boxY = (size - logoBoxSize) / 2;
-  const radius = Math.round(logoBoxSize * 0.24);
+  // Dimensi persegi panjang horizontal: lebar ~38%, tinggi ~24% (rasio ~1.6 : 1)
+  const badgeW = Math.round(size * 0.38);
+  const badgeH = Math.round(size * 0.24);
+  const boxX = (size - badgeW) / 2;
+  const boxY = (size - badgeH) / 2;
+  const radius = Math.round(badgeH * 0.18);
 
-  // 1. Gambar latar badge squircle putih bersih dengan bayangan lembut
+  // 1. Gambar latar badge persegi panjang putih bersih dengan bayangan lembut
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-  ctx.shadowBlur = Math.max(4, Math.round(size * 0.018));
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+  ctx.shadowBlur = Math.max(4, Math.round(size * 0.016));
   ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.006));
+  ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.005));
 
   ctx.fillStyle = '#FFFFFF';
   ctx.beginPath();
   if (ctx.roundRect) {
-    ctx.roundRect(boxX, boxY, logoBoxSize, logoBoxSize, radius);
+    ctx.roundRect(boxX, boxY, badgeW, badgeH, radius);
   } else {
-    ctx.rect(boxX, boxY, logoBoxSize, logoBoxSize);
+    ctx.rect(boxX, boxY, badgeW, badgeH);
   }
   ctx.fill();
 
-  // 2. Garis tepi emas mewah (#D4AF37)
-  ctx.lineWidth = Math.max(2, Math.round(size * 0.008));
+  // 2. Garis tepi netral halus / emas tipis mewah (#D4AF37)
+  ctx.lineWidth = Math.max(1.5, Math.round(size * 0.006));
   ctx.strokeStyle = '#D4AF37';
   ctx.stroke();
   ctx.restore();
 
-  // 3. Konten Badge: Gambar Logo Kustom ATAU Insignia Kamera Emas SnapEvent
-  if (logoImgObj && logoImgObj.naturalWidth > 0) {
-    const padding = Math.max(2, Math.round(logoBoxSize * 0.12));
-    const innerSize = logoBoxSize - (padding * 2);
-    const innerX = boxX + padding;
-    const innerY = boxY + padding;
+  // 3. Konten Badge: Gambar Logo Kustom (RUNWAY Entertainment / Google Drive) ATAU Insignia Emas Mewah
+  if (logoImgObj && (logoImgObj.naturalWidth > 0 || logoImgObj.width > 0)) {
+    const nw = logoImgObj.naturalWidth || logoImgObj.width;
+    const nh = logoImgObj.naturalHeight || logoImgObj.height;
+    const padX = Math.max(4, Math.round(badgeW * 0.07));
+    const padY = Math.max(3, Math.round(badgeH * 0.10));
+    const availW = badgeW - (padX * 2);
+    const availH = badgeH - (padY * 2);
+
+    const scale = Math.min(availW / nw, availH / nh);
+    const drawW = nw * scale;
+    const drawH = nh * scale;
+    const drawX = boxX + (badgeW - drawW) / 2;
+    const drawY = boxY + (badgeH - drawH) / 2;
 
     ctx.save();
     ctx.beginPath();
     if (ctx.roundRect) {
-      ctx.roundRect(innerX, innerY, innerSize, innerSize, Math.max(3, radius - 3));
+      ctx.roundRect(boxX + 2, boxY + 2, badgeW - 4, badgeH - 4, Math.max(2, radius - 2));
     } else {
-      ctx.rect(innerX, innerY, innerSize, innerSize);
+      ctx.rect(boxX + 2, boxY + 2, badgeW - 4, badgeH - 4);
     }
     ctx.clip();
-    ctx.drawImage(logoImgObj, innerX, innerY, innerSize, innerSize);
+    ctx.drawImage(logoImgObj, drawX, drawY, drawW, drawH);
     ctx.restore();
   } else {
-    // Insignia Kamera Emas SnapEvent Vektor (Mewah, Elegan, Tajam)
+    // Insignia Emas Vektor Proporsional Horizontal (RUNWAY Camera Luxury Insignia)
     ctx.save();
     const cx = size / 2;
     const cy = size / 2;
-    const s = logoBoxSize * 0.52; // Skala ikon kamera
-    const left = cx - s / 2;
-    const top = cy - s / 2.3;
-    const w = s;
+    const s = badgeH * 0.60;
+    const left = cx - (s * 1.3) / 2;
+    const top = cy - s / 2.2;
+    const w = s * 1.3;
     const h = s * 0.72;
     const r = s * 0.14;
 
-    // Body kamera (Gradien Emas Mewah)
+    // Body kamera horizontal gradien emas
     const goldGrad = ctx.createLinearGradient(left, top, left + w, top + h);
     goldGrad.addColorStop(0, '#F3E5AB');
     goldGrad.addColorStop(0.5, '#D4AF37');
@@ -905,32 +915,32 @@ function drawCenterLogoBadge(ctx, size, logoImgObj = null) {
     ctx.fill();
 
     // Top flash bump
-    const bumpW = w * 0.32;
+    const bumpW = w * 0.30;
     const bumpH = h * 0.22;
     const bumpX = cx - bumpW / 2;
-    const bumpY = top - bumpH * 0.7;
+    const bumpY = top - bumpH * 0.65;
     ctx.beginPath();
     if (ctx.roundRect) {
-      ctx.roundRect(bumpX, bumpY, bumpW, bumpH, r * 0.6);
+      ctx.roundRect(bumpX, bumpY, bumpW, bumpH, r * 0.5);
     } else {
       ctx.rect(bumpX, bumpY, bumpW, bumpH);
     }
     ctx.fill();
 
-    // Lensa lingkaran kamera (Background Gelap + Ring Emas)
+    // Lensa lingkaran kamera
     ctx.fillStyle = '#14141C';
     ctx.beginPath();
-    ctx.arc(cx, top + h * 0.52, h * 0.34, 0, Math.PI * 2);
+    ctx.arc(cx, top + h * 0.52, h * 0.36, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.lineWidth = Math.max(1.5, Math.round(s * 0.08));
     ctx.strokeStyle = '#F3E5AB';
     ctx.stroke();
 
-    // Titik pupil lensa
+    // Pupil emas
     ctx.fillStyle = '#D4AF37';
     ctx.beginPath();
-    ctx.arc(cx, top + h * 0.52, h * 0.14, 0, Math.PI * 2);
+    ctx.arc(cx, top + h * 0.52, h * 0.15, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -5939,6 +5949,8 @@ async function saveAdminEventForm() {
   const hashtag = document.getElementById('formEventHashtag').value.trim();
   const targetEventId = document.getElementById('formEventId').value || 'EVT-' + Date.now();
   const existingEv = (STATE.events && STATE.events.find(e => e.idEvent === targetEventId)) || {};
+  const formTitle = document.getElementById('formEventTitle')?.textContent || '';
+  const isNewEvent = !existingEv.idEvent || formTitle.includes('Buat');
 
   if (!nama && existingEv && existingEv.namaEvent) {
     nama = existingEv.namaEvent;
@@ -6134,8 +6146,10 @@ async function saveAdminEventForm() {
   if (STATE.gasApiUrl) {
     try {
       const res = await callGasApiSafe('adminSaveEvent', {
-        idEvent: savedEvent.idEvent,
-        eventId: savedEvent.idEvent,
+        isNewEvent: isNewEvent,
+        idEvent: isNewEvent ? '' : savedEvent.idEvent,
+        eventId: isNewEvent ? '' : savedEvent.idEvent,
+        clientEventId: savedEvent.idEvent,
         namaEvent: nama,
         slugEvent: savedEvent.slugEvent,
         tanggalEvent: tanggal,
@@ -6179,7 +6193,19 @@ async function saveAdminEventForm() {
       }).catch(() => {});
       syncBrowserUrlWithActiveEvent(savedEvent.idEvent);
 
-      if (res && res.status === 'success') {
+      if (res && (res.status === 'success' || res.status === 'ok')) {
+        const officialId = res.idEvent || res.eventId;
+        if (officialId && officialId !== savedEvent.idEvent) {
+          const oldId = savedEvent.idEvent;
+          savedEvent.idEvent = officialId;
+          const idx = STATE.events.findIndex(e => e.idEvent === oldId);
+          if (idx >= 0) STATE.events[idx] = savedEvent;
+          STATE.activeEventId = officialId;
+          STATE.activeEvent = savedEvent;
+          localStorage.setItem('snapevent_events', JSON.stringify(STATE.events));
+          localStorage.setItem('snapevent_active_event_id', officialId);
+          localStorage.setItem('snapevent_active_event', JSON.stringify(savedEvent));
+        }
         if (res.customFrameUrl) {
           savedEvent.customFrameUrl = res.customFrameUrl;
           if (STATE.activeEvent && STATE.activeEvent.idEvent === savedEvent.idEvent) {
@@ -6190,6 +6216,8 @@ async function saveAdminEventForm() {
       } else if (res && res.status === 'error') {
         console.warn("GAS simpan peringatan:", res.message);
       }
+      // Re-sinkronisasi daftar acara dari Google Sheets
+      syncEventsFromBackend(true);
     } catch (err) {
       console.warn("Sinkronisasi GAS warn:", err.message);
     }
@@ -6866,19 +6894,8 @@ function bindEvents() {
     btn.addEventListener('click', () => {
       const tab = btn.getAttribute('data-admintab');
       if (tab === 'create') {
-        const currentFormId = document.getElementById('formEventId')?.value;
-        if (!currentFormId) {
-          if (STATE.activeEvent) {
-            populateEditEventForm(STATE.activeEvent);
-          } else {
-            resetCreateEventForm();
-          }
-        }
-        const dateInput = document.getElementById('formEventTanggal');
-        if (dateInput && !dateInput.value) {
-          const now = new Date();
-          dateInput.value = (STATE.activeEvent && formatDateForInput(STATE.activeEvent.tanggalEvent)) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        }
+        // Klik tab '+ Buat Event Baru' SELALU membuka formulir bersih baru (tidak memuat event lama)
+        resetCreateEventForm();
       }
       switchAdminTab(tab);
     });
