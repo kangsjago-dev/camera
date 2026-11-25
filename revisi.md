@@ -1,8 +1,8 @@
 # RENCANA REVISI & DIAGNOSIS SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI TARGET: v2.4.7
-STATUS: SELESAI DITERAPKAN (VERSION 2.4.7)
+VERSI TARGET: v2.4.8
+STATUS: SELESAI DITERAPKAN (VERSION 2.4.8)
 AUTHOR: ZettBOT by Zettbos (Universal Product Architect & Lead Engineering Mentor)
 TANGGAL: 25 November 2026
 ================================================================================
@@ -16,72 +16,55 @@ Berdasarkan tangkapan layar `media_1795584306461_99ee6a0a.png` dan laporan Anda:
 2. *"sync googledrive dan gallery agar semua yang ada pada gallery bs dilihat"*
 3. *"dan voting beda tampilan/ Tidak tampil pada device lain"*
 
-Berikut temuan investigasi mendalam:
+Berikut temuan investigasi mendalam pada codebase saat ini:
 
 ---
 
-### A. Titik Kritis 1: Mengapa Muncul `SyntaxError: Identifier 'SHEET_NAMES' has already been declared`?
-1. **Aturan Dasar Lingkup Global Google Apps Script:**
-   - Di Google Apps Script, **seluruh file `.gs` di dalam satu proyek script berada dalam 1 lingkup global (Global Scope) yang sama**.
-   - Di file `code.gs` baris 93 dideklarasikan:
+### A. Titik Kritis 1: Error `SyntaxError: Identifier 'SHEET_NAMES' has already been declared`
+1. **Lingkup Global Google Apps Script:**
+   - Seluruh file `.gs` di Google Apps Script berada dalam 1 *Global Scope* yang sama.
+   - Meskipun `setup.gs` baris 15 sudah diubah ke `var SHEET_NAMES`, di `code.gs` baris 208 masih memakai `const SHEET_NAMES = { ... }`.
+   - Jika urutan file di editor Google Apps Script memuat `setup.gs` sebelum `code.gs`, maka `var SHEET_NAMES` diikuti `const SHEET_NAMES` tetap memicu `SyntaxError: Identifier 'SHEET_NAMES' has already been declared`, yang membekukan seluruh fungsi (`otorisasiAksesGoogleDrive`, `doGet`, `doPost`).
+2. **Solusi:**
+   - Ubah `const SHEET_NAMES` di `code.gs` baris 208 menjadi `var SHEET_NAMES = (typeof SHEET_NAMES !== 'undefined') ? SHEET_NAMES : { ... };` agar kedua file (`code.gs` dan `setup.gs`) 100% aman dalam urutan muat apa pun.
+
+---
+
+### B. Titik Kritis 2: Crash `ReferenceError` pada `handleGetGallery()` di `code.gs` (Penyebab Galeri & Voting Gagal Sync!)
+1. **Temuan Baru yang Kritis:**
+   - Di `code.gs` fungsi `handleGetGallery()` baris 1233, kode mengakses variabel `categories`:
      ```javascript
-     const SHEET_NAMES = { ... };
+     const defaultCategory = (categories.length > 0) ? categories[0] : null;
      ```
-   - Namun di file `setup.gs` baris 15 juga dideklarasikan variabel konstan dengan nama yang sama persis:
-     ```javascript
-     const SHEET_NAMES = { ... };
-     ```
-   - Karena kedua file menggunakan kata kunci `const`, Google Apps Script (V8 runtime) langsung melempar kesalahan kompilasi:
-     **`SyntaxError: Identifier 'SHEET_NAMES' has already been declared`**
-   - **DAMPAK FATAL:** Karena ada SyntaxError pada saat script dimuat, **seluruh fungsi di project Apps Script gagal dieksekusi**, termasuk `otorisasiAksesGoogleDrive()`, `doGet()`, dan `doPost()`.
+   - Padahal `const categories = [];` baru dideklarasikan di bawahnya pada baris 1257!
+   - Di runtime V8 Google Apps Script, mengakses `const categories` sebelum baris deklarasinya langsung melempar **`ReferenceError: Cannot access 'categories' before initialization`**.
+   - **Dampak Fatal:** Setiap kali HP tamu memanggil `getGallery`, server crash dan gagal mengembalikan daftar foto serta data `categoryLikes` voting!
+2. **Solusi:**
+   - Pindahkan blok pengisian `const categories = [];` (baris 1256–1270) ke **sebelum** baris 1232 agar `categories` sudah terisi sebelum dipakai untuk pemetaan `categoryLikes`.
 
 ---
 
-### B. Titik Kritis 2: Mengapa Galeri Kosong & Belum Sinkron dengan Google Drive?
-1. Karena script Google Apps Script mengalami bentrokan `SyntaxError` di atas, fungsi `handleGetGallery` di backend tidak pernah berjalan normal.
-2. Foto-foto fisik yang berada di folder Google Drive acara (`13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc`) tidak pernah tersinkronisasi ke baris database spreadsheet `DataFoto`.
-3. Server terus mengembalikan `photos: []` (0 foto) ke seluruh HP tamu.
-4. **Solusi Mutlak:**
-   - Setelah `SyntaxError` di `setup.gs` diperbaiki, kita sediakan satu fungsi khusus di `code.gs`:
-     **`sinkronkanFolderDriveKeGaleri()`**
-   - Fungsi ini dapat dijalankan dengan 1-klik di editor Google Apps Script. Fungsi ini akan secara otomatis memindai seluruh file gambar di folder `13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc` dan langsung mencatatnya ke baris Google Sheets `DataFoto`.
-   - Seketika seluruh foto Google Drive langsung terbit di galeri semua tamu!
+### C. Titik Kritis 3: Sinkronisasi Google Drive ke Galeri & Voting Lintas Perangkat
+1. **Sinkronisasi Drive -> Galeri:**
+   - Fungsi 1-klik `sinkronkanFolderDriveKeGaleri()` di `code.gs` akan memindai folder Google Drive (`13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc`), menyetel izin view publik, dan mendaftarkan semua foto ke sheet `DataFoto`.
+   - Selain itu, perbaikan `ReferenceError` di `handleGetGallery()` memastikan `auto-ingest` saat galeri dibuka berjalan normal tanpa crash.
+2. **Voting Seragam di Semua Device:**
+   - Dengan `handleGetGallery()` yang bebas crash, `categoryLikes` dan `totalLikes` dari sheet `DataVoting` akan terkirim utuh ke semua HP tamu secara realtime.
 
 ---
 
-### C. Titik Kritis 3: Mengapa Voting Berbeda Tampilan / Tidak Tampil di Perangkat Lain?
-1. Saat Tamu A memberikan suara Like pada kategori tertentu, suara disimpan di memori lokal Tamu A.
-2. Di perangkat Tamu B, ketika Tamu B membuka galeri dan mengklik tab kategori (misal: "Favorit"), filter frontend memeriksa apakah foto tersebut memiliki suara di kategori tersebut (`p.categoryLikes[catId]`).
-3. Karena data di sheet `DataVoting` belum teragregasi secara otomatis ke objek respon `categoryLikes` di `getGallery`, HP Tamu B menganggap foto tersebut belum memiliki suara untuk kategori tersebut, sehingga disembunyikan (*"Belum Ada Foto di Kategori Ini"*).
-4. **Solusi:**
-   - Backend `code.gs` pada fungsi `handleGetGallery` diperbarui agar menyertakan objek `categoryLikes` secara lengkap untuk setiap foto, sehingga jumlah suara per kategori tersaji 100% seragam di seluruh perangkat secara realtime.
+## 2. RENCANA PERBAIKAN PRESISI (ACTION PLAN v2.4.8)
 
----
-
-## 2. RENCANA PERBAIKAN PRESISI (ACTION PLAN v2.4.7)
-
-### 1. Eliminasi Bentrokan Deklarasi Variabel (`setup.gs`):
-- [ ] Ubah deklarasi `const SHEET_NAMES` di `setup.gs` menjadi guard conditional aman:
-  ```javascript
-  var SHEET_NAMES = SHEET_NAMES || { ... };
-  ```
-  Hal ini mengeliminasi 100% error `SyntaxError: Identifier 'SHEET_NAMES' has already been declared`.
-
-### 2. Fungsi 1-Klik Sinkronisasi Google Drive ke Galeri (`code.gs`):
-- [ ] Tambahkan fungsi resmi di bagian atas `code.gs`:
-  **`sinkronkanFolderDriveKeGaleri()`**
-  * Membuka folder target `13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc`.
-  * Memindai seluruh foto fisik yang ada di folder tersebut.
-  * Menuliskan baris data foto lengkap ke sheet `DataFoto` untuk event `#Tommy&Natasha`.
-  * Menetapkan izin view publik pada file secara otomatis.
-  * Mengotorisasi izin `DriveApp` sekaligus dalam 1 kali klik!
-
-### 3. Sinkronisasi Suara Voting Realtime Multi-Device (`code.gs` & `app.js`):
-- [ ] Jamin `handleGetGallery` mengembalikan `categoryLikes` dan `totalLikes` yang konsisten dari sheet `DataVoting`.
-- [ ] Frontend `app.js` langsung merender jumlah suara dan pemenang kategori secara seragam di seluruh perangkat.
+1. **`code.gs` baris 208 (`SHEET_NAMES`):**
+   - [ ] Ubah `const SHEET_NAMES` menjadi `var SHEET_NAMES = (typeof SHEET_NAMES !== 'undefined') ? SHEET_NAMES : { ... };` agar tidak pernah bentrok dengan `setup.gs`.
+2. **`code.gs` baris 1232–1270 (`handleGetGallery`):**
+   - [ ] Pindahkan blok pengambilan `const categories = [];` ke atas sebelum pemakaian `categories.length` agar tidak terjadi `ReferenceError`.
+3. **`index.html` & Dokumentasi:**
+   - [ ] Bump versi ke `v2.4.8` di `index.html`.
+   - [ ] Sinkronkan ke repositori GitHub dan push ke `main` setelah Anda menyetujui.
 
 ---
 
 ## 3. STATUS EKSEKUSI
 - **Status saat ini:** MENUNGGU PERSETUJUAN USER
-- **Perintah Eksekusi:** Menunggu instruksi `OKE TERAPKAN` dari Anda. Tidak ada kode produksi yang diubah sebelum instruksi diberikan.
+- **Perintah Eksekusi:** Menunggu instruksi `OKE TERAPKAN` dari Anda. Tidak ada file kode (`code.gs`, `setup.gs`, `app.js`, `index.html`) yang diubah pada tahap ini.

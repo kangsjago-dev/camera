@@ -205,7 +205,7 @@ const COL_CONFIG = {
   DESC: 2
 };
 
-const SHEET_NAMES = {
+var SHEET_NAMES = (typeof SHEET_NAMES !== 'undefined') ? SHEET_NAMES : {
   EVENT: "DataEvent",
   FOTO: "DataFoto",
   KATEGORI: "DataKategori",
@@ -1229,6 +1229,22 @@ function handleGetGallery(eventId, guestId) {
     });
   }
 
+  // Kategori voting (diambil lebih dulu sebelum sinkronisasi categoryLikes)
+  const categories = [];
+  if (katSheet && katSheet.getLastRow() > 1) {
+    const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
+    kRows.forEach(function(kr) {
+      if (kr[COL_KAT.ID_EVENT] === canonicalEventId || kr[COL_KAT.ID_EVENT] === eventId || kr[COL_KAT.ID_EVENT] === eventSlug) {
+        categories.push({
+          idKategori: kr[COL_KAT.ID],
+          namaKategori: kr[COL_KAT.NAMA],
+          deskripsi: kr[COL_KAT.DESKRIPSI],
+          urutan: Number(kr[COL_KAT.URUTAN]) || 1
+        });
+      }
+    });
+  }
+
   // SINKRONISASI SUARA VOTING KATEGORI MULTI-DEVICE 100% REALTIME
   const defaultCategory = (categories.length > 0) ? categories[0] : null;
   const defaultCatId = defaultCategory ? defaultCategory.idKategori : "KAT-1";
@@ -1252,22 +1268,6 @@ function handleGetGallery(eventId, guestId) {
   });
 
   photos.reverse();
-
-  // Kategori voting
-  const categories = [];
-  if (katSheet && katSheet.getLastRow() > 1) {
-    const kRows = katSheet.getRange(2, 1, katSheet.getLastRow() - 1, 5).getDisplayValues();
-    kRows.forEach(function(kr) {
-      if (kr[COL_KAT.ID_EVENT] === canonicalEventId || kr[COL_KAT.ID_EVENT] === eventId || kr[COL_KAT.ID_EVENT] === eventSlug) {
-        categories.push({
-          idKategori: kr[COL_KAT.ID],
-          namaKategori: kr[COL_KAT.NAMA],
-          deskripsi: kr[COL_KAT.DESKRIPSI],
-          urutan: Number(kr[COL_KAT.URUTAN]) || 1
-        });
-      }
-    });
-  }
 
   return {
     status: "success",
