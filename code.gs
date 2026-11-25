@@ -308,6 +308,11 @@ function doGet(e) {
       return createJsonResponse(handleGetEventDetails(eventId, guestId));
     }
 
+    if (action === "getFolderPhotos") {
+      const targetFolderId = params.folderId || params.eventId || "";
+      return createJsonResponse(handleGetFolderPhotos(targetFolderId));
+    }
+
     if (action === "getGallery") {
       const eventId = params.eventId || "";
       const guestId = params.guestId || "";
@@ -725,6 +730,88 @@ function handleGetEventDetails(eventId, guestId) {
  * 1. Menghapus foto yang filenya sudah dihapus di Google Drive (023, 024)
  * 2. Mengingest foto yang ada di Google Drive tapi belum tercatat di Sheet (032, 033)
  */
+/**
+ * DIRECT FOLDER INGESTION: Memindai seluruh gambar di folder Google Drive secara langsung
+ */
+function handleGetFolderPhotos(folderIdOrEventId) {
+  try {
+    let folderId = extractDriveFolderId(folderIdOrEventId);
+    if (!folderId || folderId.indexOf("EVT-") === 0) {
+      // Cari folder ID dari DataEvent
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+      if (eventSheet && eventSheet.getLastRow() > 1) {
+        const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
+        for (let i = 0; i < evRows.length; i++) {
+          if (evRows[i][COL_EVENT.ID] === folderIdOrEventId || evRows[i][COL_EVENT.STATUS] === "AKTIF") {
+            folderId = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+            if (folderId) break;
+          }
+        }
+      }
+    }
+
+    if (!folderId) {
+      folderId = "13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc"; // Fallback target folder aktif
+    }
+
+    const folder = DriveApp.getFolderById(folderId);
+    const filesIter = folder.getFiles();
+    const photos = [];
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+
+    while (filesIter.hasNext()) {
+      const file = filesIter.next();
+      if (file.isTrashed()) continue;
+      const fName = file.getName();
+      const lower = fName.toLowerCase();
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp') || fName.indexOf('FTO-') === 0) {
+        const fId = file.getId();
+        try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (eS) {}
+        const directUrl = "https://lh3.googleusercontent.com/d/" + fId;
+        const parts = fName.split("_");
+        const photoId = (parts[0] && parts[0].indexOf("FTO-") === 0) ? parts[0] : ("FTO-" + fId.slice(-6));
+        const guestName = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
+        const createdDate = file.getDateCreated() ? Utilities.formatDate(file.getDateCreated(), timeZone, "yyyy-MM-dd HH:mm:ss") : nowStr;
+
+        photos.push({
+          idFoto: photoId,
+          guestNama: guestName,
+          caption: "Momen acara!",
+          cameraStyle: "RAW",
+          frameStyle: "POLAROID",
+          gdriveViewUrl: directUrl,
+          gdriveFileId: fId,
+          driveFileId: fId,
+          totalLikes: 0,
+          categoryLikes: {},
+          isFeatured: false,
+          isVisible: true,
+          photoStatus: "TAMPIL",
+          createdAt: createdDate
+        });
+      }
+    }
+
+    // Urutkan foto terbaru di atas
+    photos.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return {
+      status: "success",
+      folderId: folderId,
+      photosCount: photos.length,
+      photos: photos
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      message: "Gagal memindai folder Google Drive: " + err.message,
+      photos: []
+    };
+  }
+}
+
 function handleGetGallery(eventId, guestId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
@@ -835,6 +922,16 @@ function handleGetGallery(eventId, guestId) {
         }
       }
     } catch (e) {}
+  }
+
+  // 0. Fallback Ingestion Langsung dari Target Folder ID Acara
+  if (folderId) {
+    try {
+      const explicitF = DriveApp.getFolderById(folderId);
+      if (explicitF && !candidateFolders.some(cf => cf.getId() === explicitF.getId())) {
+        candidateFolders.unshift(explicitF);
+      }
+    } catch (eExp) {}
   }
 
   // 1. Sinkronisasi Google Drive & Spreadsheet DataFoto:

@@ -2277,8 +2277,26 @@ async function loadGallery() {
       if (finalPhotos.length > 0 || (res.photos && res.photos.length > 0)) {
         STATE.photos = finalPhotos;
         saveEventPhotos(targetId);
+        renderGallery();
+      } else {
+        // FALLBACK DIRECT FOLDER INGESTION: Jika server merespons 0 foto padahal event memiliki folder Google Drive
+        const targetFolder = (STATE.activeEvent && STATE.activeEvent.gdriveFolderId) || STATE.driveMasterId || "13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc";
+        if (targetFolder && STATE.gasApiUrl) {
+          try {
+            const folderResp = await fetch(`${STATE.gasApiUrl}?action=getFolderPhotos&folderId=${targetFolder}`);
+            const folderData = await folderResp.json();
+            if (folderData && folderData.status === 'success' && Array.isArray(folderData.photos) && folderData.photos.length > 0) {
+              STATE.photos = folderData.photos;
+              saveEventPhotos(targetId);
+              renderGallery();
+              return;
+            }
+          } catch (eF) {
+            console.warn("Direct folder scan fallback error:", eF);
+          }
+        }
+        renderGallery();
       }
-      renderGallery();
       if (!document.getElementById('adminTabGallery')?.classList.contains('hidden')) {
         renderAdminGallery();
       }
@@ -6501,6 +6519,12 @@ function bindEvents() {
     }
     showView('viewCamera');
   });
+  // Tombol Sync Galeri di Header Galeri
+  document.getElementById('btnSyncGalleryDirect')?.addEventListener('click', () => {
+    showToast("🔄 Menyinkronkan seluruh foto dari Google Drive...", "info");
+    loadGallery();
+  });
+
   document.getElementById('navBtnGallery').addEventListener('click', () => {
     showView('viewGallery');
     loadGallery();
