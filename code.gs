@@ -1399,55 +1399,66 @@ function handleUploadPhoto(payload) {
       });
     }
 
-    let parentFolder;
-    try {
-      parentFolder = DriveApp.getRootFolder();
-    } catch(driveAuthErr) {
-      return { 
-        status: "error", 
-        message: "Akses Google Drive belum diotorisasi di Google Apps Script: " + driveAuthErr.message + ". Silakan jalankan fungsi otorisasiAksesGoogleDrive di editor Apps Script dan klik Allow." 
-      };
-    }
-    if (masterFolderId) {
-      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
-    }
-
-    let targetFolder;
-    if (folderId && folderId.trim() !== "") {
-      try { targetFolder = DriveApp.getFolderById(folderId); } catch(e) {}
-    }
-    if (!targetFolder) {
-      targetFolder = getOrCreateEventSubFolder(parentFolder, canonicalEventId, slugEvent, namaEvent);
-      // Simpan folderId baru ke DataEvent agar permintaan berikutnya memakai folder yang sama
-      eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
-      SpreadsheetApp.flush();
-    }
-
-    const decodedBytes = Utilities.base64Decode(pureBase64);
     const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
     const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
     const dateCompact = Utilities.formatDate(new Date(), timeZone, "yyyyMMdd");
 
-    // Generator ID Foto Incremental Sekuensial Monotonik (Bebas Bentrokan ID)
+    let parentFolder = null;
+    let targetFolder = null;
+    let driveFile = null;
+    let fileId = "";
+    let directViewUrl = "";
+
+    try {
+      parentFolder = DriveApp.getRootFolder();
+      if (masterFolderId) {
+        try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(eM) {}
+      }
+      if (folderId && folderId.trim() !== "") {
+        try { targetFolder = DriveApp.getFolderById(folderId); } catch(eF) {}
+      }
+      if (!targetFolder && parentFolder) {
+        targetFolder = getOrCreateEventSubFolder(parentFolder, canonicalEventId, slugEvent, namaEvent);
+        if (targetFolder && targetEventRow > 1) {
+          eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
+          SpreadsheetApp.flush();
+        }
+      }
+    } catch(driveAuthErr) {
+      Logger.log("⚠️ DriveApp izin belum siap, beralih ke mode penyimpanan resilient DataFoto: " + driveAuthErr.message);
+    }
+
+    // Generator ID Foto Incremental Sekuensial Monotonik
     const newIdFoto = generateIncrementalPhotoId(fotoSheet, dateCompact, targetFolder);
     const cleanGuestName = guestNama.replace(/[^a-zA-Z0-9]/g, "") || "Tamu";
     const fileName = newIdFoto + "_" + cleanGuestName + ".jpg";
 
-    // Cek apakah targetFolder sudah memiliki file dengan nama yang sama (Anti Double File Drive)
-    let driveFile = null;
-    const sameNamedFiles = targetFolder.getFilesByName(fileName);
-    if (sameNamedFiles.hasNext()) {
-      driveFile = sameNamedFiles.next();
-    } else {
-      const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
-      driveFile = targetFolder.createFile(blob);
+    // Simpan file ke Drive jika targetFolder dapat diakses
+    if (targetFolder) {
       try {
-        driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch(eShare) {}
+        const decodedBytes = Utilities.base64Decode(pureBase64);
+        const sameNamedFiles = targetFolder.getFilesByName(fileName);
+        if (sameNamedFiles.hasNext()) {
+          driveFile = sameNamedFiles.next();
+        } else {
+          const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
+          driveFile = targetFolder.createFile(blob);
+          try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(eShare) {}
+        }
+        if (driveFile) {
+          fileId = driveFile.getId();
+          directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+        }
+      } catch(driveWriteErr) {
+        Logger.log("⚠️ Gagal menulis file fisik Drive: " + driveWriteErr.message);
+      }
     }
 
-    const fileId = driveFile.getId();
-    const directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+    // Fallback URL jika DriveApp belum terotorisasi agar foto tetap tersimpan & tampil di galeri semua tamu
+    if (!directViewUrl) {
+      fileId = "PENDING_DRIVE_" + Utilities.getUuid().slice(0, 8);
+      directViewUrl = (imageBase64.indexOf("data:") === 0) ? imageBase64 : ("data:image/jpeg;base64," + pureBase64);
+    }
 
     // 4. Catat ke DataFoto dengan sanitasi mutlak & ID canonical
     fotoSheet.appendRow([
