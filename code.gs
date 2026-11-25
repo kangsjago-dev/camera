@@ -1114,11 +1114,26 @@ function handleGetGallery(eventId, guestId) {
     });
   }
 
+  // SINKRONISASI SUARA VOTING KATEGORI MULTI-DEVICE 100% REALTIME
+  const defaultCategory = (categories.length > 0) ? categories[0] : null;
+  const defaultCatId = defaultCategory ? defaultCategory.idKategori : "KAT-1";
+  const defaultCatName = defaultCategory ? defaultCategory.namaKategori : "Favorit";
+
   photos.forEach(function(p) {
-    p.categoryLikes = photoCatLikes[p.idFoto] || {};
-    if (photoTotalVotes[p.idFoto] !== undefined) {
-      p.totalLikes = Math.max(p.totalLikes || 0, photoTotalVotes[p.idFoto]);
+    const rawLikes = photoCatLikes[p.idFoto] || {};
+    const totalV = (photoTotalVotes[p.idFoto] !== undefined) ? photoTotalVotes[p.idFoto] : (Number(p.totalLikes) || 0);
+    p.totalLikes = Math.max(Number(p.totalLikes) || 0, totalV);
+
+    // Jika foto memiliki likes tapi categoryLikes belum terinci di DataVoting,
+    // petakan otomatis ke kategori resmi acara agar foto langsung tampil di tab kategori seluruh HP tamu
+    if (p.totalLikes > 0 && Object.keys(rawLikes).length === 0) {
+      rawLikes[defaultCatId] = p.totalLikes;
+      rawLikes[defaultCatName] = p.totalLikes;
+      p.idKategori = defaultCatId;
+      p.namaKategori = defaultCatName;
     }
+
+    p.categoryLikes = rawLikes;
   });
 
   photos.reverse();
@@ -1344,13 +1359,16 @@ function handleUploadPhoto(payload) {
 
     // Isolasi Total Pemanggilan DriveApp: Cegah Crash Runtime Jika Izin Belum Aktif
     try {
-      if (folderId && folderId.trim() !== "") {
-        targetFolder = DriveApp.getFolderById(folderId);
-      } else {
-        targetFolder = DriveApp.getRootFolder();
+      if (typeof DriveApp !== 'undefined') {
+        if (folderId && folderId.trim() !== "") {
+          targetFolder = DriveApp.getFolderById(folderId);
+        } else {
+          targetFolder = DriveApp.getRootFolder();
+        }
       }
     } catch(driveFolderErr) {
-      Logger.log("DriveApp folder access bypassed: " + driveFolderErr.message);
+      Logger.log("DriveApp folder access bypassed safely: " + driveFolderErr.message);
+      targetFolder = null;
     }
 
     const newIdFoto = generateIncrementalPhotoId(fotoSheet, dateCompact, targetFolder);

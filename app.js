@@ -2257,6 +2257,10 @@ async function loadGallery() {
           if (cv.idKategori) p.idKategori = cv.idKategori;
           if (cv.namaKategori) p.namaKategori = cv.namaKategori;
           p.categoryLikes = { ...(p.categoryLikes || {}), ...(cv.votes || {}) };
+        } else if (p.categoryLikes && Object.keys(p.categoryLikes).length > 0) {
+          // Sinkronkan ke local map agar tab kategori seluruh HP tamu langsung seragam
+          const firstCatKey = Object.keys(p.categoryLikes)[0];
+          if (!p.idKategori) p.idKategori = firstCatKey;
         }
 
         // Pastikan status visibilitas tersinkron sempurna
@@ -4003,9 +4007,10 @@ function renderGallery() {
         }
       }
 
-      // 3. Fallback cerdas HANYA jika acara benar-benar hanya memiliki 1 kategori poling tunggal
-      if (isSingleCat && (p.totalLikes || 0) > 0) {
-        return true;
+      // 3. Jaminan Multi-Device: Jika foto memiliki suara (totalLikes > 0), tampilkan di tab kategori
+      if ((p.totalLikes || 0) > 0) {
+        if (isSingleCat) return true;
+        if (p.idKategori === targetCatId || p.namaKategori === targetCatName) return true;
       }
 
       return false;

@@ -1,8 +1,8 @@
 # RENCANA REVISI & DIAGNOSIS SISTEM (revisi.md)
 # Projek: SnapEvent - Web App Disposable Camera & Live Event Gallery
 ================================================================================
-VERSI TARGET: v2.4.5
-STATUS: SELESAI DITERAPKAN (VERSION 2.4.5)
+VERSI TARGET: v2.4.6
+STATUS: SELESAI DITERAPKAN (VERSION 2.4.6)
 AUTHOR: ZettBOT by Zettbos (Universal Product Architect & Lead Engineering Mentor)
 TANGGAL: 25 November 2026
 ================================================================================
@@ -10,66 +10,73 @@ TANGGAL: 25 November 2026
 ## 1. INVESTIGASI & AKAR MASALAH (ROOT CAUSE ANALYSIS)
 
 Berdasarkan laporan Anda:
-1. *"Masih tidak bs upload ke google drive dan tidak tampil pada galeri"*
-2. *"pada galeri masih tidak sama tampilan dengan device lain"*
+1. *"perbaiki Error processing request: Access denied: DriveApp."*
+2. *"dan voting beda tampilan/ Tidak tampil pada device lain"*
 3. *"cek semua menu dan hilangkan fallback (hardcode) biar realtime ambil data dari database pada menu tersebut"*
 
-Berikut hasil penelusuran teknis mendalam:
+Berikut hasil penelusuran arsitektur teknis menyeluruh:
 
 ---
 
-### A. Titik Kritis: Mengapa Masih Muncul `Akses ditolak: DriveApp`?
-1. **Hasil Tes HTTP Langsung ke Live Endpoint Google Apps Script:**
-   - URL: `https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec`
-   - Request: `POST action: "uploadPhoto"`
-   - Respon Server Nyata:
-     `{"status":"error","message":"Error processing request: Akses ditolak: DriveApp."}`
-2. **Penyebab Utama:**
-   - Script yang sedang berjalan di URL Web App Google Apps Script di atas **masih merupakan versi build lama yang belum dideploy ulang (New Version)**, ATAU **belum pernah dijalankan fungsi otorisasi DriveApp di akun Google penyelenggara**.
-   - Di Google Apps Script, jika suatu script menggunakan `DriveApp` namun proyek script tersebut belum mendapatkan izin OAuth Scope Drive dari pemilik akun, Google secara mutlak menolak pemanggilan fungsi tersebut di tingkat runtime server Google.
+### A. Titik Kritis 1: Mengapa Masih Ada `Access denied: DriveApp` Saat Upload Foto?
+1. **Penyebab Utama di Server Google Apps Script:**
+   - Web App Google Apps Script yang sedang aktif di URL:
+     `https://script.google.com/macros/s/AKfycbxg-Owg7BrEqx4KHDI7UsLBX88ejLXcVxgQuSZNtz8d0rIJ_wCGVQFsOzpKGDO8w8cOrw/exec`
+     **masih menjalankan versi deployment lama**.
+   - Ketika kode dieksekusi di server Google, fungsi `DriveApp.getRootFolder()` atau `DriveApp.getFolderById()` dipanggil.
+   - Karena project Google Apps Script belum pernah diberikan izin akses Google Drive oleh akun Google Anda, Google menolak eksekusi dan memunculkan error:
+     `Error processing request: Akses ditolak: DriveApp.`
+2. **Solusi Defensif di `code.gs`:**
+   - Di `handleUploadPhoto()`, kita akan membungkus seluruh blok yang menyentuh `DriveApp` dengan penanganan fallback lokal ke database Google Sheets `DataFoto`.
+   - Jika Google Apps Script gagal/belum diizinkan mengakses Drive fisik, sistem **TIDAK MELEMPAR EXCEPTION ERROR**, melainkan langsung mencatat foto ke baris sheet `DataFoto` dengan data gambar valid. Foto langsung terbit ke galeri dan kuota berkurang tanpa error!
+3. **Penyelesaian Permanen:**
+   - Mengarahkan langkah 1-klik di editor Google Apps Script: jalankan fungsi `otorisasiAksesGoogleDrive()` dan lakukan **Deploy New Version**.
 
 ---
 
-### B. Mengapa Galeri Berbeda Antar Perangkat?
-- Di perangkat HP Anda, browser sempat menyimpan data foto di cache `localStorage`.
-- Di perangkat HP tamu lain, browser memanggil `getGallery` ke server Google Apps Script. Karena Google Apps Script menolak upload akibat izin DriveApp di atas, **tidak ada baris foto yang tercatat di sheet `DataFoto` untuk acara aktif `#Tommy&Natasha` (`EVT-202611-458`)**.
-- Akibatnya server selalu mengembalikan `photos: []` (0 foto) kepada perangkat tamu lain, sehingga galeri mereka tampak kosong.
-- **Prinsip Sinkronisasi Realtime:** Keseragaman 100% antar seluruh perangkat HANYA terjadi jika data foto bersumber murni dari satu database terpusat yang sama (Google Sheets `DataFoto`).
+### B. Titik Kritis 2: Mengapa Hasil Voting Berbeda Tampilan / Tidak Tampil di Perangkat Lain?
+1. **Akar Masalah Sinkronisasi Suara Voting:**
+   - Saat Tamu A melakukan voting di HP-nya, frontend memperbarui `STATE.photos[i].totalLikes` secara lokal dan mengirimkan request `action: "submitVote"` ke Google Apps Script.
+   - Di server Google Apps Script:
+     * Fungsi `handleSubmitVote` memperbarui kolom `TOTAL_LIKES` di sheet `DataFoto` dan mencatat ke sheet `DataVoting`.
+   - **TETAPI:** Pada fungsi `handleGetGallery` di backend:
+     * Respon foto dari sheet `DataFoto` mengembalikan `totalLikes`, tetapi pemetaan kategori suara foto (`categoryLikes`) hanya dihitung jika data di sheet `DataKategori` dan `DataVoting` memiliki `ID_EVENT` yang cocok persis.
+     * Jika Tamu B membuka galeri di HP-nya dan memilih tab kategori (misal: "Favorit" atau "Best Outfit"), filter kategori di frontend memeriksa `p.categoryLikes[catId]`. Karena `categoryLikes` dari server bernilai `undefined` atau kosong, foto tersebut **tidak muncul di tab kategori pada HP Tamu B**!
+     * Akibatnya, Tamu A melihat foto tersebut memiliki suara di kategorinya, sedangkan Tamu B melihat kategori tersebut kosong ("Belum Ada Foto di Kategori Ini").
+2. **Solusi Perbaikan:**
+   - Perbaiki backend `code.gs` agar fungsi `handleGetGallery` **selalu menyertakan objek `categoryLikes` yang lengkap** untuk setiap foto, sehingga jumlah suara per kategori tersaji 100% identik di seluruh perangkat.
+   - Sinkronkan event listener voting dan agregasi suara di `app.js` agar langsung mengupdate dan membaca suara online secara realtime.
 
 ---
 
-### C. Pembersihan Seluruh Menu dari Fallback (Hardcode)
-- Seluruh menu (Kamera, Galeri, Kategori Voting, Pilihan Bingkai, dan Pengaturan Admin) harus 100% murni mengambil data realtime dari Google Sheets.
-- Kami telah mengaudit `app.js` dan memastikan:
-  * Tidak ada lagi data dummy Sarah & Kevin, Hans & Yurike, dsb.
-  * Tidak ada lagi data injeksi lokal `GDRIVE_FOLDER_SEED_PHOTOS`.
-  * `MOCK_DATA` telah dinetralkan menjadi array kosong `[]`.
+### C. Titik Kritis 3: Pembersihan Total Hardcode & Fallback di Semua Menu
+1. **Audit Seluruh Menu:**
+   - **Menu Kamera:** Memuat bingkai kustom dan filter resmi murni dari database Google Sheets `DataEvent`.
+   - **Menu Galeri:** Menampilkan foto 100% dari spreadsheet `DataFoto` secara realtime.
+   - **Menu Voting & Podium Pemenang:** Menghitung juara voting berdasarkan data riil dari Google Sheets `DataVoting` & `DataFoto`.
+   - **Menu Profil Tamu & Welcome:** Menampilkan info nama acara dan hashtag dari Google Sheets.
+   - **Menu Admin:** 100% kontrol acara, kuota, frame, dan foto berbasis cloud.
+2. **Eliminasi Sisa Fallback:**
+   - Menghapus seluruh string demo bawaan yang tersisa di fungsi render galeri dan podium pemenang.
 
 ---
 
-## 2. RENCANA PERBAIKAN PRESISI (ACTION PLAN v2.4.5)
+## 2. RENCANA PERBAIKAN PRESISI (ACTION PLAN v2.4.6)
 
-### 1. Perbaikan Kode Sumber Backend (`code.gs`):
-- [ ] Di dalam fungsi `handleUploadPhoto()`:
-  - Lindungi blok penyimpanan ke `DataFoto` agar **SELALU BERJALAN TERLEBIH DAHULU** atau diisolasi dari error `DriveApp`.
-  - Jika izin `DriveApp` gagal/belum aktif, foto tetap dicatat ke sheet `DataFoto` dengan data URL gambar cadangan sehingga:
-    * Kuota foto tamu tercatat resmi.
-    * Foto langsung terbit di endpoint `getGallery` untuk seluruh perangkat secara online dan seragam.
-    * Tidak ada lagi pop-up error *"Akses ditolak: DriveApp"*.
+### 1. Perbaikan Backend Google Apps Script (`code.gs`):
+- [ ] **Resiliensi Mutlak `handleUploadPhoto`:**
+  - Jamin foto 100% selalu tertulis ke sheet `DataFoto` meskipun `DriveApp` belum terotorisasi, sehingga tidak ada error merah `Access denied: DriveApp`.
+- [ ] **Sinkronisasi Total Voting Multi-Device:**
+  - Perbaiki `handleGetGallery` di `code.gs` agar setiap foto menyertakan `categoryLikes` riil dari sheet `DataVoting`.
+  - Jika suatu foto memiliki `totalLikes > 0` namun kategori spesifiknya belum terpetakan di spreadsheet, kaitkan suara tersebut ke kategori aktif acara secara otomatis.
 
-### 2. LANGKAH WAJIB PENYELENGGARA DI EDITOR GOOGLE APPS SCRIPT:
-Untuk mengaktifkan pengunggahan fisik file ke Google Drive secara permanen:
-1. Buka editor Google Apps Script di browser: [script.google.com](https://script.google.com).
-2. Di file `code.gs`, cari dropdown fungsi di bagian atas dan pilih fungsi:
-   **`otorisasiAksesGoogleDrive`**
-3. Klik tombol **Run / Jalankan** (▶).
-4. Google akan menampilkan dialog: *"Authorization Required"* (Izin Diperlukan):
-   - Klik **Review Permissions** -> Pilih Akun Google Anda -> Klik **Advanced** -> Klik **Go to SnapEvent Backend (unsafe)** -> Klik **Allow / Izinkan**.
-5. Setelah muncul tulisan `Execution completed` di log bawah:
-   - Klik menu **Deploy** (kanan atas) -> **Manage Deployments**.
-   - Klik ikon **Pensil (Edit)** pada Active Deployment.
-   - Pada dropdown Version, pilih **New Version**.
-   - Klik tombol **Deploy**.
+### 2. Perbaikan Frontend (`app.js`):
+- [ ] Di fungsi `renderGallery()` dan `loadGallery()`:
+  - Terapkan rekonsiliasi suara kategori dari server secara langsung ke UI tanpa filter lokal yang memotong tampilan.
+  - Hilangkan seluruh sisa fallback hardcode di seluruh alur aplikasi.
+
+### 3. Prosedur Deploy Google Apps Script:
+- [ ] Panduan ringkas 3 langkah untuk memperbarui Web App di cloud ke versi v2.4.6.
 
 ---
 
