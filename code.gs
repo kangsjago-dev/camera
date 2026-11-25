@@ -1039,7 +1039,7 @@ function handleGetGallery(eventId, guestId) {
     } catch (e) {}
   }
 
-  // 0. Fallback Ingestion Langsung dari Target Folder ID Acara
+  // 0. Fallback Ingestion Langsung dari Target Folder ID Acara & Default Folder Aktif
   if (folderId) {
     try {
       const explicitF = DriveApp.getFolderById(folderId);
@@ -1047,6 +1047,12 @@ function handleGetGallery(eventId, guestId) {
         candidateFolders.unshift(explicitF);
       }
     } catch (eExp) {}
+  }
+  if (candidateFolders.length === 0) {
+    try {
+      const defaultTargetF = DriveApp.getFolderById("13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc");
+      if (defaultTargetF) candidateFolders.push(defaultTargetF);
+    } catch (eDef) {}
   }
 
   // 1. Sinkronisasi Google Drive & Spreadsheet DataFoto:
@@ -1141,6 +1147,7 @@ function handleGetGallery(eventId, guestId) {
   }
 
   // 2. Auto-ingest foto yang ada di Google Drive tapi belum ada di Spreadsheet
+  let autoIngestedCount = 0;
   liveDriveFilesMap.forEach(function(dfInfo, fId) {
     if (!existingFileIds.has(fId)) {
       try {
@@ -1175,6 +1182,7 @@ function handleGetGallery(eventId, guestId) {
           false,
           createdDateStr
         ]);
+        autoIngestedCount++;
       }
 
       photos.push({
@@ -1184,13 +1192,20 @@ function handleGetGallery(eventId, guestId) {
         cameraStyle: "RAW",
         frameStyle: "POLAROID",
         gdriveViewUrl: directUrl,
+        gdriveFileId: fId,
+        driveFileId: fId,
         totalLikes: 0,
         isFeatured: false,
+        isVisible: true,
+        photoStatus: "TAMPIL",
         createdAt: createdDateStr
       });
       existingFileIds.add(fId);
     }
   });
+  if (autoIngestedCount > 0) {
+    try { SpreadsheetApp.flush(); } catch (eFlush) {}
+  }
 
   // 3. Agregasi Voting & Kategori Penghargaan secara Komprehensif
   const catNameMap = {};
@@ -1265,9 +1280,21 @@ function handleGetGallery(eventId, guestId) {
     }
 
     p.categoryLikes = rawLikes;
+
+    // Hitung createdTimestamp (epoch ms) untuk pengurutan akurat terbaru di posisi paling atas
+    let tsMs = 0;
+    if (p.createdAt) {
+      const normalizedDate = String(p.createdAt).trim().replace(" ", "T");
+      const parsed = Date.parse(normalizedDate);
+      if (!isNaN(parsed)) tsMs = parsed;
+    }
+    p.createdTimestamp = tsMs;
   });
 
-  photos.reverse();
+  // Urutkan foto terbaru di posisi paling atas
+  photos.sort(function(a, b) {
+    return (b.createdTimestamp || 0) - (a.createdTimestamp || 0);
+  });
 
   return {
     status: "success",
@@ -1578,9 +1605,11 @@ function handleUploadCustomFrame(payload) {
       });
     }
 
-    let parentFolder = DriveApp.getRootFolder();
-    if (masterFolderId) {
-      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+    let parentFolder = null;
+    try {
+      parentFolder = masterFolderId ? DriveApp.getFolderById(masterFolderId) : DriveApp.getRootFolder();
+    } catch (eDriveRoot) {
+      return { status: "error", message: "Akses Google Drive belum diotorisasi untuk custom frame: " + eDriveRoot.message };
     }
 
     // Subfolder khusus frame
@@ -1893,12 +1922,15 @@ function handleAdminSaveEvent(payload) {
       });
     }
 
-    let parentFolder = DriveApp.getRootFolder();
-    if (masterFolderId) {
-      try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(e) {}
+    let parentFolder = null;
+    try {
+      parentFolder = masterFolderId ? DriveApp.getFolderById(masterFolderId) : DriveApp.getRootFolder();
+    } catch (eDriveRoot) {
+      Logger.log("DriveApp root folder bypassed safely: " + eDriveRoot.message);
+      parentFolder = null;
     }
 
-    if (!folderId) {
+    if (!folderId && parentFolder) {
       try {
         const eventFolder = getOrCreateEventSubFolder(parentFolder, idEvent, slugEvent, namaEvent);
         folderId = eventFolder.getId();

@@ -3906,6 +3906,34 @@ async function handleVotePhoto(idFoto, idKategori = '') {
 }
 
 // --- 8. GALLERY RENDERING & VOTING WINNERS PODIUM ---
+function getPhotoTimestampMs(photo) {
+  if (!photo) return 0;
+  if (typeof photo.createdTimestamp === 'number' && photo.createdTimestamp > 0) {
+    return photo.createdTimestamp;
+  }
+  if (typeof photo.uploadStartedAt === 'number' && photo.uploadStartedAt > 0) {
+    return photo.uploadStartedAt;
+  }
+  if (photo.createdAt === 'Baru Saja') {
+    return Date.now();
+  }
+  if (photo.createdAt) {
+    const normalized = String(photo.createdAt).trim().replace(' ', 'T');
+    const parsed = Date.parse(normalized);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function isPhotoNewBadge(photo) {
+  if (!photo) return false;
+  if (photo.createdAt === 'Baru Saja') return true;
+  const ts = getPhotoTimestampMs(photo);
+  if (!ts) return false;
+  const ageMs = Date.now() - ts;
+  return ageMs >= -60000 && ageMs <= 180000; // <= 3 menit (180 detik)
+}
+
 function renderGallery() {
   const grid = document.getElementById('galleryPhotoGrid');
   const empty = document.getElementById('galleryEmptyNotice');
@@ -3979,7 +4007,9 @@ function renderGallery() {
     }
   });
 
-  if (STATE.activeGalleryFilter === 'POPULAR') {
+  if (STATE.activeGalleryFilter === 'ALL') {
+    filtered.sort((a, b) => getPhotoTimestampMs(b) - getPhotoTimestampMs(a));
+  } else if (STATE.activeGalleryFilter === 'POPULAR') {
     filtered.sort((a, b) => (b.totalLikes || 0) - (a.totalLikes || 0));
   } else if (STATE.activeGalleryFilter !== 'ALL' && STATE.activeGalleryFilter !== 'WINNERS') {
     // Filter foto yang mendapatkan suara di kategori ini (Pencarian presisi ID dan Nama Kategori)
@@ -4127,9 +4157,23 @@ function renderGallery() {
       const isUploading = Boolean(photo.isUploading);
 
       let card = existingCards.get(photo.idFoto);
+      const isNewBadge = isPhotoNewBadge(photo);
       if (card) {
         // Kartu sudah aktif di layar: Jangan pernah menghancurkan elemen gambar agar tidak berkedip hitam
         existingCards.delete(photo.idFoto);
+
+        const imgZone = card.querySelector('.img-click-zone');
+        if (imgZone) {
+          const existingNewBadge = imgZone.querySelector('.badge-photo-new');
+          if (isNewBadge && !existingNewBadge) {
+            const b = document.createElement('div');
+            b.className = 'badge-photo-new absolute top-2 left-2 z-20 px-2 py-0.5 rounded-full bg-brand-gold text-black text-[9px] font-extrabold tracking-wide shadow-md animate-pulse pointer-events-none';
+            b.textContent = '✨ BARU';
+            imgZone.appendChild(b);
+          } else if (!isNewBadge && existingNewBadge) {
+            existingNewBadge.remove();
+          }
+        }
 
         const likeBtn = card.querySelector('.btn-like-photo');
         if (likeBtn) {
@@ -4171,6 +4215,11 @@ function renderGallery() {
               <span class="text-[9px] font-mono text-zinc-500">Memuat...</span>
             </div>
             <img src="${primaryUrl}" data-secondary="${secondaryUrl}" data-tertiary="${tertiaryUrl}" data-step="0" alt="${photo.guestNama || 'Foto'}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300 opacity-0 relative z-10" onload="this.classList.remove('opacity-0'); this.previousElementSibling?.remove();" onerror="handleGalleryImgError(this);" />
+            ${isNewBadge ? `
+              <div class="badge-photo-new absolute top-2 left-2 z-20 px-2 py-0.5 rounded-full bg-brand-gold text-black text-[9px] font-extrabold tracking-wide shadow-md animate-pulse pointer-events-none">
+                ✨ BARU
+              </div>
+            ` : ''}
             ${isUploading ? `
               <div class="uploading-overlay absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center z-20">
                 <div class="w-6 h-6 border-2 border-brand-gold border-t-transparent rounded-full animate-spin mb-2"></div>
