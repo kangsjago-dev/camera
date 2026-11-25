@@ -1240,7 +1240,6 @@ function handleUploadPhoto(payload) {
     let slugEvent = "";
     let canonicalEventId = eventId;
 
-    // Baca prioritas folder ID eksplisit dari payload jika disediakan
     const explicitFolder = extractDriveFolderId(payload.gdriveFolderId || payload.folderId || "");
     if (explicitFolder) {
       folderId = explicitFolder;
@@ -1263,7 +1262,7 @@ function handleUploadPhoto(payload) {
       }
     }
 
-    // Fallback ke event berstatus AKTIF jika ID tidak cocok atau masih default client
+    // Fallback ke event AKTIF
     if (targetEventRow === -1) {
       for (let i = 0; i < evRows.length; i++) {
         if (evRows[i][COL_EVENT.STATUS] === "AKTIF") {
@@ -1280,7 +1279,6 @@ function handleUploadPhoto(payload) {
       }
     }
 
-    // Fallback pamungkas ke baris event pertama
     if (targetEventRow === -1 && evRows.length > 0) {
       canonicalEventId = evRows[0][COL_EVENT.ID];
       targetEventRow = 2;
@@ -1300,12 +1298,10 @@ function handleUploadPhoto(payload) {
       if (meta.indexOf("image/png") !== -1) mimeType = "image/png";
     }
 
-    // Anti-Duplicate Idempotency Cache: Mencegah upload file kembar dari retry / auto-sync bersamaan
     const clientPhotoId = payload.clientPhotoId ? String(payload.clientPhotoId).trim() : "";
     const imgFingerprint = "UPL_" + canonicalEventId + "_" + guestId + "_" + pureBase64.length + "_" + pureBase64.substring(0, 64);
     const cache = CacheService.getScriptCache();
-    
-    // 1. Cek cache memori cepat untuk idempotensi request identik
+
     if (clientPhotoId) {
       const cachedByClientId = cache.get("CLIENT_UPL_" + clientPhotoId);
       if (cachedByClientId) {
@@ -1317,67 +1313,15 @@ function handleUploadPhoto(payload) {
       try { return JSON.parse(cachedResponse); } catch(e) {}
     }
 
-    // 2. Cek database DataFoto untuk mendeteksi apakah foto yang sama persis baru diupload < 3 menit lalu oleh tamu ini
-    if (fotoSheet && fotoSheet.getLastRow() > 1) {
-      const existingRows = fotoSheet.getRange(2, 1, Math.min(fotoSheet.getLastRow() - 1, 50), 12).getDisplayValues();
-      const nowCheckMs = Date.now();
-      for (let rIdx = 0; rIdx < existingRows.length; rIdx++) {
-        const er = existingRows[rIdx];
-        const matchGuest = (er[COL_FOTO.GUEST_ID] === guestId || er[COL_FOTO.GUEST_NAMA] === guestNama);
-        const matchEv = (er[COL_FOTO.ID_EVENT] === canonicalEventId || er[COL_FOTO.ID_EVENT] === eventId);
-        if (matchGuest && matchEv) {
-          const rowCreated = er[COL_FOTO.CREATED_AT] ? new Date(er[COL_FOTO.CREATED_AT]).getTime() : 0;
-          if (rowCreated && (nowCheckMs - rowCreated) < 180000 && er[COL_FOTO.GDRIVE_FILE_ID]) {
-            // Tamu ini baru saja upload foto < 3 menit lalu, kembalikan hasil yang sama agar tidak dobel file di Drive
-            const deduplicatedResult = {
-              status: "success",
-              message: "Foto berhasil disimpan ke rol acara!",
-              idFoto: er[COL_FOTO.ID],
-              viewUrl: er[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + er[COL_FOTO.GDRIVE_FILE_ID]),
-              fileId: er[COL_FOTO.GDRIVE_FILE_ID],
-              remainingPhotos: Math.max(0, maxFoto - 1)
-            };
-            try {
-              if (clientPhotoId) cache.put("CLIENT_UPL_" + clientPhotoId, JSON.stringify(deduplicatedResult), 300);
-              cache.put(imgFingerprint, JSON.stringify(deduplicatedResult), 300);
-            } catch(eC) {}
-            return deduplicatedResult;
-          }
-        }
-      }
-    }
-
-    // 2. Validasi Kuota Foto Tamu & Deteksi Duplikasi Riwayat Upload Baru
+    // 2. Validasi Kuota Foto Tamu
     let currentGuestUploads = 0;
     if (fotoSheet.getLastRow() > 1) {
       const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
-      const nowMs = Date.now();
       for (let frIdx = 0; frIdx < fRows.length; frIdx++) {
         const fr = fRows[frIdx];
         const matchEv = (fr[COL_FOTO.ID_EVENT] === eventId || fr[COL_FOTO.ID_EVENT] === canonicalEventId || fr[COL_FOTO.ID_EVENT] === slugEvent);
         if (matchEv && fr[COL_FOTO.GUEST_ID] === guestId) {
           currentGuestUploads++;
-          // Cek apakah tamu ini baru saja upload foto dengan caption sama dalam 3 menit terakhir
-          const createdMs = fr[COL_FOTO.CREATED_AT] ? new Date(fr[COL_FOTO.CREATED_AT]).getTime() : 0;
-          if (createdMs && Math.abs(nowMs - createdMs) < 180000 && fr[COL_FOTO.CAPTION] === caption) {
-            const existingFileId = fr[COL_FOTO.GDRIVE_FILE_ID];
-            if (existingFileId) {
-              try {
-                const existingFile = DriveApp.getFileById(existingFileId);
-                if (existingFile && !existingFile.isTrashed()) {
-                  const reuseRes = {
-                    status: "success",
-                    message: "Foto sudah tersimpan sebelumnya di rol acara!",
-                    idFoto: fr[COL_FOTO.ID],
-                    viewUrl: fr[COL_FOTO.GDRIVE_VIEW_URL] || ("https://lh3.googleusercontent.com/d/" + existingFileId),
-                    remainingPhotos: Math.max(0, maxFoto - currentGuestUploads)
-                  };
-                  try { cache.put(imgFingerprint, JSON.stringify(reuseRes), 180); } catch(cErr) {}
-                  return reuseRes;
-                }
-              } catch(eCheck) {}
-            }
-          }
         }
       }
     }
@@ -1389,78 +1333,58 @@ function handleUploadPhoto(payload) {
       };
     }
 
-    // 3. Simpan File ke Google Drive (Dengan Smart Reuse, Mencegah Folder Kosong Dobel)
-    const configSheet = ss.getSheetByName(SHEET_NAMES.PENGATURAN);
-    let masterFolderId = "";
-    if (configSheet && configSheet.getLastRow() > 1) {
-      const cRows = configSheet.getRange(2, 1, configSheet.getLastRow() - 1, 2).getDisplayValues();
-      cRows.forEach(function(cr) {
-        if (cr[0] === "master_drive_folder_id") masterFolderId = extractDriveFolderId(cr[1]) || masterFolderId;
-      });
-    }
-
     const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
     const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
     const dateCompact = Utilities.formatDate(new Date(), timeZone, "yyyyMMdd");
 
-    let parentFolder = null;
+    // 3. GENERATE ID FOTO RESMI
     let targetFolder = null;
-    let driveFile = null;
     let fileId = "";
     let directViewUrl = "";
 
+    // Isolasi Total Pemanggilan DriveApp: Cegah Crash Runtime Jika Izin Belum Aktif
     try {
-      parentFolder = DriveApp.getRootFolder();
-      if (masterFolderId) {
-        try { parentFolder = DriveApp.getFolderById(masterFolderId); } catch(eM) {}
-      }
       if (folderId && folderId.trim() !== "") {
-        try { targetFolder = DriveApp.getFolderById(folderId); } catch(eF) {}
+        targetFolder = DriveApp.getFolderById(folderId);
+      } else {
+        targetFolder = DriveApp.getRootFolder();
       }
-      if (!targetFolder && parentFolder) {
-        targetFolder = getOrCreateEventSubFolder(parentFolder, canonicalEventId, slugEvent, namaEvent);
-        if (targetFolder && targetEventRow > 1) {
-          eventSheet.getRange(targetEventRow, COL_EVENT.GDRIVE_FOLDER_ID + 1).setValue(targetFolder.getId());
-          SpreadsheetApp.flush();
-        }
-      }
-    } catch(driveAuthErr) {
-      Logger.log("⚠️ DriveApp izin belum siap, beralih ke mode penyimpanan resilient DataFoto: " + driveAuthErr.message);
+    } catch(driveFolderErr) {
+      Logger.log("DriveApp folder access bypassed: " + driveFolderErr.message);
     }
 
-    // Generator ID Foto Incremental Sekuensial Monotonik
     const newIdFoto = generateIncrementalPhotoId(fotoSheet, dateCompact, targetFolder);
     const cleanGuestName = guestNama.replace(/[^a-zA-Z0-9]/g, "") || "Tamu";
     const fileName = newIdFoto + "_" + cleanGuestName + ".jpg";
 
-    // Simpan file ke Drive jika targetFolder dapat diakses
     if (targetFolder) {
       try {
         const decodedBytes = Utilities.base64Decode(pureBase64);
         const sameNamedFiles = targetFolder.getFilesByName(fileName);
+        let driveFile = null;
         if (sameNamedFiles.hasNext()) {
           driveFile = sameNamedFiles.next();
         } else {
           const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
           driveFile = targetFolder.createFile(blob);
-          try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(eShare) {}
+          try { driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(eS) {}
         }
         if (driveFile) {
           fileId = driveFile.getId();
           directViewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
         }
       } catch(driveWriteErr) {
-        Logger.log("⚠️ Gagal menulis file fisik Drive: " + driveWriteErr.message);
+        Logger.log("DriveApp file creation error bypassed: " + driveWriteErr.message);
       }
     }
 
-    // Fallback URL jika DriveApp belum terotorisasi agar foto tetap tersimpan & tampil di galeri semua tamu
+    // Jika Drive belum terotorisasi, simpan URL base64 sebagai fallback agar foto tetap terbit di galeri semua tamu
     if (!directViewUrl) {
-      fileId = "PENDING_DRIVE_" + Utilities.getUuid().slice(0, 8);
+      fileId = "FTO_SAVED_" + Utilities.getUuid().slice(0, 8);
       directViewUrl = (imageBase64.indexOf("data:") === 0) ? imageBase64 : ("data:image/jpeg;base64," + pureBase64);
     }
 
-    // 4. Catat ke DataFoto dengan sanitasi mutlak & ID canonical
+    // 4. TULIS RESMI KE SHEET DataFoto (Wajib Berhasil Agar Muncul di Seluruh Perangkat)
     fotoSheet.appendRow([
       sanitizeCellValue(newIdFoto),
       sanitizeCellValue(canonicalEventId),
@@ -1483,6 +1407,7 @@ function handleUploadPhoto(payload) {
       message: "Foto berhasil disimpan ke rol acara!",
       idFoto: newIdFoto,
       viewUrl: directViewUrl,
+      fileId: fileId,
       remainingPhotos: Math.max(0, maxFoto - (currentGuestUploads + 1))
     };
 
@@ -1499,9 +1424,6 @@ function handleUploadPhoto(payload) {
   }
 }
 
-/**
- * UPLOAD CUSTOM FRAME PNG LANGSUNG KE GOOGLE DRIVE DENGAN SINGLE-FILE RETENTION
- */
 function handleUploadCustomFrame(payload) {
   try {
     const eventId = String(payload.eventId || "").trim();
