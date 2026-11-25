@@ -11,8 +11,8 @@
  * ================================================================================
  */
 
-// Konstanta Nama Sheet (Baku & Bersih tanpa underscore)
-const SHEET_NAMES = {
+// Konstanta Nama Sheet (Baku & Bersih tanpa underscore - Safe Guarded Global Scope)
+var SHEET_NAMES = (typeof SHEET_NAMES !== 'undefined') ? SHEET_NAMES : {
   EVENT: "DataEvent",
   FOTO: "DataFoto",
   KATEGORI: "DataKategoriVoting",
@@ -20,8 +20,8 @@ const SHEET_NAMES = {
   PENGATURAN: "DataPengaturanGlobal"
 };
 
-// Definisi Header Baku untuk masing-masing Sheet
-const SCHEMA_HEADERS = {
+// Definisi Header Baku untuk masing-masing Sheet (Safe Guarded Global Scope)
+var SCHEMA_HEADERS = (typeof SCHEMA_HEADERS !== 'undefined') ? SCHEMA_HEADERS : {
   DataEvent: [
     "idEvent",             // COL[0]
     "namaEvent",           // COL[1]

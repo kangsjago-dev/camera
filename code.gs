@@ -15,6 +15,121 @@ function otorisasiAksesGoogleDrive() {
 }
 
 /**
+ * FUNGSI 1-KLIK SINKRONISASI GOOGLE DRIVE KE GALERI (DataFoto)
+ * Jalankan fungsi ini langsung dari editor Google Apps Script:
+ * 1. Otomatis meminta otorisasi Drive jika belum
+ * 2. Memindai semua foto di folder Google Drive acara: 13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc
+ * 3. Mengatur izin akses foto menjadi public view link (lh3.googleusercontent.com)
+ * 4. Memasukkan semua foto ke sheet DataFoto sehingga langsung tampil di Galeri seluruh tamu!
+ */
+function sinkronkanFolderDriveKeGaleri(folderIdInput) {
+  try {
+    const targetFolderId = folderIdInput || "13wlAWJxzffdTczJLlGQRoc0VEPGmE6Bc";
+    Logger.log("Memulai sinkronisasi Google Drive untuk folder: " + targetFolderId);
+    
+    const folder = DriveApp.getFolderById(targetFolderId);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let fotoSheet = ss.getSheetByName(SHEET_NAMES.FOTO);
+    if (!fotoSheet) {
+      fotoSheet = ss.insertSheet(SHEET_NAMES.FOTO);
+      fotoSheet.appendRow(["idFoto", "idEvent", "guestId", "guestNama", "caption", "cameraStyle", "frameStyle", "gdriveFileId", "gdriveViewUrl", "totalLikes", "isFeatured", "createdAt"]);
+    }
+    
+    // Temukan event aktif atau default
+    let targetEventId = "EVT-202611-458";
+    const eventSheet = ss.getSheetByName(SHEET_NAMES.EVENT);
+    if (eventSheet && eventSheet.getLastRow() > 1) {
+      const evRows = eventSheet.getRange(2, 1, eventSheet.getLastRow() - 1, 15).getDisplayValues();
+      for (let i = 0; i < evRows.length; i++) {
+        const evFolder = extractDriveFolderId(evRows[i][COL_EVENT.GDRIVE_FOLDER_ID]);
+        if (evFolder === targetFolderId || evRows[i][COL_EVENT.STATUS] === "AKTIF") {
+          targetEventId = evRows[i][COL_EVENT.ID];
+          break;
+        }
+      }
+    }
+    
+    // Kumpulkan File ID yang sudah ada di DataFoto
+    const existingFileIds = new Set();
+    const existingPhotoIds = new Set();
+    if (fotoSheet.getLastRow() > 1) {
+      const fRows = fotoSheet.getRange(2, 1, fotoSheet.getLastRow() - 1, 12).getDisplayValues();
+      for (let r = 0; r < fRows.length; r++) {
+        const fId = String(fRows[r][COL_FOTO.GDRIVE_FILE_ID] || "").trim();
+        const pId = String(fRows[r][COL_FOTO.ID] || "").trim();
+        if (fId) existingFileIds.add(fId);
+        if (pId) existingPhotoIds.add(pId);
+      }
+    }
+    
+    const timeZone = Session.getScriptTimeZone() || "Asia/Jakarta";
+    const nowStr = Utilities.formatDate(new Date(), timeZone, "yyyy-MM-dd HH:mm:ss");
+    const filesIter = folder.getFiles();
+    let addedCount = 0;
+    let existingCount = 0;
+    
+    while (filesIter.hasNext()) {
+      const file = filesIter.next();
+      if (file.isTrashed()) continue;
+      
+      const fName = file.getName();
+      const lower = fName.toLowerCase();
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp') || fName.indexOf('FTO-') === 0) {
+        const fileId = file.getId();
+        
+        // Pastikan izin file public view
+        try {
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        } catch (ePerm) {}
+        
+        if (existingFileIds.has(fileId)) {
+          existingCount++;
+          continue;
+        }
+        
+        const directUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+        const parts = fName.split("_");
+        let photoId = (parts[0] && parts[0].indexOf("FTO-") === 0) ? parts[0] : ("FTO-" + Date.now() + "-" + fileId.slice(-4));
+        if (existingPhotoIds.has(photoId)) {
+          photoId = photoId + "-" + fileId.slice(-4);
+        }
+        existingPhotoIds.add(photoId);
+        
+        const guestName = parts[1] ? parts[1].replace(/\.[^/.]+$/, "") : "Tamu";
+        const createdDate = file.getDateCreated() ? Utilities.formatDate(file.getDateCreated(), timeZone, "yyyy-MM-dd HH:mm:ss") : nowStr;
+        
+        fotoSheet.appendRow([
+          sanitizeCellValue(photoId),
+          sanitizeCellValue(targetEventId),
+          "GUEST-SYNC",
+          sanitizeCellValue(guestName),
+          "Momen seru di acara!",
+          "RAW",
+          "POLAROID",
+          sanitizeCellValue(fileId),
+          sanitizeCellValue(directUrl),
+          0,
+          false,
+          createdDate
+        ]);
+        
+        existingFileIds.add(fileId);
+        addedCount++;
+      }
+    }
+    
+    SpreadsheetApp.flush();
+    const resultMsg = "✅ SINKRONISASI SUKSES! Berhasil menambahkan " + addedCount + " foto baru ke Galeri (Sudah ada sebelumnya: " + existingCount + "). Event: " + targetEventId;
+    Logger.log(resultMsg);
+    return resultMsg;
+  } catch (err) {
+    const errMsg = "❌ Gagal sinkronisasi Google Drive: " + err.message;
+    Logger.log(errMsg);
+    throw new Error(errMsg);
+  }
+}
+
+/**
  * ================================================================================
  * SNAPEVENT: CODE.GS - BACKEND CONTROLLER & GOOGLE DRIVE INTEGRATION
  * ================================================================================
